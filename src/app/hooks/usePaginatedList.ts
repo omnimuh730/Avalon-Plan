@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 type UsePaginatedListOptions<T> = {
   items: T[];
@@ -44,6 +44,8 @@ export function usePaginatedList<T>({
     setPage(1);
   };
 
+  const resetPage = useCallback(() => setPage(1), []);
+
   return {
     items: paginated,
     total: filtered.length,
@@ -52,6 +54,6 @@ export function usePaginatedList<T>({
     totalPages,
     setPage: goToPage,
     setPageSize: setPageSizeAndReset,
-    resetPage: () => setPage(1),
+    resetPage,
   };
 }

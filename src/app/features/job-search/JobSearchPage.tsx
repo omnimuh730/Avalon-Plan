@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { LayoutGrid } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
@@ -12,16 +12,19 @@ import {
 import { JobBulkActionsBar } from "./components/JobBulkActionsBar";
 import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
+import { useJobSelection } from "./hooks/useJobSelection";
 import { cn } from "../../lib/utils";
 
 export function JobSearchPage() {
   const [filters, setFilters] = useState<JobSearchFilterState>(DEFAULT_JOB_FILTERS);
   const [showGrid, setShowGrid] = useState(false);
   const [showScoresOnCards, setShowScoresOnCards] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
   const { results, statusCounts, total } = useJobSearchResults(filters, removedIds);
+  const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } =
+    useJobSelection(results);
+
   const { items, page, pageSize, setPage, setPageSize, resetPage } = usePaginatedList({
     items: results,
     pageSize: 25,
@@ -29,36 +32,19 @@ export function JobSearchPage() {
 
   useEffect(() => {
     resetPage();
-    setSelectedIds(new Set());
-  }, [filters, removedIds, resetPage]);
+    clearSelection();
+  }, [filters, removedIds, resetPage, clearSelection]);
 
   const pageIds = useMemo(() => items.map((j) => j.id), [items]);
-  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
-  const selectedJobs = useMemo(
-    () => results.filter((j) => selectedIds.has(j.id)),
-    [results, selectedIds],
+  const selectedOnPage = useMemo(
+    () => pageIds.filter((id) => selectedIds.has(id)).length,
+    [pageIds, selectedIds],
   );
+  const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length;
 
-  const toggleSelect = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const toggleSelectAllOnPage = useCallback(() => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (allOnPageSelected) {
-        pageIds.forEach((id) => next.delete(id));
-      } else {
-        pageIds.forEach((id) => next.add(id));
-      }
-      return next;
-    });
-  }, [allOnPageSelected, pageIds]);
+  const toggleSelectAllOnPage = () => {
+    selectAllOnPage(pageIds, allOnPageSelected);
+  };
 
   const handleApplyAll = () => {
     selectedJobs.forEach((job) => window.open(job.applyUrl, "_blank", "noopener,noreferrer"));
@@ -74,7 +60,7 @@ export function JobSearchPage() {
       selectedIds.forEach((id) => next.add(id));
       return next;
     });
-    setSelectedIds(new Set());
+    clearSelection();
   };
 
   return (
@@ -88,9 +74,9 @@ export function JobSearchPage() {
       />
 
       <JobBulkActionsBar
+        selectedOnPage={selectedOnPage}
         pageCount={items.length}
-        totalFiltered={total}
-        selectedCount={selectedIds.size}
+        totalSelected={selectedIds.size}
         allOnPageSelected={allOnPageSelected}
         onToggleSelectAll={toggleSelectAllOnPage}
         onApplyAll={handleApplyAll}
@@ -126,7 +112,7 @@ export function JobSearchPage() {
         jobs={items}
         layout={showGrid ? "grid" : "list"}
         selectedIds={selectedIds}
-        onToggleSelect={toggleSelect}
+        onSelectJob={selectJob}
         showScores={showScoresOnCards}
       />
 

@@ -4,9 +4,9 @@ import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
 
 type JobBulkActionsBarProps = {
+  selectedOnPage: number;
   pageCount: number;
-  totalFiltered: number;
-  selectedCount: number;
+  totalSelected: number;
   allOnPageSelected: boolean;
   onToggleSelectAll: () => void;
   onApplyAll: () => void;
@@ -16,8 +16,9 @@ type JobBulkActionsBarProps = {
 };
 
 export function JobBulkActionsBar({
-  totalFiltered,
-  selectedCount,
+  selectedOnPage,
+  pageCount,
+  totalSelected,
   allOnPageSelected,
   onToggleSelectAll,
   onApplyAll,
@@ -25,6 +26,8 @@ export function JobBulkActionsBar({
   onRemove,
   className,
 }: JobBulkActionsBarProps) {
+  const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
+
   return (
     <div
       className={cn(
@@ -35,21 +38,30 @@ export function JobBulkActionsBar({
       <label className="inline-flex items-center gap-2 cursor-pointer select-none shrink-0">
         <input
           type="checkbox"
-          checked={allOnPageSelected && totalFiltered > 0}
+          checked={allOnPageSelected && pageCount > 0}
+          ref={(el) => {
+            if (el) el.indeterminate = indeterminate;
+          }}
           onChange={onToggleSelectAll}
           className="size-3.5 rounded border-border text-primary focus:ring-primary/30"
         />
         <span className="text-xs text-muted-foreground whitespace-nowrap">
-          Select page · <span className="text-foreground font-medium">{selectedCount}</span>/{totalFiltered}
+          Select page ·{" "}
+          <span className="text-foreground font-medium">
+            {selectedOnPage}/{pageCount}
+          </span>
+          {totalSelected > selectedOnPage && (
+            <span className="ml-1.5 text-primary">({totalSelected} total)</span>
+          )}
         </span>
       </label>
 
       <div className="flex items-center gap-1 ml-auto">
-        <Button variant="ghost" size="sm" className="h-8 px-2.5 gap-1" onClick={onApplyAll} disabled={selectedCount === 0}>
+        <Button variant="ghost" size="sm" className="h-8 px-2.5 gap-1" onClick={onApplyAll} disabled={totalSelected === 0}>
           <Send className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Apply</span>
         </Button>
-        <Button variant="ghost" size="sm" className="h-8 px-2.5 gap-1" onClick={onDownload} disabled={selectedCount === 0}>
+        <Button variant="ghost" size="sm" className="h-8 px-2.5 gap-1" onClick={onDownload} disabled={totalSelected === 0}>
           <Download className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Export</span>
         </Button>
@@ -58,7 +70,7 @@ export function JobBulkActionsBar({
           size="sm"
           className="h-8 px-2.5 gap-1 text-rose-600 hover:text-rose-700 hover:bg-rose-50"
           onClick={onRemove}
-          disabled={selectedCount === 0}
+          disabled={totalSelected === 0}
         >
           <Trash2 className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Remove</span>

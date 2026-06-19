@@ -7,7 +7,7 @@ type JobListViewProps = {
   jobs: Job[];
   layout?: "list" | "grid";
   selectedIds?: Set<string>;
-  onToggleSelect?: (id: string) => void;
+  onSelectJob?: (id: string, shiftKey: boolean) => void;
   showScores?: boolean;
 };
 
@@ -15,7 +15,7 @@ export function JobListView({
   jobs,
   layout = "list",
   selectedIds,
-  onToggleSelect,
+  onSelectJob,
   showScores = true,
 }: JobListViewProps) {
   if (jobs.length === 0) {
@@ -40,7 +40,7 @@ export function JobListView({
           key={job.id}
           job={job}
           selected={selectedIds?.has(job.id)}
-          onToggleSelect={onToggleSelect ? () => onToggleSelect(job.id) : undefined}
+          onSelect={onSelectJob ? (shiftKey) => onSelectJob(job.id, shiftKey) : undefined}
           showScores={showScores}
         />
       ))}

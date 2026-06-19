@@ -34,11 +34,13 @@ const WORK_MODE_LABELS: Record<Job["workMode"], string> = {
   onsite: "On-site",
 };
 
+const INTERACTIVE = "a, button, input, textarea, select, [data-no-select]";
+
 type JobCardProps = {
   job: Job;
   className?: string;
   selected?: boolean;
-  onToggleSelect?: () => void;
+  onSelect?: (shiftKey: boolean) => void;
   showScores?: boolean;
 };
 
@@ -78,31 +80,45 @@ export function JobCard({
   job,
   className,
   selected,
-  onToggleSelect,
+  onSelect,
   showScores = true,
 }: JobCardProps) {
   const [jdOpen, setJdOpen] = useState(false);
   const [saved, setSaved] = useState(job.status === "new");
 
+  const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
+    if (!onSelect) return;
+    if ((e.target as HTMLElement).closest(INTERACTIVE)) return;
+    onSelect(e.shiftKey);
+  };
+
   return (
     <>
       <article
+        role={onSelect ? "button" : undefined}
+        tabIndex={onSelect ? 0 : undefined}
+        onClick={handleCardClick}
+        onKeyDown={
+          onSelect
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect(e.shiftKey);
+                }
+              }
+            : undefined
+        }
+        aria-pressed={onSelect ? selected : undefined}
         className={cn(
-          "group bg-card border rounded-xl p-5 hover:shadow-md transition-all shadow-sm flex flex-col gap-4",
-          selected ? "border-primary/50 ring-2 ring-primary/15 bg-primary/[0.02]" : "border-border",
+          "group bg-card border-2 rounded-xl p-5 shadow-sm flex flex-col gap-4 transition-all duration-150",
+          onSelect && "cursor-pointer",
+          selected
+            ? "border-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.25)] bg-primary/[0.03]"
+            : "border-transparent ring-1 ring-border hover:shadow-md hover:ring-primary/20",
           className,
         )}
       >
         <div className="flex items-start gap-3">
-          {onToggleSelect && (
-            <input
-              type="checkbox"
-              checked={!!selected}
-              onChange={onToggleSelect}
-              className="mt-2 size-4 rounded border-border text-primary focus:ring-primary/30 shrink-0"
-              aria-label={`Select ${job.title}`}
-            />
-          )}
           <CompanyLogo job={job} />
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3">
@@ -114,7 +130,7 @@ export function JobCard({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline truncate"
-                    onClick={(e) => e.stopPropagation()}
+                    data-no-select
                   >
                     <Building2 className="w-3.5 h-3.5 shrink-0" />
                     {job.company}
@@ -168,8 +184,15 @@ export function JobCard({
 
         <div className="flex items-center justify-between gap-3 pt-1 border-t border-border/60">
           <span className="text-xs text-muted-foreground truncate">{job.source}</span>
-          <div className="flex items-center gap-2 shrink-0">
-            <Button variant="outline" size="sm" onClick={() => setJdOpen(true)}>
+          <div className="flex items-center gap-2 shrink-0" data-no-select>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                setJdOpen(true);
+              }}
+            >
               <FileText className="w-4 h-4" />
               View JD
             </Button>
@@ -178,7 +201,10 @@ export function JobCard({
               size="icon"
               className="size-8"
               title={saved ? "Unsave" : "Save job"}
-              onClick={() => setSaved((s) => !s)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSaved((s) => !s);
+              }}
             >
               <Bookmark className={cn("w-4 h-4", saved && "fill-current text-primary")} />
             </Button>
