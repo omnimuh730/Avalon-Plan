@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { createDefaultEditorDraft, createDefaultEditorDraftFromSummary } from "../../../data/resumes/seedDocument";
 import { resumeAiMock, estimateRefinementUsage } from "../../../services/resumeAiMock";
 import { resumeCatalog } from "../../../services/resumeCatalog";
+import { loadDefaultIdentity, getAiDefaults } from "../../../services/resumeProfileBridge";
 import {
   getEditorDraft,
-  getIdentityProfile,
   saveEditorDraft,
   saveGenerationRun,
 } from "../../../services/resumeStorage";
@@ -20,10 +20,13 @@ export function useResumeEditor() {
     let cancelled = false;
     (async () => {
       const stored = await getEditorDraft();
-      const profile = await getIdentityProfile();
+      const profile = await loadDefaultIdentity();
+      const ai = getAiDefaults();
       if (!cancelled) {
         setDraft({
           ...stored,
+          provider: ai.defaultProvider || stored.provider,
+          model: ai.defaultModel || stored.model,
           document: { ...stored.document, identity: { ...profile } },
         });
         setLoading(false);
@@ -46,7 +49,7 @@ export function useResumeEditor() {
   );
 
   const reloadProfile = useCallback(async () => {
-    const profile = await getIdentityProfile();
+    const profile = await loadDefaultIdentity();
     if (!draft) return;
     void persist({
       ...draft,
@@ -67,7 +70,7 @@ export function useResumeEditor() {
   }, [persist]);
 
   const resetDraft = useCallback(async () => {
-    const profile = await getIdentityProfile();
+    const profile = await loadDefaultIdentity();
     const next = createDefaultEditorDraft();
     next.document.identity = { ...profile };
     await persist(next);

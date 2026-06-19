@@ -7,8 +7,10 @@ import { initResumeStorage } from "../../services/resumeStorage";
 import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
 import { ResumeEditorTab } from "./components/ResumeEditorTab";
 import { ResumeHistoryTab } from "./components/ResumeHistoryTab";
+import { ResumeSetupTab } from "./components/ResumeSetupTab";
 
-type ResumeTab = "library" | "editor" | "history";
+const TABS = ["library", "editor", "history", "setup"] as const;
+type ResumeTab = (typeof TABS)[number];
 
 export function ResumesPage() {
   const nav = useResumeNavigationOptional();
@@ -38,10 +40,6 @@ export function ResumesPage() {
     setTab("editor");
   }, []);
 
-  const handleGenerateShortcut = () => {
-    setTab("editor");
-  };
-
   if (!ready) {
     return (
       <PageShell>
@@ -50,21 +48,25 @@ export function ResumesPage() {
     );
   }
 
+  const tabPills = (
+    <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 scroll-row">
+      {TABS.map((t) => (
+        <Pill key={t} active={tab === t} onClick={() => setTab(t)}>
+          {t.charAt(0).toUpperCase() + t.slice(1)}
+        </Pill>
+      ))}
+    </div>
+  );
+
   return (
     <PageShell fullWidth={tab === "editor"}>
       <div className={tab === "editor" ? "h-full flex flex-col overflow-hidden" : "page-container"}>
         {tab !== "editor" && (
           <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-            <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 scroll-row">
-              {(["library", "editor", "history"] as const).map((t) => (
-                <Pill key={t} active={tab === t} onClick={() => setTab(t)}>
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
-                </Pill>
-              ))}
-            </div>
+            {tabPills}
             <button
               type="button"
-              onClick={handleGenerateShortcut}
+              onClick={() => setTab("editor")}
               className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10"
             >
               <Wand2 className="w-4 h-4" />Generate
@@ -73,10 +75,11 @@ export function ResumesPage() {
         )}
 
         {tab === "library" && <ResumeLibraryTab onOpenEditor={openEditor} />}
+        {tab === "setup" && <ResumeSetupTab />}
         {tab === "editor" && (
           <div className="flex-1 min-h-0 flex flex-col">
             <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 m-4 mb-0 w-fit scroll-row flex-shrink-0">
-              {(["library", "editor", "history"] as const).map((t) => (
+              {TABS.map((t) => (
                 <Pill key={t} active={tab === t} onClick={() => setTab(t)}>
                   {t.charAt(0).toUpperCase() + t.slice(1)}
                 </Pill>

@@ -121,10 +121,6 @@ export function ProfilePreferencesCard({
         <Field label="Desired salary (annual)" value={profile.desiredSalary} onChange={(v) => onChange({ desiredSalary: v })} />
         <SelectField label="Work authorization" value={profile.workAuth} onChange={(v) => onChange({ workAuth: v })} options={["Authorized to work in US", "Require sponsorship"]} />
         <SelectField label="Remote preference" value={profile.remotePreference} onChange={(v) => onChange({ remotePreference: v })} options={["Remote preferred", "Hybrid", "On-site OK"]} />
-        <Field label="OpenAI API key" value={profile.openaiKey} onChange={(v) => onChange({ openaiKey: v })} type="password" />
-        <SelectField label="OpenAI model" value={profile.openaiModel} onChange={(v) => onChange({ openaiModel: v })} options={["gpt-5-nano", "gpt-4o", "gpt-4o-mini"]} />
-        <Field label="Deepseek API key" value={profile.deepseekKey} onChange={(v) => onChange({ deepseekKey: v })} type="password" />
-        <Field label="Resume folder path" value={profile.resumeFolder} onChange={(v) => onChange({ resumeFolder: v })} />
       </div>
     </div>
   );

@@ -2,10 +2,8 @@ import React, { useState } from "react";
 import { Settings, Globe } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { Pill } from "../../components/ui";
-import { ThemeToggle } from "../../components/shared/ThemeToggle";
 import { cn } from "../../lib/utils";
 import { ProfileTab } from "./components/ProfileTab";
-import { ResumeSettingsPanel } from "../resumes/components/ResumeSettingsPanel";
 
 const INTEGRATIONS = [
   { n: "LinkedIn", st: "connected", d: "Import jobs and sync application status" },
@@ -21,14 +19,13 @@ export function SettingsPage() {
   return (
     <PageShell>
       <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 w-fit mb-6 scroll-row">
-        {["profile", "resume", "notifications", "integrations", "security"].map((t) => (
+        {["profile", "notifications", "integrations", "security"].map((t) => (
           <Pill key={t} active={tab === t} onClick={() => setTab(t)}>
             {t}
           </Pill>
         ))}
       </div>
       {tab === "profile" && <ProfileTab />}
-      {tab === "resume" && <ResumeSettingsPanel />}
       {tab === "integrations" && (
         <div className="space-y-4 max-w-2xl">
           {INTEGRATIONS.map((int) => (
