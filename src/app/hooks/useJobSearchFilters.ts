@@ -151,22 +151,148 @@ export function countJobsByStatus(
 }
 
 export function countActiveFilters(filters: JobSearchFilterState): number {
+  return countAttributeFilters(filters) + countScoreFilters(filters);
+}
+
+export function countAttributeFilters(filters: JobSearchFilterState): number {
   let n = 0;
-  if (filters.jobQuery.trim()) n++;
-  if (filters.companyQuery.trim()) n++;
   if (filters.source !== "all") n++;
   if (filters.location !== "all") n++;
   if (filters.workMode !== "all") n++;
   if (filters.seniority !== "all") n++;
   if (filters.industry !== "all") n++;
   if (filters.postedFrom || filters.postedTo) n++;
+  return n;
+}
 
+export function countScoreFilters(filters: JobSearchFilterState): number {
+  let n = 0;
   for (const key of Object.keys(filters.scores) as (keyof JobScoreFilters)[]) {
     const r = filters.scores[key];
     if (r.min !== 0 || r.max !== 100) n++;
   }
-
   return n;
+}
+
+export function clearAttributeFilters(filters: JobSearchFilterState): JobSearchFilterState {
+  return {
+    ...filters,
+    source: "all",
+    location: "all",
+    workMode: "all",
+    seniority: "all",
+    industry: "all",
+    postedFrom: "",
+    postedTo: "",
+  };
+}
+
+export function clearScoreFilters(filters: JobSearchFilterState): JobSearchFilterState {
+  return {
+    ...filters,
+    scores: {
+      overall: { ...DEFAULT_SCORE_RANGE },
+      skill: { ...DEFAULT_SCORE_RANGE },
+      salary: { ...DEFAULT_SCORE_RANGE },
+      bidEst: { ...DEFAULT_SCORE_RANGE },
+      freshness: { ...DEFAULT_SCORE_RANGE },
+    },
+  };
+}
+
+export function clearAllFilters(filters: JobSearchFilterState): JobSearchFilterState {
+  return clearScoreFilters(clearAttributeFilters({ ...filters, jobQuery: "", companyQuery: "" }));
+}
+
+export type ActiveFilterChip = {
+  id: string;
+  label: string;
+  apply: (filters: JobSearchFilterState) => JobSearchFilterState;
+};
+
+export function getActiveFilterChips(filters: JobSearchFilterState): ActiveFilterChip[] {
+  const chips: ActiveFilterChip[] = [];
+
+  if (filters.jobQuery.trim()) {
+    chips.push({
+      id: "jobQuery",
+      label: `Role: ${filters.jobQuery}`,
+      apply: (f) => ({ ...f, jobQuery: "" }),
+    });
+  }
+  if (filters.companyQuery.trim()) {
+    chips.push({
+      id: "companyQuery",
+      label: `Company: ${filters.companyQuery}`,
+      apply: (f) => ({ ...f, companyQuery: "" }),
+    });
+  }
+  if (filters.source !== "all") {
+    chips.push({
+      id: "source",
+      label: `Source: ${filters.source}`,
+      apply: (f) => ({ ...f, source: "all" }),
+    });
+  }
+  if (filters.location !== "all") {
+    chips.push({
+      id: "location",
+      label: filters.location,
+      apply: (f) => ({ ...f, location: "all" }),
+    });
+  }
+  if (filters.workMode !== "all") {
+    chips.push({
+      id: "workMode",
+      label: filters.workMode,
+      apply: (f) => ({ ...f, workMode: "all" }),
+    });
+  }
+  if (filters.seniority !== "all") {
+    chips.push({
+      id: "seniority",
+      label: filters.seniority,
+      apply: (f) => ({ ...f, seniority: "all" }),
+    });
+  }
+  if (filters.industry !== "all") {
+    chips.push({
+      id: "industry",
+      label: filters.industry,
+      apply: (f) => ({ ...f, industry: "all" }),
+    });
+  }
+  if (filters.postedFrom || filters.postedTo) {
+    chips.push({
+      id: "posted",
+      label: `Posted ${filters.postedFrom || "…"} – ${filters.postedTo || "…"}`,
+      apply: (f) => ({ ...f, postedFrom: "", postedTo: "" }),
+    });
+  }
+
+  const scoreLabels: Record<keyof JobScoreFilters, string> = {
+    overall: "Overall",
+    skill: "Skill",
+    salary: "Salary",
+    bidEst: "Bid",
+    freshness: "Fresh",
+  };
+
+  for (const key of Object.keys(filters.scores) as (keyof JobScoreFilters)[]) {
+    const r = filters.scores[key];
+    if (r.min !== 0 || r.max !== 100) {
+      chips.push({
+        id: `score-${key}`,
+        label: `${scoreLabels[key]} ${r.min}–${r.max}`,
+        apply: (f) => ({
+          ...f,
+          scores: { ...f.scores, [key]: { ...DEFAULT_SCORE_RANGE } },
+        }),
+      });
+    }
+  }
+
+  return chips;
 }
 
 export function useJobSearchResults(

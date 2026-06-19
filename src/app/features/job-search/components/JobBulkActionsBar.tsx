@@ -16,7 +16,6 @@ type JobBulkActionsBarProps = {
 };
 
 export function JobBulkActionsBar({
-  pageCount,
   totalFiltered,
   selectedCount,
   allOnPageSelected,
@@ -29,55 +28,40 @@ export function JobBulkActionsBar({
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center gap-3 py-2.5 px-4 rounded-xl border border-dashed border-border bg-secondary/20",
+        "flex items-center gap-2 py-1.5 px-2 rounded-lg border border-border/60 bg-secondary/20 text-sm",
         className,
       )}
     >
-      <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+      <label className="inline-flex items-center gap-2 cursor-pointer select-none shrink-0">
         <input
           type="checkbox"
-          checked={allOnPageSelected && pageCount > 0}
+          checked={allOnPageSelected && totalFiltered > 0}
           onChange={onToggleSelectAll}
-          className="size-4 rounded border-border text-primary focus:ring-primary/30"
+          className="size-3.5 rounded border-border text-primary focus:ring-primary/30"
         />
-        <span className="text-sm font-medium text-foreground">
-          Select all on page
-          <span className="text-muted-foreground font-normal ml-1.5">
-            ({selectedCount} of {totalFiltered.toLocaleString()} in filter)
-          </span>
+        <span className="text-xs text-muted-foreground whitespace-nowrap">
+          Select page · <span className="text-foreground font-medium">{selectedCount}</span>/{totalFiltered}
         </span>
       </label>
 
-      <div className="flex items-center gap-2 ml-auto flex-wrap">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onApplyAll}
-          disabled={selectedCount === 0}
-          className="gap-1.5"
-        >
-          <Send className="w-4 h-4" />
-          Apply all
+      <div className="flex items-center gap-1 ml-auto">
+        <Button variant="ghost" size="sm" className="h-8 px-2.5 gap-1" onClick={onApplyAll} disabled={selectedCount === 0}>
+          <Send className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Apply</span>
+        </Button>
+        <Button variant="ghost" size="sm" className="h-8 px-2.5 gap-1" onClick={onDownload} disabled={selectedCount === 0}>
+          <Download className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Export</span>
         </Button>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
-          onClick={onDownload}
-          disabled={selectedCount === 0}
-          className="gap-1.5"
-        >
-          <Download className="w-4 h-4" />
-          Download
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
+          className="h-8 px-2.5 gap-1 text-rose-600 hover:text-rose-700 hover:bg-rose-50"
           onClick={onRemove}
           disabled={selectedCount === 0}
-          className="gap-1.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200"
         >
-          <Trash2 className="w-4 h-4" />
-          Remove
+          <Trash2 className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Remove</span>
         </Button>
       </div>
     </div>

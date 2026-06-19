@@ -16,10 +16,8 @@ import { cn } from "../../lib/utils";
 
 export function JobSearchPage() {
   const [filters, setFilters] = useState<JobSearchFilterState>(DEFAULT_JOB_FILTERS);
-  const [filtersVisible, setFiltersVisible] = useState(true);
-  const [scoresVisible, setScoresVisible] = useState(true);
   const [showGrid, setShowGrid] = useState(false);
-  const [showScoresOnCards, setShowScoresOnCards] = useState(true);
+  const [showScoresOnCards, setShowScoresOnCards] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
@@ -85,16 +83,8 @@ export function JobSearchPage() {
         filters={filters}
         onChange={setFilters}
         statusCounts={statusCounts}
-        filtersVisible={filtersVisible}
-        scoresVisible={scoresVisible}
-        onToggleFilters={() => setFiltersVisible((v) => !v)}
-        onToggleScores={() => {
-          setScoresVisible((v) => {
-            const next = !v;
-            setShowScoresOnCards(next);
-            return next;
-          });
-        }}
+        showScoresOnCards={showScoresOnCards}
+        onShowScoresOnCardsChange={setShowScoresOnCards}
       />
 
       <JobBulkActionsBar
