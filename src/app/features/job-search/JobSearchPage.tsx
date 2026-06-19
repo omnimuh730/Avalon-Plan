@@ -3,7 +3,6 @@ import { LayoutGrid } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { ListToolbar } from "../../components/shared/ListToolbar";
 import { PaginationBar } from "../../components/shared/PaginationBar";
-import { Badge, Score } from "../../components/ui";
 import { usePaginatedList } from "../../hooks/usePaginatedList";
 import {
   useJobSearchFilters,
@@ -13,13 +12,6 @@ import {
 } from "../../hooks/useJobSearchFilters";
 import { JobListView } from "./components/JobListView";
 import { cn } from "../../lib/utils";
-import type { BadgeVariant } from "../../types";
-
-const STATUS_VARIANTS: Record<string, BadgeVariant> = {
-  saved: "blue",
-  applied: "success",
-  closed: "subtle",
-};
 
 export function JobSearchPage() {
   const [search, setSearch] = useState("");
@@ -98,26 +90,7 @@ export function JobSearchPage() {
 
       <PaginationBar page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
 
-      {showGrid ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 py-2">
-          {items.map((j) => (
-            <div
-              key={j.id}
-              className="bg-card border border-border rounded-xl p-5 hover:shadow-md transition-all shadow-sm"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <Score score={j.matchScore} />
-                <Badge v={STATUS_VARIANTS[j.status]}>{j.status}</Badge>
-              </div>
-              <h3 className="text-base font-bold text-foreground mb-1">{j.title}</h3>
-              <p className="text-sm text-muted-foreground">{j.company} · {j.location}</p>
-              <p className="text-sm font-semibold text-foreground mt-3">{j.salary}</p>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <JobListView jobs={items} />
-      )}
+      <JobListView jobs={items} layout={showGrid ? "grid" : "list"} />
 
       <PaginationBar page={page} pageSize={pageSize} total={total} onPageChange={setPage} className="mt-2" />
     </PageShell>
