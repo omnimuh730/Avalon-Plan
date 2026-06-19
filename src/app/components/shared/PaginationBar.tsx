@@ -15,8 +15,11 @@ type PaginationBarProps = {
   pageSize: number;
   total: number;
   onPageChange: (page: number) => void;
+  onPageSizeChange?: (size: number) => void;
+  pageSizeOptions?: number[];
   className?: string;
   align?: "left" | "center" | "between";
+  detailed?: boolean;
 };
 
 function pageNumbers(current: number, total: number): (number | "ellipsis")[] {
@@ -36,13 +39,17 @@ export function PaginationBar({
   pageSize,
   total,
   onPageChange,
+  onPageSizeChange,
+  pageSizeOptions = [10, 25, 50],
   className,
   align = "between",
+  detailed = false,
 }: PaginationBarProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, total);
   const pages = pageNumbers(page, totalPages);
+  const showingCount = total === 0 ? 0 : end - start + 1;
 
   return (
     <div
@@ -54,9 +61,31 @@ export function PaginationBar({
         className,
       )}
     >
-      <p className="text-sm text-muted-foreground whitespace-nowrap">
-        {total === 0 ? "No results" : `${start}–${end} of ${total}`}
-      </p>
+      <div className="flex items-center gap-4 flex-wrap">
+        <p className="text-sm text-muted-foreground whitespace-nowrap">
+          {total === 0
+            ? "No results"
+            : detailed
+              ? `Showing ${showingCount} of ${total.toLocaleString()} · Page ${page} / ${totalPages}`
+              : `${start}–${end} of ${total}`}
+        </p>
+        {onPageSizeChange && (
+          <label className="flex items-center gap-2">
+            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Per page</span>
+            <select
+              value={pageSize}
+              onChange={(e) => onPageSizeChange(Number(e.target.value))}
+              className="bg-secondary border border-border rounded-xl px-3 py-1.5 text-sm text-foreground outline-none focus:border-primary/40 min-h-9"
+            >
+              {pageSizeOptions.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
       <Pagination className="mx-0 w-auto">
         <PaginationContent>
           <PaginationItem>

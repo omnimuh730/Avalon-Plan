@@ -6,9 +6,18 @@ import type { Job } from "../../../types";
 type JobListViewProps = {
   jobs: Job[];
   layout?: "list" | "grid";
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  showScores?: boolean;
 };
 
-export function JobListView({ jobs, layout = "list" }: JobListViewProps) {
+export function JobListView({
+  jobs,
+  layout = "list",
+  selectedIds,
+  onToggleSelect,
+  showScores = true,
+}: JobListViewProps) {
   if (jobs.length === 0) {
     return (
       <div className="py-16 text-center text-muted-foreground text-sm">
@@ -27,7 +36,13 @@ export function JobListView({ jobs, layout = "list" }: JobListViewProps) {
       )}
     >
       {jobs.map((job) => (
-        <JobCard key={job.id} job={job} />
+        <JobCard
+          key={job.id}
+          job={job}
+          selected={selectedIds?.has(job.id)}
+          onToggleSelect={onToggleSelect ? () => onToggleSelect(job.id) : undefined}
+          showScores={showScores}
+        />
       ))}
     </div>
   );

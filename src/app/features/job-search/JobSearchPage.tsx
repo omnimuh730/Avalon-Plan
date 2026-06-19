@@ -1,98 +1,155 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { LayoutGrid } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
-import { ListToolbar } from "../../components/shared/ListToolbar";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { usePaginatedList } from "../../hooks/usePaginatedList";
 import {
-  useJobSearchFilters,
-  JOB_SOURCES,
-  JOB_LOCATIONS,
-  type JobSortKey,
+  DEFAULT_JOB_FILTERS,
+  downloadJobsCsv,
+  useJobSearchResults,
+  type JobSearchFilterState,
 } from "../../hooks/useJobSearchFilters";
+import { JobBulkActionsBar } from "./components/JobBulkActionsBar";
 import { JobListView } from "./components/JobListView";
+import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { cn } from "../../lib/utils";
 
 export function JobSearchPage() {
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
-  const [source, setSource] = useState("all");
-  const [location, setLocation] = useState("all");
-  const [sort, setSort] = useState<JobSortKey>("matchScore");
+  const [filters, setFilters] = useState<JobSearchFilterState>(DEFAULT_JOB_FILTERS);
+  const [filtersVisible, setFiltersVisible] = useState(true);
+  const [scoresVisible, setScoresVisible] = useState(true);
   const [showGrid, setShowGrid] = useState(false);
+  const [showScoresOnCards, setShowScoresOnCards] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
-  const filtered = useJobSearchFilters(search, status, source, location, sort);
-  const { items, total, page, pageSize, setPage, setPageSize } = usePaginatedList({
-    items: filtered,
-    pageSize: 10,
+  const { results, statusCounts, total } = useJobSearchResults(filters, removedIds);
+  const { items, page, pageSize, setPage, setPageSize, resetPage } = usePaginatedList({
+    items: results,
+    pageSize: 25,
   });
+
+  useEffect(() => {
+    resetPage();
+    setSelectedIds(new Set());
+  }, [filters, removedIds, resetPage]);
+
+  const pageIds = useMemo(() => items.map((j) => j.id), [items]);
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+  const selectedJobs = useMemo(
+    () => results.filter((j) => selectedIds.has(j.id)),
+    [results, selectedIds],
+  );
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAllOnPage = useCallback(() => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) {
+        pageIds.forEach((id) => next.delete(id));
+      } else {
+        pageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  }, [allOnPageSelected, pageIds]);
+
+  const handleApplyAll = () => {
+    selectedJobs.forEach((job) => window.open(job.applyUrl, "_blank", "noopener,noreferrer"));
+  };
+
+  const handleDownload = () => {
+    downloadJobsCsv(selectedJobs, `jobs-${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
+  const handleRemove = () => {
+    setRemovedIds((prev) => {
+      const next = new Set(prev);
+      selectedIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setSelectedIds(new Set());
+  };
 
   return (
     <PageShell>
-      <ListToolbar
-        search={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search roles, companies..."
-        filters={[
-          {
-            label: "Status",
-            value: status,
-            options: [
-              { value: "all", label: "All status" },
-              { value: "saved", label: "Saved" },
-              { value: "applied", label: "Applied" },
-              { value: "closed", label: "Closed" },
-            ],
-            onChange: setStatus,
-          },
-          {
-            label: "Source",
-            value: source,
-            options: JOB_SOURCES.map((s) => ({ value: s, label: s === "all" ? "All sources" : s })),
-            onChange: setSource,
-          },
-          {
-            label: "Location",
-            value: location,
-            options: JOB_LOCATIONS.map((l) => ({ value: l, label: l === "all" ? "All locations" : l })),
-            onChange: setLocation,
-          },
-        ]}
-        sort={{
-          value: sort,
-          options: [
-            { value: "matchScore", label: "Best match" },
-            { value: "posted", label: "Most recent" },
-            { value: "salary", label: "Highest salary" },
-            { value: "title", label: "Title A–Z" },
-          ],
-          onChange: (v) => setSort(v as JobSortKey),
+      <JobSearchFilterPanel
+        filters={filters}
+        onChange={setFilters}
+        statusCounts={statusCounts}
+        filtersVisible={filtersVisible}
+        scoresVisible={scoresVisible}
+        onToggleFilters={() => setFiltersVisible((v) => !v)}
+        onToggleScores={() => {
+          setScoresVisible((v) => {
+            const next = !v;
+            setShowScoresOnCards(next);
+            return next;
+          });
         }}
-        pageSize={{
-          value: pageSize,
-          options: [10, 25, 50],
-          onChange: setPageSize,
-        }}
-        actions={
-          <button
-            type="button"
-            onClick={() => setShowGrid((g) => !g)}
-            className={cn(
-              "icon-btn border border-border",
-              showGrid ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary",
-            )}
-            title="Toggle grid view"
-          >
-            <LayoutGrid className="w-5 h-5" />
-          </button>
-        }
       />
 
-      <PaginationBar page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
+      <JobBulkActionsBar
+        pageCount={items.length}
+        totalFiltered={total}
+        selectedCount={selectedIds.size}
+        allOnPageSelected={allOnPageSelected}
+        onToggleSelectAll={toggleSelectAllOnPage}
+        onApplyAll={handleApplyAll}
+        onDownload={handleDownload}
+        onRemove={handleRemove}
+        className="mb-3"
+      />
 
-      <JobListView jobs={items} layout={showGrid ? "grid" : "list"} />
+      <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+        <PaginationBar
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          pageSizeOptions={[10, 25, 50, 100]}
+          detailed
+        />
+        <button
+          type="button"
+          onClick={() => setShowGrid((g) => !g)}
+          className={cn(
+            "icon-btn border border-border",
+            showGrid ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary",
+          )}
+          title="Toggle grid view"
+        >
+          <LayoutGrid className="w-5 h-5" />
+        </button>
+      </div>
 
-      <PaginationBar page={page} pageSize={pageSize} total={total} onPageChange={setPage} className="mt-2" />
+      <JobListView
+        jobs={items}
+        layout={showGrid ? "grid" : "list"}
+        selectedIds={selectedIds}
+        onToggleSelect={toggleSelect}
+        showScores={showScoresOnCards}
+      />
+
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        pageSizeOptions={[10, 25, 50, 100]}
+        detailed
+        className="mt-2"
+      />
     </PageShell>
   );
 }

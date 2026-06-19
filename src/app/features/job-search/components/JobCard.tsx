@@ -18,13 +18,14 @@ import {
   DialogTitle,
 } from "../../../components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
-import { cn } from "../../../lib/utils";
+import { cn, mono } from "../../../lib/utils";
 import type { BadgeVariant, Job } from "../../../types";
 
 const STATUS_VARIANTS: Record<string, BadgeVariant> = {
-  saved: "blue",
+  new: "blue",
   applied: "success",
-  closed: "subtle",
+  scheduled: "amber",
+  declined: "err",
 };
 
 const WORK_MODE_LABELS: Record<Job["workMode"], string> = {
@@ -36,6 +37,9 @@ const WORK_MODE_LABELS: Record<Job["workMode"], string> = {
 type JobCardProps = {
   job: Job;
   className?: string;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  showScores?: boolean;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -59,19 +63,46 @@ function InfoChip({ children }: { children: React.ReactNode }) {
   return <Badge v="subtle">{children}</Badge>;
 }
 
-export function JobCard({ job, className }: JobCardProps) {
+function MiniScore({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg bg-secondary/60 border border-border/60 min-w-[52px]">
+      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</span>
+      <span className="text-xs font-bold text-foreground tabular-nums" style={mono}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+export function JobCard({
+  job,
+  className,
+  selected,
+  onToggleSelect,
+  showScores = true,
+}: JobCardProps) {
   const [jdOpen, setJdOpen] = useState(false);
-  const [saved, setSaved] = useState(job.status === "saved");
+  const [saved, setSaved] = useState(job.status === "new");
 
   return (
     <>
       <article
         className={cn(
-          "group bg-card border border-border rounded-xl p-5 hover:shadow-md transition-all shadow-sm flex flex-col gap-4",
+          "group bg-card border rounded-xl p-5 hover:shadow-md transition-all shadow-sm flex flex-col gap-4",
+          selected ? "border-primary/50 ring-2 ring-primary/15 bg-primary/[0.02]" : "border-border",
           className,
         )}
       >
         <div className="flex items-start gap-3">
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={onToggleSelect}
+              className="mt-2 size-4 rounded border-border text-primary focus:ring-primary/30 shrink-0"
+              aria-label={`Select ${job.title}`}
+            />
+          )}
           <CompanyLogo job={job} />
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3">
@@ -93,12 +124,21 @@ export function JobCard({ job, className }: JobCardProps) {
                 </div>
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
-                <Score score={job.matchScore} />
+                <Score score={job.scores.overall} />
                 <Badge v={STATUS_VARIANTS[job.status]}>{job.status}</Badge>
               </div>
             </div>
           </div>
         </div>
+
+        {showScores && (
+          <div className="flex flex-wrap gap-2">
+            <MiniScore label="Skill" value={job.scores.skill} />
+            <MiniScore label="Salary" value={job.scores.salary} />
+            <MiniScore label="Bid" value={job.scores.bidEst} />
+            <MiniScore label="Fresh" value={job.scores.freshness} />
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-1.5">
           {job.industries.map((industry) => (

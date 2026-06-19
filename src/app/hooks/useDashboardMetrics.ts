@@ -6,7 +6,7 @@ import { APPLICATIONS, FUNNEL } from "../data/applications";
 export function useDashboardMetrics() {
   return useMemo(() => {
     const activeApps = APPLICATIONS.filter((a) => a.stage !== "Hired").length;
-    const savedJobs = JOBS.filter((j) => j.status === "saved").length;
+    const savedJobs = JOBS.filter((j) => j.status === "new").length;
     const appliedJobs = JOBS.filter((j) => j.status === "applied").length;
     const interviews = CALENDAR_EVENTS.filter((e) => e.type === "interview");
     const offers = APPLICATIONS.filter((a) => a.stage === "Offer").length;
