@@ -1,12 +1,27 @@
-import type { MailLabel, MailThread } from "../../types";
+import type { MailLabel, MailThread, BadgeVariant } from "../../types";
 
 export const MAIL_LABELS: MailLabel[] = [
   { id: "application", name: "Application", color: "success" },
   { id: "notify", name: "Notify", color: "pink" },
   { id: "interview", name: "Interview", color: "violet" },
+  { id: "interview-phone", name: "Phone Screen", color: "violet", parentId: "interview" },
+  { id: "interview-tech", name: "Technical", color: "violet", parentId: "interview" },
   { id: "offer", name: "Offer", color: "amber" },
   { id: "job", name: "Job", color: "blue" },
 ];
+
+/** Tailwind bg classes for label dots (static — no dynamic class strings). */
+export const LABEL_DOT_CLASS: Record<BadgeVariant, string> = {
+  default: "bg-foreground/40",
+  success: "bg-emerald-500",
+  warn: "bg-amber-500",
+  err: "bg-red-500",
+  violet: "bg-violet-500",
+  blue: "bg-blue-500",
+  subtle: "bg-muted-foreground/50",
+  amber: "bg-amber-500",
+  pink: "bg-pink-500",
+};
 
 export const MAIL_THREADS: MailThread[] = [
   {
@@ -145,10 +160,14 @@ export const MAIL_THREADS: MailThread[] = [
 
 export const MAIL_TAG_VARIANTS: Record<string, "violet" | "success" | "blue" | "subtle" | "pink" | "amber"> = {
   Interview: "violet",
+  "Phone Screen": "violet",
+  Technical: "violet",
   Offer: "success",
   Assessment: "blue",
   Recruiter: "subtle",
   Application: "success",
+  Notify: "pink",
+  Job: "blue",
 };
 
 export const MAIL_FOLDERS = [

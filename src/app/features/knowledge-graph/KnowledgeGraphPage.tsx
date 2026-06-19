@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import React from "react";
 import { Sparkles } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import type { SkillRelationType } from "../../types/knowledgeGraph";

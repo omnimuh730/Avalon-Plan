@@ -14,7 +14,7 @@ export interface MailThread {
   time: string;
   unread: boolean;
   tag: string;
-  folder: "inbox" | "sent" | "drafts" | "trash" | "spam";
+  folder: "inbox" | "sent" | "drafts" | "trash" | "spam" | "archive";
   labels: string[];
 }
 
@@ -22,6 +22,8 @@ export interface MailLabel {
   id: string;
   name: string;
   color: BadgeVariant;
+  /** When set, this label is nested under the parent in the sidebar. */
+  parentId?: string;
 }
 
 export interface Resume {

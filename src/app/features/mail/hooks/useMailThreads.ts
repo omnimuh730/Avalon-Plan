@@ -43,6 +43,7 @@ export function useMailThreads() {
       folder: "sent",
       labels: [],
       unread: false,
+      tag: "",
     };
     setThreads((prev) => [thread, ...prev]);
     setComposeOpen(false);

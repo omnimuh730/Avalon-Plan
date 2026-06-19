@@ -2,7 +2,8 @@ import React, { useMemo, useState } from "react";
 import { CalendarHeader } from "./components/CalendarHeader";
 import { MonthGrid } from "./components/MonthGrid";
 import { WeekTimeGrid } from "./components/WeekTimeGrid";
-import { InterviewConfirmPanel } from "./components/InterviewConfirmPanel";
+import { EventFormPanel } from "./components/EventFormPanel";
+import { InterviewPipelineTab } from "./components/InterviewPipelineTab";
 import { CALENDAR_EVENTS, eventsInWeek, type CalendarEvent } from "../../data/calendar";
 
 function startOfWeek(d: Date): Date {
@@ -12,53 +13,54 @@ function startOfWeek(d: Date): Date {
   return r;
 }
 
+type PanelMode = "create" | "edit" | null;
+
 export function CalendarPage() {
   const today = useMemo(() => new Date(2026, 5, 18), []);
   const [cur, setCur] = useState(new Date(2026, 5, 1));
-  const [view, setView] = useState<"month" | "week">("month");
+  const [view, setView] = useState<"month" | "week" | "pipeline">("month");
   const [events, setEvents] = useState(CALENDAR_EVENTS);
   const [selected, setSelected] = useState<CalendarEvent | null>(null);
+  const [panelMode, setPanelMode] = useState<PanelMode>(null);
 
   const weekStart = startOfWeek(view === "week" ? cur : today);
   const label =
-    view === "month"
-      ? cur.toLocaleDateString("en-US", { month: "long", year: "numeric" })
-      : `${weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(weekStart.getTime() + 6 * 86400000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+    view === "pipeline"
+      ? "Interview pipeline"
+      : view === "month"
+        ? cur.toLocaleDateString("en-US", { month: "long", year: "numeric" })
+        : `${weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(weekStart.getTime() + 6 * 86400000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
   const weekEvents = eventsInWeek(weekStart, events);
 
-  const handleConfirm = (id: string, confirmed: boolean, times?: { start: string; end: string }) => {
+  const openCreate = () => {
+    setSelected(null);
+    setPanelMode("create");
+  };
+
+  const openEdit = (event: CalendarEvent) => {
+    setSelected(event);
+    setPanelMode("edit");
+  };
+
+  const closePanel = () => {
+    setPanelMode(null);
+    setSelected(null);
+  };
+
+  const handleSave = (event: CalendarEvent) => {
     setEvents((prev) => {
-      const next = prev.map((e) => {
-        if (e.id !== id) return e;
-        let start = e.start;
-        let end = e.end;
-        if (times?.start && times?.end) {
-          const base = new Date(e.start);
-          const [sh, sm] = times.start.split(":").map(Number);
-          const [eh, em] = times.end.split(":").map(Number);
-          const ns = new Date(base);
-          ns.setHours(sh, sm, 0, 0);
-          const ne = new Date(base);
-          ne.setHours(eh, em, 0, 0);
-          start = ns.toISOString();
-          end = ne.toISOString();
-        }
-        return { ...e, confirmed, start, end };
-      });
-      setSelected((s) => {
-        if (s?.id !== id) return s;
-        return next.find((e) => e.id === id) ?? s;
-      });
-      return next;
+      const exists = prev.some((e) => e.id === event.id);
+      return exists ? prev.map((e) => (e.id === event.id ? event : e)) : [...prev, event];
     });
   };
 
+  const handleDelete = (id: string) => {
+    setEvents((prev) => prev.filter((e) => e.id !== id));
+  };
+
   return (
-    <div
-      className="h-full flex flex-col p-6 overflow-hidden relative"
-      onClick={() => setSelected(null)}
-    >
+    <div className="h-full flex flex-col p-6 overflow-hidden relative">
       <CalendarHeader
         label={label}
         view={view}
@@ -78,23 +80,24 @@ export function CalendarPage() {
           )
         }
         onToday={() => setCur(new Date(today))}
+        onAddEvent={openCreate}
       />
-      <div onClick={(e) => e.stopPropagation()}>
-        {view === "month" ? (
-          <MonthGrid cur={cur} today={today} events={events} onEventClick={setSelected} />
-        ) : (
-          <WeekTimeGrid
-            weekStart={weekStart}
-            events={weekEvents}
-            today={today}
-            onEventClick={setSelected}
-          />
-        )}
-      </div>
-      <InterviewConfirmPanel
-        event={selected}
-        onClose={() => setSelected(null)}
-        onConfirm={handleConfirm}
+
+      {view === "month" && (
+        <MonthGrid cur={cur} today={today} events={events} onEventClick={openEdit} />
+      )}
+      {view === "week" && (
+        <WeekTimeGrid weekStart={weekStart} events={weekEvents} today={today} onEventClick={openEdit} />
+      )}
+      {view === "pipeline" && <InterviewPipelineTab events={events} />}
+
+      <EventFormPanel
+        open={panelMode !== null}
+        mode={panelMode === "create" ? "create" : "edit"}
+        event={panelMode === "edit" ? selected : null}
+        onClose={closePanel}
+        onSave={handleSave}
+        onDelete={handleDelete}
       />
     </div>
   );

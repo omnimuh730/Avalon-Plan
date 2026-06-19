@@ -2,7 +2,7 @@
 
 import React from "react";
 import { cn } from "../../lib/utils";
-import { Sheet, SheetContent } from "../ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "../ui/sheet";
 
 const WIDTHS = {
   sm: "sm:max-w-sm",
@@ -34,6 +34,7 @@ export function SlidePanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side={side}
+        aria-describedby={undefined}
         className={cn(
           "w-full p-0 gap-0 flex flex-col bg-card border-border shadow-xl",
           WIDTHS[width],
@@ -41,6 +42,8 @@ export function SlidePanel({
           className,
         )}
       >
+        <SheetTitle className="sr-only">Panel</SheetTitle>
+        <SheetDescription className="sr-only">Details panel</SheetDescription>
         {children}
       </SheetContent>
     </Sheet>
