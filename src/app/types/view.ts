@@ -8,5 +8,6 @@ export type View =
   | "mail"
   | "calendar"
   | "interviews"
+  | "knowledge-graph"
   | "reports"
   | "settings";

@@ -7,3 +7,11 @@ export { CAL_EVENTS } from "./calendar";
 export { AGENTS } from "./agents";
 export { APPLICATIONS, STAGES, STAGE_META, FUNNEL, RADAR_DATA } from "./applications";
 export { JOBS } from "./jobs";
+export {
+  SKILL_NODES,
+  SKILL_EDGES,
+  SKILL_GRAPH,
+  SKILL_ALIASES,
+  resolveSkillId,
+  normalizeSkillKey,
+} from "./knowledge-graph";

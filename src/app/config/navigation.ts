@@ -9,6 +9,7 @@ import {
   Mail,
   Calendar,
   Video,
+  Network,
   BarChart2,
   Settings,
 } from "lucide-react";
@@ -31,6 +32,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "mail", label: "Mail", icon: Mail, badge: 2 },
   { id: "calendar", label: "Calendar", icon: Calendar },
   { id: "interviews", label: "Interview Prep", icon: Video },
+  { id: "knowledge-graph", label: "Knowledge Graph", icon: Network },
   { id: "reports", label: "Analytics", icon: BarChart2 },
   { id: "settings", label: "Settings", icon: Settings },
 ];
@@ -39,7 +41,8 @@ export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
   { label: "WORKSPACE", ids: ["dashboard", "job-board", "resumes"] },
   { label: "PIPELINE", ids: ["ats", "copilot"] },
   { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews"] },
-  { label: null, ids: ["reports", "settings"] },
+  { label: "INSIGHTS", ids: ["knowledge-graph", "reports"] },
+  { label: null, ids: ["settings"] },
 ];
 
 export const VIEW_TITLES: Record<View, string> = {
@@ -52,6 +55,7 @@ export const VIEW_TITLES: Record<View, string> = {
   mail: "Mail",
   calendar: "Calendar",
   interviews: "Interview Prep",
+  "knowledge-graph": "Skill Knowledge Graph",
   reports: "Job Search Analytics",
   settings: "Settings",
 };
