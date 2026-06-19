@@ -1,6 +1,7 @@
 import React from "react";
 import { AreaChart, Area, ResponsiveContainer } from "recharts";
 import { Bot } from "lucide-react";
+import { useAgentsContextOptional } from "../../../context/AgentsContext";
 
 const AGENT_ACTIVITY = [
   { h: "6a", t: 2 },
@@ -11,14 +12,25 @@ const AGENT_ACTIVITY = [
   { h: "9p", t: 1 },
 ];
 
-export function AgentActivityPanel() {
+type AgentActivityPanelProps = {
+  onNavigateAgents?: () => void;
+};
+
+export function AgentActivityPanel({ onNavigateAgents }: AgentActivityPanelProps) {
+  const agentsCtx = useAgentsContextOptional();
+  const agents = agentsCtx?.agents ?? [];
+  const activeAgents = agents.filter((a) => a.status === "active");
+  const tasksRunning = agents.reduce((s, a) => s + (a.runsToday ?? 0), 0);
+
   return (
     <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
       <div className="flex items-center gap-2 mb-4">
         <Bot className="w-5 h-5 text-violet-600" />
         <div>
           <h3 className="text-sm font-bold text-foreground">Agent Activity</h3>
-          <p className="text-xs text-muted-foreground">12 tasks running across 3 agents</p>
+          <p className="text-xs text-muted-foreground">
+            {tasksRunning} runs today across {activeAgents.length} active agents
+          </p>
         </div>
       </div>
       <ResponsiveContainer width="100%" height={80}>
@@ -32,16 +44,20 @@ export function AgentActivityPanel() {
           <Area type="monotone" dataKey="t" stroke="#6c5ce7" strokeWidth={2} fill="url(#agentGrad)" />
         </AreaChart>
       </ResponsiveContainer>
-      <div className="grid grid-cols-3 gap-2 mt-3 text-center">
-        {[
-          ["Job Scout", "4 tasks"],
-          ["Follow-up", "5 tasks"],
-          ["Resume AI", "3 tasks"],
-        ].map(([n, s]) => (
-          <div key={n} className="bg-secondary/50 rounded-lg py-2 px-1">
-            <p className="text-xs font-bold text-foreground">{n}</p>
-            <p className="text-[10px] text-muted-foreground">{s}</p>
-          </div>
+      <div className="grid grid-cols-3 gap-2 mt-3">
+        {agents.slice(0, 3).map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => {
+              agentsCtx?.setSelectedId(a.id, "monitor");
+              onNavigateAgents?.();
+            }}
+            className="bg-secondary/50 rounded-lg py-2 px-1 text-center hover:bg-secondary transition-colors"
+          >
+            <p className="text-xs font-bold text-foreground truncate">{a.name}</p>
+            <p className="text-[10px] text-muted-foreground">{a.runsToday ?? 0} runs</p>
+          </button>
         ))}
       </div>
     </div>

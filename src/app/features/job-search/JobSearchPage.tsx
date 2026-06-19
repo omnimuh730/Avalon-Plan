@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { LayoutGrid } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
+import { useJobSearchNavigationOptional } from "../../context/JobSearchNavigationContext";
 import { usePaginatedList } from "../../hooks/usePaginatedList";
 import {
   DEFAULT_JOB_FILTERS,
@@ -16,6 +17,7 @@ import { useJobSelection } from "./hooks/useJobSelection";
 import { cn } from "../../lib/utils";
 
 export function JobSearchPage() {
+  const jobNav = useJobSearchNavigationOptional();
   const [filters, setFilters] = useState<JobSearchFilterState>(DEFAULT_JOB_FILTERS);
   const [showGrid, setShowGrid] = useState(false);
   const [showScoresOnCards, setShowScoresOnCards] = useState(false);
@@ -29,6 +31,13 @@ export function JobSearchPage() {
     items: results,
     pageSize: 25,
   });
+
+  useEffect(() => {
+    const pending = jobNav?.pendingFilters;
+    if (!pending) return;
+    setFilters((prev) => ({ ...prev, ...pending }));
+    jobNav.clearPendingFilters();
+  }, [jobNav?.pendingFilters, jobNav]);
 
   useEffect(() => {
     resetPage();

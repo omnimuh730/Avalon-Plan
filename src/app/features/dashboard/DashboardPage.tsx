@@ -1,5 +1,6 @@
 import React from "react";
 import { PageShell } from "../../components/layout/PageShell";
+import { useAppNavigationOptional } from "../../context/AppNavigationContext";
 import { DashboardHero } from "./components/DashboardHero";
 import { DashboardKpiGrid } from "./components/DashboardKpiGrid";
 import { ActivityChart } from "./components/ActivityChart";
@@ -14,6 +15,7 @@ import { useUpcomingInterviews } from "../../hooks/useDashboardMetrics";
 
 export function DashboardPage() {
   const upcoming = useUpcomingInterviews(4);
+  const appNav = useAppNavigationOptional();
 
   return (
     <PageShell>
@@ -29,7 +31,7 @@ export function DashboardPage() {
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <FunnelPanel />
-          <AgentActivityPanel />
+          <AgentActivityPanel onNavigateAgents={() => appNav?.navigate("agents")} />
           <SourceChart />
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

@@ -46,6 +46,13 @@ export function ContextPanel() {
             </div>
           </div>
         </button>
+        <button
+          type="button"
+          onClick={() => resumeNav?.openEditor({ tab: "setup" })}
+          className="w-full mt-2 text-xs font-semibold text-primary hover:underline text-left px-1"
+        >
+          Resume setup →
+        </button>
       </div>
 
       <div>

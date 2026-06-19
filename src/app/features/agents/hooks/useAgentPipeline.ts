@@ -34,12 +34,15 @@ export function useAgentPipeline(agentId: string) {
   const historyRef = useRef<PipelineSnapshot[]>([]);
   const historyIndexRef = useRef(-1);
 
+  const [historyTick, setHistoryTick] = useState(0);
+
   const pushHistory = useCallback((snapshot: PipelineSnapshot) => {
     const hist = historyRef.current.slice(0, historyIndexRef.current + 1);
     hist.push(snapshot);
     if (hist.length > MAX_HISTORY) hist.shift();
     historyRef.current = hist;
     historyIndexRef.current = hist.length - 1;
+    setHistoryTick((t) => t + 1);
   }, []);
 
   useEffect(() => {
@@ -87,12 +90,14 @@ export function useAgentPipeline(agentId: string) {
     if (historyIndexRef.current <= 0) return;
     historyIndexRef.current -= 1;
     applySnapshot(historyRef.current[historyIndexRef.current]);
+    setHistoryTick((t) => t + 1);
   }, [applySnapshot]);
 
   const redo = useCallback(() => {
     if (historyIndexRef.current >= historyRef.current.length - 1) return;
     historyIndexRef.current += 1;
     applySnapshot(historyRef.current[historyIndexRef.current]);
+    setHistoryTick((t) => t + 1);
   }, [applySnapshot]);
 
   const updateNode = useCallback(
@@ -107,6 +112,7 @@ export function useAgentPipeline(agentId: string) {
 
   const canUndo = historyIndexRef.current > 0;
   const canRedo = historyIndexRef.current < historyRef.current.length - 1;
+  void historyTick;
 
   return {
     mode,
