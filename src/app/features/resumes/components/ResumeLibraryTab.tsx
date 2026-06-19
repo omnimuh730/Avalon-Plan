@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Filter, Upload, Eye, Download, MoreHorizontal, Star, Files } from "lucide-react";
+import { Filter, Upload, Eye, Download, MoreHorizontal, Star, Files, BarChart3 } from "lucide-react";
 import { SearchField } from "../../../components/shared/SearchField";
 import { Badge, Score } from "../../../components/ui";
 import { resumeCatalog, onCatalogChange, setPrimaryResume } from "../../../services/resumeCatalog";
@@ -8,9 +8,10 @@ import { exportDocumentToDocx } from "../lib/exportDocx";
 
 type ResumeLibraryTabProps = {
   onOpenEditor: (opts?: { resumeId?: string }) => void;
+  onOpenAnalysis?: (opts?: { resumeId?: string }) => void;
 };
 
-export function ResumeLibraryTab({ onOpenEditor }: ResumeLibraryTabProps) {
+export function ResumeLibraryTab({ onOpenEditor, onOpenAnalysis }: ResumeLibraryTabProps) {
   const [q, setQ] = useState("");
   const [resumes, setResumes] = useState<ResumeSummary[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -117,9 +118,20 @@ export function ResumeLibraryTab({ onOpenEditor }: ResumeLibraryTabProps) {
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onOpenEditor({ resumeId: r.id }); }}
                   className="icon-btn w-9 h-9 min-w-9 min-h-9 text-muted-foreground hover:text-foreground"
+                  title="Open in editor"
                 >
                   <Eye className="w-4 h-4" />
                 </button>
+                {onOpenAnalysis && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onOpenAnalysis({ resumeId: r.id }); }}
+                    className="icon-btn w-9 h-9 min-w-9 min-h-9 text-muted-foreground hover:text-violet-600"
+                    title="Analyze"
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); void handleDownload(r.id, r.name); }}

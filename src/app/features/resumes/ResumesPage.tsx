@@ -8,8 +8,9 @@ import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
 import { ResumeEditorTab } from "./components/ResumeEditorTab";
 import { ResumeHistoryTab } from "./components/ResumeHistoryTab";
 import { ResumeSetupTab } from "./components/ResumeSetupTab";
+import { ResumeAnalysisTab } from "./components/ResumeAnalysisTab";
 
-const TABS = ["library", "editor", "history", "setup"] as const;
+const TABS = ["library", "editor", "history", "analysis", "setup"] as const;
 type ResumeTab = (typeof TABS)[number];
 
 export function ResumesPage() {
@@ -17,6 +18,7 @@ export function ResumesPage() {
   const [tab, setTab] = useState<ResumeTab>("library");
   const [editorJd, setEditorJd] = useState<string | undefined>();
   const [editorResumeId, setEditorResumeId] = useState<string | undefined>();
+  const [analysisResumeId, setAnalysisResumeId] = useState<string | undefined>();
   const [ready, setReady] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
 
@@ -30,7 +32,10 @@ export function ResumesPage() {
     if (pending.tab) setTab(pending.tab);
     else setTab("editor");
     if (pending.jd) setEditorJd(pending.jd);
-    if (pending.resumeId) setEditorResumeId(pending.resumeId);
+    if (pending.resumeId) {
+      if (pending.tab === "analysis") setAnalysisResumeId(pending.resumeId);
+      else setEditorResumeId(pending.resumeId);
+    }
     nav.clearPendingEditorOpen();
   }, [nav?.pendingEditorOpen, ready, nav]);
 
@@ -38,6 +43,11 @@ export function ResumesPage() {
     setEditorResumeId(opts?.resumeId);
     setEditorJd(opts?.jd);
     setTab("editor");
+  }, []);
+
+  const openAnalysis = useCallback((opts?: { resumeId?: string }) => {
+    setAnalysisResumeId(opts?.resumeId);
+    setTab("analysis");
   }, []);
 
   if (!ready) {
@@ -74,7 +84,8 @@ export function ResumesPage() {
           </div>
         )}
 
-        {tab === "library" && <ResumeLibraryTab onOpenEditor={openEditor} />}
+        {tab === "library" && <ResumeLibraryTab onOpenEditor={openEditor} onOpenAnalysis={openAnalysis} />}
+        {tab === "analysis" && <ResumeAnalysisTab initialResumeId={analysisResumeId} />}
         {tab === "setup" && <ResumeSetupTab />}
         {tab === "editor" && (
           <div className="flex-1 min-h-0 flex flex-col">
