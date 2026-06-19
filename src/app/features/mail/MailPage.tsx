@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router";
 import { SearchField } from "../../components/shared/SearchField";
+import { PATHS } from "../../config/routes";
 import { MailSidebar } from "./components/MailSidebar";
 import { MailListRow } from "./components/MailListRow";
 import { MailDetailPane } from "./components/MailDetailPane";
@@ -8,16 +10,14 @@ import { useMailThreads } from "./hooks/useMailThreads";
 import { useMailLabels } from "./hooks/useMailLabels";
 import type { MailFolderId } from "../../../data/mail";
 
-type MailView = "list" | "thread";
-
 export function MailPage() {
+  const { threadId } = useParams<{ threadId?: string }>();
+  const navigate = useNavigate();
   const mail = useMailThreads();
   const { labels, createLabel } = useMailLabels();
   const [folder, setFolder] = useState<MailFolderId>("inbox");
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<MailView>("list");
 
   const threads = useMemo(() => {
     return mail.threads.filter((t) => {
@@ -35,18 +35,17 @@ export function MailPage() {
     });
   }, [mail.threads, folder, labelFilter, search]);
 
-  const selected = threads.find((t) => t.id === selectedId) ?? null;
+  const selected = threadId ? mail.threads.find((t) => t.id === threadId) ?? null : null;
+  const isThreadView = Boolean(threadId);
 
   const openThread = (id: string) => {
-    setSelectedId(id);
-    setView("thread");
+    navigate(`${PATHS.mail}/${id}`);
     mail.markUnread(id, false);
   };
 
-  const backToList = () => {
-    setView("list");
-    setSelectedId(null);
-  };
+  const backToList = () => navigate(PATHS.mail);
+
+  const resetList = () => navigate(PATHS.mail);
 
   return (
     <div className="h-full flex overflow-hidden">
@@ -56,19 +55,17 @@ export function MailPage() {
         labels={labels}
         onFolderChange={(f) => {
           setFolder(f);
-          setSelectedId(null);
-          setView("list");
+          resetList();
         }}
         onLabelChange={(l) => {
           setLabelFilter(l);
-          setView("list");
-          setSelectedId(null);
+          resetList();
         }}
         onCreateLabel={(name, parentId) => createLabel(name, parentId)}
         onCompose={() => mail.setComposeOpen(true)}
       />
 
-      {view === "list" ? (
+      {!isThreadView ? (
         <div className="flex-1 flex flex-col min-w-0">
           <div className="p-3 border-b border-border flex-shrink-0">
             <SearchField value={search} onChange={setSearch} placeholder="Search mail..." className="w-full max-w-xl" />

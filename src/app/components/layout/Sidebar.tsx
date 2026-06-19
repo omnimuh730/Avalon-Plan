@@ -1,22 +1,17 @@
-import React from "react";
+import { NavLink } from "react-router";
 import { Zap, ChevronDown, Plus, MoreHorizontal } from "lucide-react";
 import { cn, display } from "../../lib/utils";
+import { pathForView } from "../../config/routes";
 import { NAV_GROUPS, NAV_ITEMS } from "../../config/navigation";
-import type { View } from "../../types";
 
-type SidebarProps = {
-  active: View;
-  set: (v: View) => void;
-};
-
-export function Sidebar({ active, set }: SidebarProps) {
+export function Sidebar() {
   return (
     <aside
       className="w-60 flex-shrink-0 flex flex-col h-full border-r border-border shadow-sm"
       style={{ background: "var(--sidebar)" }}
     >
       <div className="px-5 py-4 border-b border-border">
-        <div className="flex items-center gap-3 cursor-pointer">
+        <NavLink to="/" className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary shadow-md shadow-violet-500/25 flex items-center justify-center flex-shrink-0">
             <Zap className="w-5 h-5 text-white" />
           </div>
@@ -27,7 +22,7 @@ export function Sidebar({ active, set }: SidebarProps) {
             <span className="text-xs text-muted-foreground">AI career command center</span>
           </div>
           <ChevronDown className="w-4 h-4 text-muted-foreground opacity-50 flex-shrink-0" />
-        </div>
+        </NavLink>
       </div>
 
       <div className="px-4 py-3">
@@ -50,16 +45,18 @@ export function Sidebar({ active, set }: SidebarProps) {
             )}
             <div className="space-y-1">
               {NAV_ITEMS.filter((n) => g.ids.includes(n.id)).map((item) => (
-                <button
+                <NavLink
                   key={item.id}
-                  type="button"
-                  onClick={() => set(item.id)}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-100 min-h-10",
-                    active === item.id
-                      ? "bg-primary/10 text-primary font-bold"
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary font-semibold"
-                  )}
+                  to={pathForView(item.id)}
+                  end={item.id === "dashboard"}
+                  className={({ isActive }) =>
+                    cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-100 min-h-10",
+                      isActive
+                        ? "bg-primary/10 text-primary font-bold"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary font-semibold",
+                    )
+                  }
                 >
                   <item.icon className="w-5 h-5 flex-shrink-0" />
                   <span className="flex-1 text-left">{item.label}</span>
@@ -68,7 +65,7 @@ export function Sidebar({ active, set }: SidebarProps) {
                       {item.badge}
                     </span>
                   )}
-                </button>
+                </NavLink>
               ))}
             </div>
           </div>

@@ -1,8 +1,9 @@
 import { createContext, useContext } from "react";
+import type { NavigateOptions } from "../config/routes";
 import type { View } from "../types";
 
 export type AppNavigationContextValue = {
-  navigate: (view: View) => void;
+  navigate: (view: View, options?: NavigateOptions) => void;
 };
 
 export const AppNavigationContext = createContext<AppNavigationContextValue | null>(null);

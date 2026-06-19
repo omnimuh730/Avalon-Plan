@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router";
 import { Wand2 } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { Pill } from "../../components/ui";
 import { TabTransition } from "../../components/overlays";
+import { DEFAULT_TABS, normalizeTab, PATHS, type ResumesTab } from "../../config/routes";
 import { useResumeNavigationOptional } from "../../context/ResumeNavigationContext";
 import { initResumeStorage } from "../../services/resumeStorage";
 import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
@@ -11,12 +13,18 @@ import { ResumeHistoryTab } from "./components/ResumeHistoryTab";
 import { ResumeSetupTab } from "./components/ResumeSetupTab";
 import { ResumeAnalysisTab } from "./components/ResumeAnalysisTab";
 
-const TABS = ["library", "editor", "history", "analysis", "setup"] as const;
-type ResumeTab = (typeof TABS)[number];
+const TABS = ["library", "editor", "history", "analysis", "setup"] as const satisfies readonly ResumesTab[];
 
 export function ResumesPage() {
+  const { tab: tabParam } = useParams<{ tab?: string }>();
+  const navigate = useNavigate();
   const nav = useResumeNavigationOptional();
-  const [tab, setTab] = useState<ResumeTab>("library");
+  const tab = normalizeTab(tabParam, TABS, DEFAULT_TABS.resumes);
+  const setTab = useCallback(
+    (next: ResumesTab) => navigate(`${PATHS.resumes}/${next}`),
+    [navigate],
+  );
+
   const [editorJd, setEditorJd] = useState<string | undefined>();
   const [editorResumeId, setEditorResumeId] = useState<string | undefined>();
   const [analysisResumeId, setAnalysisResumeId] = useState<string | undefined>();
@@ -30,26 +38,32 @@ export function ResumesPage() {
   useEffect(() => {
     const pending = nav?.pendingEditorOpen;
     if (!pending || !ready) return;
-    if (pending.tab) setTab(pending.tab);
-    else setTab("editor");
+    const nextTab = pending.tab ?? "editor";
     if (pending.jd) setEditorJd(pending.jd);
     if (pending.resumeId) {
-      if (pending.tab === "analysis") setAnalysisResumeId(pending.resumeId);
+      if (nextTab === "analysis") setAnalysisResumeId(pending.resumeId);
       else setEditorResumeId(pending.resumeId);
     }
+    navigate(`${PATHS.resumes}/${nextTab}`);
     nav.clearPendingEditorOpen();
-  }, [nav?.pendingEditorOpen, ready, nav]);
+  }, [nav?.pendingEditorOpen, ready, nav, navigate]);
 
-  const openEditor = useCallback((opts?: { resumeId?: string; jd?: string }) => {
-    setEditorResumeId(opts?.resumeId);
-    setEditorJd(opts?.jd);
-    setTab("editor");
-  }, []);
+  const openEditor = useCallback(
+    (opts?: { resumeId?: string; jd?: string }) => {
+      setEditorResumeId(opts?.resumeId);
+      setEditorJd(opts?.jd);
+      navigate(`${PATHS.resumes}/editor`);
+    },
+    [navigate],
+  );
 
-  const openAnalysis = useCallback((opts?: { resumeId?: string }) => {
-    setAnalysisResumeId(opts?.resumeId);
-    setTab("analysis");
-  }, []);
+  const openAnalysis = useCallback(
+    (opts?: { resumeId?: string }) => {
+      setAnalysisResumeId(opts?.resumeId);
+      navigate(`${PATHS.resumes}/analysis`);
+    },
+    [navigate],
+  );
 
   if (!ready) {
     return (

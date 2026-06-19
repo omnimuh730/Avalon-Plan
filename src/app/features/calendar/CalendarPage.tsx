@@ -1,9 +1,11 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router";
 import { CalendarHeader } from "./components/CalendarHeader";
 import { MonthGrid } from "./components/MonthGrid";
 import { WeekTimeGrid } from "./components/WeekTimeGrid";
 import { EventFormPanel } from "./components/EventFormPanel";
 import { InterviewPipelineTab } from "./components/InterviewPipelineTab";
+import { DEFAULT_TABS, normalizeTab, PATHS, type CalendarTab } from "../../config/routes";
 import { CALENDAR_EVENTS, eventsInWeek, type CalendarEvent } from "../../data/calendar";
 
 function startOfWeek(d: Date): Date {
@@ -13,12 +15,21 @@ function startOfWeek(d: Date): Date {
   return r;
 }
 
+const VIEWS = ["month", "week", "pipeline"] as const satisfies readonly CalendarTab[];
+
 type PanelMode = "create" | "edit" | null;
 
 export function CalendarPage() {
+  const { view: viewParam } = useParams<{ view?: string }>();
+  const navigate = useNavigate();
+  const view = normalizeTab(viewParam, VIEWS, DEFAULT_TABS.calendar);
+  const setView = useCallback(
+    (v: CalendarTab) => navigate(`${PATHS.calendar}/${v}`),
+    [navigate],
+  );
+
   const today = useMemo(() => new Date(2026, 5, 18), []);
   const [cur, setCur] = useState(new Date(2026, 5, 1));
-  const [view, setView] = useState<"month" | "week" | "pipeline">("month");
   const [events, setEvents] = useState(CALENDAR_EVENTS);
   const [selected, setSelected] = useState<CalendarEvent | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
