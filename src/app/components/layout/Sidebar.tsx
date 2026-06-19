@@ -1,52 +1,15 @@
 import React from "react";
-import {
-  LayoutDashboard,
-  Briefcase,
-  FileText,
-  Share2,
-  Wand2,
-  Bot,
-  Mail,
-  Calendar,
-  Video,
-  BarChart2,
-  Settings,
-  Zap,
-  ChevronDown,
-  Plus,
-  MoreHorizontal,
-} from "lucide-react";
+import { Zap, ChevronDown, Plus, MoreHorizontal } from "lucide-react";
 import { cn, display } from "../../lib/utils";
+import { NAV_GROUPS, NAV_ITEMS } from "../../config/navigation";
 import type { View } from "../../types";
 
-const NAV: { id: View; label: string; icon: React.ElementType; badge?: number }[] = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "job-board", label: "Job Search", icon: Briefcase },
-  { id: "resumes", label: "My Resumes", icon: FileText },
-  { id: "ats", label: "My Applications", icon: Share2 },
-  { id: "copilot", label: "Career Copilot", icon: Wand2 },
-  { id: "agents", label: "Agents", icon: Bot, badge: 3 },
-  { id: "mail", label: "Mail", icon: Mail, badge: 2 },
-  { id: "calendar", label: "Calendar", icon: Calendar },
-  { id: "interviews", label: "Interview Prep", icon: Video },
-  { id: "reports", label: "Analytics", icon: BarChart2 },
-  { id: "settings", label: "Settings", icon: Settings },
-];
-
-const GROUPS = [
-  { label: "WORKSPACE", ids: ["dashboard", "job-board", "resumes"] as View[] },
-  { label: "PIPELINE", ids: ["ats", "copilot"] as View[] },
-  { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews"] as View[] },
-  { label: null, ids: ["reports", "settings"] as View[] },
-];
-
-export function Sidebar({
-  active,
-  set,
-}: {
+type SidebarProps = {
   active: View;
   set: (v: View) => void;
-}) {
+};
+
+export function Sidebar({ active, set }: SidebarProps) {
   return (
     <aside
       className="w-60 flex-shrink-0 flex flex-col h-full border-r border-border shadow-sm"
@@ -68,24 +31,28 @@ export function Sidebar({
       </div>
 
       <div className="px-4 py-3">
-        <button className="w-full flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 transition-colors shadow-sm shadow-violet-500/20 min-h-10">
+        <button
+          type="button"
+          className="w-full flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 transition-colors shadow-sm shadow-violet-500/20 min-h-10"
+        >
           <Plus className="w-5 h-5" />
           New Application
         </button>
       </div>
 
       <nav className="flex-1 px-3 py-2 overflow-y-auto subtle-scroll space-y-5">
-        {GROUPS.map((g, gi) => (
-          <div key={gi}>
+        {NAV_GROUPS.map((g) => (
+          <div key={g.label ?? "bottom"}>
             {g.label && (
               <p className="px-3 mb-2 text-xs font-bold tracking-wider text-muted-foreground/60 uppercase">
                 {g.label}
               </p>
             )}
             <div className="space-y-1">
-              {NAV.filter((n) => g.ids.includes(n.id)).map((item) => (
+              {NAV_ITEMS.filter((n) => g.ids.includes(n.id)).map((item) => (
                 <button
                   key={item.id}
+                  type="button"
                   onClick={() => set(item.id)}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-100 min-h-10",
