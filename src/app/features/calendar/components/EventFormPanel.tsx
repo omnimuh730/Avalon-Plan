@@ -17,6 +17,8 @@ import {
 } from "../../../data/calendar";
 
 const NO_PROFILE = "__none__";
+
+export type EventFormData = {
   title: string;
   type: CalendarEventType;
   company: string;
@@ -36,7 +38,7 @@ export function eventToForm(event: CalendarEvent): EventFormData {
     title: event.title,
     type: event.type,
     company: event.company ?? "",
-    profile: event.profile ?? "",
+    profile: event.profile ? event.profile : NO_PROFILE,
     step: event.step ?? "",
     result: event.result ?? "pending",
     reason: event.reason ?? "",
@@ -63,7 +65,7 @@ export function formToEvent(form: EventFormData, id?: string): CalendarEvent {
     end: end.toISOString(),
     type: form.type,
     company: form.company.trim() || undefined,
-    profile: form.profile || undefined,
+    profile: form.profile !== NO_PROFILE ? form.profile : undefined,
     step: form.type === "interview" && form.step ? form.step : undefined,
     result: form.type === "interview" ? form.result : undefined,
     reason:
@@ -78,7 +80,7 @@ const EMPTY_FORM: EventFormData = {
   title: "",
   type: "interview",
   company: "",
-  profile: "",
+  profile: NO_PROFILE,
   step: "intro",
   result: "scheduled",
   reason: "",
@@ -165,7 +167,7 @@ export function EventFormPanel({ event, mode, open, onClose, onSave, onDelete }:
               label="Profile / resume"
               value={form.profile}
               onChange={(v) => patch({ profile: v })}
-              options={[{ value: "", label: "— Select profile —" }, ...profileOptions]}
+              options={[{ value: NO_PROFILE, label: "— Select profile —" }, ...profileOptions]}
             />
             <AthensSelect
               label="Pipeline step"
