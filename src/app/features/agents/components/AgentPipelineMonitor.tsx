@@ -134,16 +134,16 @@ export function AgentPipelineMonitor({
           />
         </div>
 
-        {pipeline.mode === "design" && pipeline.selectedNode ? (
-          <AgentNodeInspector
-            node={pipeline.selectedNode}
-            onUpdate={(patch) => pipeline.updateNode(pipeline.selectedNode!.id, patch)}
-            onClose={() => pipeline.setSelectedNodeId(null)}
-          />
-        ) : (
+        {pipeline.mode === "monitor" ? (
           <AgentMetricsPanel agent={agent} onOpenResumeSetup={() => resumeNav?.openEditor({ tab: "setup" })} />
-        )}
+        ) : null}
       </div>
+
+      <AgentNodeInspector
+        node={pipeline.mode === "design" ? pipeline.selectedNode : null}
+        onUpdate={(patch) => pipeline.selectedNode && pipeline.updateNode(pipeline.selectedNode.id, patch)}
+        onClose={() => pipeline.setSelectedNodeId(null)}
+      />
 
       <AgentRunsDrawer open={logsOpen} onClose={() => setLogsOpen(false)} agentName={agent.name} logs={agent.runLogs} />
     </div>

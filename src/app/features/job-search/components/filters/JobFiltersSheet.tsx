@@ -1,12 +1,5 @@
 import React from "react";
-import {
-  CalendarRange,
-  Filter,
-  Globe,
-  Layers,
-  MapPin,
-  Sparkles,
-} from "lucide-react";
+import { format, parseISO, isValid } from "date-fns";
 import { Button } from "../../../../components/ui/button";
 import {
   Sheet,
@@ -16,6 +9,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "../../../../components/ui/sheet";
+import { AthensSelect, DatePicker } from "../../../../components/forms";
 import {
   JOB_INDUSTRIES,
   JOB_LOCATIONS,
@@ -42,38 +36,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function CompactSelect({
-  icon: Icon,
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string;
-  options: { value: string; label: string }[];
-  onChange: (v: string) => void;
-}) {
-  return (
-    <label className="block space-y-1">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="relative">
-        <Icon className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full appearance-none bg-secondary/50 border border-border rounded-lg pl-8 pr-7 py-2 text-sm outline-none focus:border-primary/40"
-        >
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </div>
-    </label>
-  );
+function parseDateStr(s: string): Date | undefined {
+  if (!s) return undefined;
+  const d = parseISO(s);
+  return isValid(d) ? d : undefined;
 }
 
 export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFiltersSheetProps) {
@@ -89,8 +55,7 @@ export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFi
 
         <div className="px-4 space-y-6 pb-4">
           <Section title="Source">
-            <CompactSelect
-              icon={Globe}
+            <AthensSelect
               label="Job source"
               value={filters.source}
               onChange={(source) => patch({ source })}
@@ -102,30 +67,25 @@ export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFi
           </Section>
 
           <Section title="Posted date">
-            <div className="flex items-center gap-2 bg-secondary/50 border border-border rounded-lg px-3 py-2">
-              <CalendarRange className="w-4 h-4 text-muted-foreground shrink-0" />
-              <input
-                type="date"
-                value={filters.postedFrom}
-                onChange={(e) => patch({ postedFrom: e.target.value })}
-                className="bg-transparent text-sm outline-none flex-1 min-w-0"
-                aria-label="From"
+            <div className="grid grid-cols-1 gap-3">
+              <DatePicker
+                label="From"
+                value={parseDateStr(filters.postedFrom)}
+                onChange={(d) => patch({ postedFrom: d ? format(d, "yyyy-MM-dd") : "" })}
+                placeholder="Start date"
               />
-              <span className="text-xs text-muted-foreground">→</span>
-              <input
-                type="date"
-                value={filters.postedTo}
-                onChange={(e) => patch({ postedTo: e.target.value })}
-                className="bg-transparent text-sm outline-none flex-1 min-w-0"
-                aria-label="To"
+              <DatePicker
+                label="To"
+                value={parseDateStr(filters.postedTo)}
+                onChange={(d) => patch({ postedTo: d ? format(d, "yyyy-MM-dd") : "" })}
+                placeholder="End date"
               />
             </div>
           </Section>
 
           <Section title="Location & mode">
             <div className="grid grid-cols-1 gap-3">
-              <CompactSelect
-                icon={MapPin}
+              <AthensSelect
                 label="Location"
                 value={filters.location}
                 onChange={(location) => patch({ location })}
@@ -134,8 +94,7 @@ export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFi
                   label: l === "all" ? "Any location" : l,
                 }))}
               />
-              <CompactSelect
-                icon={Sparkles}
+              <AthensSelect
                 label="Work mode"
                 value={filters.workMode}
                 onChange={(workMode) => patch({ workMode })}
@@ -149,8 +108,7 @@ export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFi
 
           <Section title="Role attributes">
             <div className="grid grid-cols-1 gap-3">
-              <CompactSelect
-                icon={Filter}
+              <AthensSelect
                 label="Seniority"
                 value={filters.seniority}
                 onChange={(seniority) => patch({ seniority })}
@@ -159,8 +117,7 @@ export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFi
                   label: s === "all" ? "All levels" : s,
                 }))}
               />
-              <CompactSelect
-                icon={Layers}
+              <AthensSelect
                 label="Industry"
                 value={filters.industry}
                 onChange={(industry) => patch({ industry })}

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Wand2 } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { Pill } from "../../components/ui";
+import { TabTransition } from "../../components/overlays";
 import { useResumeNavigationOptional } from "../../context/ResumeNavigationContext";
 import { initResumeStorage } from "../../services/resumeStorage";
 import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
@@ -84,9 +85,12 @@ export function ResumesPage() {
           </div>
         )}
 
-        {tab === "library" && <ResumeLibraryTab onOpenEditor={openEditor} onOpenAnalysis={openAnalysis} />}
-        {tab === "analysis" && <ResumeAnalysisTab initialResumeId={analysisResumeId} />}
-        {tab === "setup" && <ResumeSetupTab />}
+        <TabTransition tabKey={tab}>
+          {tab === "library" && <ResumeLibraryTab onOpenEditor={openEditor} onOpenAnalysis={openAnalysis} />}
+          {tab === "analysis" && <ResumeAnalysisTab initialResumeId={analysisResumeId} />}
+          {tab === "setup" && <ResumeSetupTab />}
+          {tab === "history" && <ResumeHistoryTab key={historyKey} />}
+        </TabTransition>
         {tab === "editor" && (
           <div className="flex-1 min-h-0 flex flex-col">
             <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 m-4 mb-0 w-fit scroll-row flex-shrink-0">
@@ -106,7 +110,6 @@ export function ResumesPage() {
             </div>
           </div>
         )}
-        {tab === "history" && <ResumeHistoryTab key={historyKey} />}
       </div>
     </PageShell>
   );

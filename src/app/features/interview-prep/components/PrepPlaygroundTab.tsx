@@ -11,11 +11,12 @@ import type { CalendarEvent } from "../../../data/calendar";
 
 type PrepPlaygroundTabProps = {
   selectedInterview: CalendarEvent | null;
+  initialPrompt?: string;
 };
 
-export function PrepPlaygroundTab({ selectedInterview }: PrepPlaygroundTabProps) {
+export function PrepPlaygroundTab({ selectedInterview, initialPrompt }: PrepPlaygroundTabProps) {
   const [system, setSystem] = useState(DEFAULT_SYSTEM_PROMPT);
-  const [user, setUser] = useState("Help me prepare for my upcoming interview. What should I focus on?");
+  const [user, setUser] = useState(initialPrompt || "Help me prepare for my upcoming interview. What should I focus on?");
   const [output, setOutput] = useState("");
   const [running, setRunning] = useState(false);
 

@@ -27,13 +27,38 @@ export function CalendarPage() {
 
   const weekEvents = eventsInWeek(weekStart, events);
 
-  const handleConfirm = (id: string, confirmed: boolean) => {
-    setEvents((prev) => prev.map((e) => (e.id === id ? { ...e, confirmed } : e)));
-    setSelected((s) => (s?.id === id ? { ...s, confirmed } : s));
+  const handleConfirm = (id: string, confirmed: boolean, times?: { start: string; end: string }) => {
+    setEvents((prev) => {
+      const next = prev.map((e) => {
+        if (e.id !== id) return e;
+        let start = e.start;
+        let end = e.end;
+        if (times?.start && times?.end) {
+          const base = new Date(e.start);
+          const [sh, sm] = times.start.split(":").map(Number);
+          const [eh, em] = times.end.split(":").map(Number);
+          const ns = new Date(base);
+          ns.setHours(sh, sm, 0, 0);
+          const ne = new Date(base);
+          ne.setHours(eh, em, 0, 0);
+          start = ns.toISOString();
+          end = ne.toISOString();
+        }
+        return { ...e, confirmed, start, end };
+      });
+      setSelected((s) => {
+        if (s?.id !== id) return s;
+        return next.find((e) => e.id === id) ?? s;
+      });
+      return next;
+    });
   };
 
   return (
-    <div className="h-full flex flex-col p-6 overflow-hidden relative">
+    <div
+      className="h-full flex flex-col p-6 overflow-hidden relative"
+      onClick={() => setSelected(null)}
+    >
       <CalendarHeader
         label={label}
         view={view}
@@ -54,16 +79,18 @@ export function CalendarPage() {
         }
         onToday={() => setCur(new Date(today))}
       />
-      {view === "month" ? (
-        <MonthGrid cur={cur} today={today} events={events} onEventClick={setSelected} />
-      ) : (
-        <WeekTimeGrid
-          weekStart={weekStart}
-          events={weekEvents}
-          today={today}
-          onEventClick={setSelected}
-        />
-      )}
+      <div onClick={(e) => e.stopPropagation()}>
+        {view === "month" ? (
+          <MonthGrid cur={cur} today={today} events={events} onEventClick={setSelected} />
+        ) : (
+          <WeekTimeGrid
+            weekStart={weekStart}
+            events={weekEvents}
+            today={today}
+            onEventClick={setSelected}
+          />
+        )}
+      </div>
       <InterviewConfirmPanel
         event={selected}
         onClose={() => setSelected(null)}

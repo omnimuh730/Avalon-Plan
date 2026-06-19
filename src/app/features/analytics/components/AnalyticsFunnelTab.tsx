@@ -14,7 +14,7 @@ import { FUNNEL } from "../../../data/applications";
 import { STAGE_OVER_TIME } from "../../../data/analytics";
 import { AnalyticsChartCard } from "./AnalyticsHeatmap";
 
-export function AnalyticsFunnelTab() {
+export function AnalyticsFunnelTab({ range: _range = "30d" }: { range?: import("../../../hooks/useAnalyticsFilters").DateRange }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
       <div className="bg-card border border-border rounded-xl p-6 shadow-sm">

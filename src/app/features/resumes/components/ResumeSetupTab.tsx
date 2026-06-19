@@ -4,6 +4,7 @@ import { ResumeSettingsPanel } from "./ResumeSettingsPanel";
 import { ResumeInsightsPanel } from "./ResumeInsightsPanel";
 import { getAiDefaults, saveAiDefaults, type ResumeAiDefaults } from "../../../services/resumeProfileBridge";
 import { Pill } from "../../../components/ui";
+import { AthensInput, FormField } from "../../../components/forms";
 
 type SetupSection = "identity" | "stacks" | "pipeline" | "ai" | "insights";
 
@@ -35,41 +36,27 @@ function AiDefaultsSection() {
         API keys and default models for resume generation in the Editor.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="OpenAI API key" value={ai.openaiKey} type="password" onChange={(v) => setAi({ ...ai, openaiKey: v })} />
-        <Field label="OpenAI model" value={ai.openaiModel} onChange={(v) => setAi({ ...ai, openaiModel: v })} />
-        <Field label="Deepseek API key" value={ai.deepseekKey} type="password" onChange={(v) => setAi({ ...ai, deepseekKey: v })} />
-        <Field label="Default provider" value={ai.defaultProvider} onChange={(v) => setAi({ ...ai, defaultProvider: v })} />
-        <Field label="Default model" value={ai.defaultModel} onChange={(v) => setAi({ ...ai, defaultModel: v })} />
+        <FormField label="OpenAI API key">
+          <AthensInput type="password" value={ai.openaiKey} onChange={(e) => setAi({ ...ai, openaiKey: e.target.value })} />
+        </FormField>
+        <FormField label="OpenAI model">
+          <AthensInput value={ai.openaiModel} onChange={(e) => setAi({ ...ai, openaiModel: e.target.value })} />
+        </FormField>
+        <FormField label="Deepseek API key">
+          <AthensInput type="password" value={ai.deepseekKey} onChange={(e) => setAi({ ...ai, deepseekKey: e.target.value })} />
+        </FormField>
+        <FormField label="Default provider">
+          <AthensInput value={ai.defaultProvider} onChange={(e) => setAi({ ...ai, defaultProvider: e.target.value })} />
+        </FormField>
+        <FormField label="Default model">
+          <AthensInput value={ai.defaultModel} onChange={(e) => setAi({ ...ai, defaultModel: e.target.value })} />
+        </FormField>
       </div>
       <button type="button" onClick={save} className="mt-5 bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10">
         Save AI defaults
       </button>
       {saved && <p className="text-sm text-emerald-600 font-semibold mt-2">Saved</p>}
     </div>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  type = "text",
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  type?: string;
-}) {
-  return (
-    <label className="block">
-      <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="mt-1.5 w-full bg-secondary border border-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-primary/40 min-h-10"
-      />
-    </label>
   );
 }
 

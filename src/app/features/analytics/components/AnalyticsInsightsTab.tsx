@@ -17,7 +17,7 @@ import { ChartTip } from "../../../components/ui";
 import { AnalyticsChartCard } from "./AnalyticsHeatmap";
 import { DIVERSITY_DATA, COST_DATA, OFFER_SCATTER } from "../../../data/analytics";
 
-export function AnalyticsInsightsTab() {
+export function AnalyticsInsightsTab({ range: _range = "30d" }: { range?: import("../../../hooks/useAnalyticsFilters").DateRange }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
       <AnalyticsChartCard title="Application diversity" subtitle="Self-reported demographics">

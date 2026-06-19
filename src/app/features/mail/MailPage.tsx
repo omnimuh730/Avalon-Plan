@@ -3,16 +3,19 @@ import { SearchField } from "../../components/shared/SearchField";
 import { MailSidebar } from "./components/MailSidebar";
 import { MailListRow } from "./components/MailListRow";
 import { MailDetailPane } from "./components/MailDetailPane";
-import { MAIL_THREADS, type MailFolderId } from "../../data/mail";
+import { MailComposeSheet } from "./components/MailComposeSheet";
+import { useMailThreads } from "./hooks/useMailThreads";
+import type { MailFolderId } from "../../../data/mail";
 
 export function MailPage() {
+  const mail = useMailThreads();
   const [folder, setFolder] = useState<MailFolderId>("inbox");
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(MAIL_THREADS[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const threads = useMemo(() => {
-    return MAIL_THREADS.filter((t) => {
+    return mail.threads.filter((t) => {
       if (t.folder !== folder) return false;
       if (labelFilter && !t.labels.includes(labelFilter)) return false;
       if (search.trim()) {
@@ -25,7 +28,7 @@ export function MailPage() {
       }
       return true;
     });
-  }, [folder, labelFilter, search]);
+  }, [mail.threads, folder, labelFilter, search]);
 
   const selected = threads.find((t) => t.id === selectedId) ?? threads[0] ?? null;
 
@@ -39,6 +42,7 @@ export function MailPage() {
           setSelectedId(null);
         }}
         onLabelChange={setLabelFilter}
+        onCompose={() => mail.setComposeOpen(true)}
       />
       <div className="w-[420px] border-r border-border flex flex-col flex-shrink-0 min-w-0">
         <div className="p-3 border-b border-border flex-shrink-0">
@@ -54,12 +58,22 @@ export function MailPage() {
                 thread={t}
                 selected={selected?.id === t.id}
                 onSelect={() => setSelectedId(t.id)}
+                onStar={() => mail.star(t.id)}
+                onArchive={() => mail.archive(t.id)}
+                onTrash={() => mail.trash(t.id)}
+                onMarkUnread={() => mail.markUnread(t.id, true)}
               />
             ))
           )}
         </div>
       </div>
-      <MailDetailPane thread={selected} />
+      <MailDetailPane
+        thread={selected}
+        onArchive={() => selected && mail.archive(selected.id)}
+        onTrash={() => selected && mail.trash(selected.id)}
+        onReply={() => selected && mail.setComposeOpen(true)}
+      />
+      <MailComposeSheet open={mail.composeOpen} onOpenChange={mail.setComposeOpen} onSend={mail.sendCompose} />
     </div>
   );
 }

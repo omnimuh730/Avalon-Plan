@@ -1,4 +1,5 @@
 import { RefreshCw } from "lucide-react";
+import { AthensInput, AthensSelect, FormField } from "../../../../components/forms";
 import type { EditorDraft } from "../../../../types/resume";
 
 type ProviderIdentityPanelProps = {
@@ -47,9 +48,9 @@ export function ProviderIdentityPanel({
         </button>
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <SelectField label="Provider" value={draft.provider} onChange={onProviderChange} options={PROVIDERS.map((p) => ({ value: p.id, label: p.label }))} />
-        <SelectField label="Model" value={draft.model} onChange={onModelChange} options={models.map((m) => ({ value: m, label: m }))} />
-        <SelectField
+        <AthensSelect label="Provider" value={draft.provider} onChange={onProviderChange} options={PROVIDERS.map((p) => ({ value: p.id, label: p.label }))} />
+        <AthensSelect label="Model" value={draft.model} onChange={onModelChange} options={models.map((m) => ({ value: m, label: m }))} />
+        <AthensSelect
           label="Reasoning effort"
           value={draft.reasoningEffort}
           onChange={onReasoningChange}
@@ -70,43 +71,14 @@ export function ProviderIdentityPanel({
             ["linkedin", "LinkedIn"],
           ] as const
         ).map(([field, label]) => (
-          <div key={field} className={field === "linkedin" ? "sm:col-span-2" : ""}>
-            <label className="text-xs font-semibold text-muted-foreground block mb-1">{label}</label>
-            <input
+          <FormField key={field} label={label} className={field === "linkedin" ? "sm:col-span-2" : ""}>
+            <AthensInput
               value={identity[field]}
               onChange={(e) => onIdentityChange(field, e.target.value)}
-              className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/40 min-h-10"
             />
-          </div>
+          </FormField>
         ))}
       </div>
-    </div>
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <div>
-      <label className="text-xs font-semibold text-muted-foreground block mb-1">{label}</label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-secondary border border-border rounded-lg px-2 py-2 text-sm min-h-10"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
     </div>
   );
 }

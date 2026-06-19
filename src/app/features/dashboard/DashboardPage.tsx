@@ -20,13 +20,13 @@ export function DashboardPage() {
   return (
     <PageShell>
       <div className="space-y-6">
-        <DashboardHero />
+        <DashboardHero onNavigate={(v) => appNav?.navigate(v as View)} />
         <DashboardKpiGrid />
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <ActivityChart />
           <div className="space-y-5">
-            <UpcomingInterviewsPanel interviews={upcoming} />
-            <MiniCalendarStrip />
+            <UpcomingInterviewsPanel interviews={upcoming} onNavigatePrep={() => appNav?.navigate("interviews")} />
+            <MiniCalendarStrip onNavigate={() => appNav?.navigate("calendar")} />
           </div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

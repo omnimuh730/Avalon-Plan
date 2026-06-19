@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { LayoutGrid } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
+import { TabTransition } from "../../components/overlays";
 import { useJobSearchNavigationOptional } from "../../context/JobSearchNavigationContext";
 import { usePaginatedList } from "../../hooks/usePaginatedList";
 import {
@@ -21,6 +22,14 @@ export function JobSearchPage() {
   const [filters, setFilters] = useState<JobSearchFilterState>(DEFAULT_JOB_FILTERS);
   const [showGrid, setShowGrid] = useState(false);
   const [showScoresOnCards, setShowScoresOnCards] = useState(false);
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem("athens-job-bookmarks") ?? "[]") as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
   const { results, statusCounts, total } = useJobSearchResults(filters, removedIds);
@@ -72,6 +81,16 @@ export function JobSearchPage() {
     clearSelection();
   };
 
+  const toggleBookmark = (id: string) => {
+    setBookmarkedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      localStorage.setItem("athens-job-bookmarks", JSON.stringify([...next]));
+      return next;
+    });
+  };
+
   return (
     <PageShell>
       <JobSearchFilterPanel
@@ -117,13 +136,17 @@ export function JobSearchPage() {
         </button>
       </div>
 
-      <JobListView
-        jobs={items}
-        layout={showGrid ? "grid" : "list"}
-        selectedIds={selectedIds}
-        onSelectJob={selectJob}
-        showScores={showScoresOnCards}
-      />
+      <TabTransition tabKey={showGrid ? "grid" : "list"}>
+        <JobListView
+          jobs={items}
+          layout={showGrid ? "grid" : "list"}
+          selectedIds={selectedIds}
+          onSelectJob={selectJob}
+          showScores={showScoresOnCards}
+          bookmarkedIds={bookmarkedIds}
+          onToggleBookmark={toggleBookmark}
+        />
+      </TabTransition>
 
       <PaginationBar
         page={page}

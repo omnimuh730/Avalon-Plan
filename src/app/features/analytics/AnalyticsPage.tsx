@@ -1,6 +1,8 @@
 import React from "react";
 import { PageShell } from "../../components/layout/PageShell";
 import { Pill } from "../../components/ui";
+import { TabTransition } from "../../components/overlays";
+import { AthensSelect } from "../../components/forms";
 import { useAnalyticsFilters, DATE_RANGE_OPTIONS } from "../../hooks/useAnalyticsFilters";
 import { AnalyticsOverviewTab } from "./components/AnalyticsOverviewTab";
 import { AnalyticsSourcesTab } from "./components/AnalyticsSourcesTab";
@@ -24,23 +26,20 @@ export function AnalyticsPage() {
             </Pill>
           ))}
         </div>
-        <select
+        <AthensSelect
           value={range}
-          onChange={(e) => setRange(e.target.value as typeof range)}
-          className="bg-secondary border border-border rounded-xl px-4 py-2 text-sm font-semibold outline-none focus:border-primary/40 min-h-10"
-        >
-          {DATE_RANGE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => setRange(v as typeof range)}
+          options={DATE_RANGE_OPTIONS}
+          className="w-44"
+        />
       </div>
-      {tab === "overview" && <AnalyticsOverviewTab />}
-      {tab === "sources" && <AnalyticsSourcesTab />}
-      {tab === "funnel" && <AnalyticsFunnelTab />}
-      {tab === "velocity" && <AnalyticsVelocityTab />}
-      {tab === "insights" && <AnalyticsInsightsTab />}
+      <TabTransition tabKey={tab}>
+        {tab === "overview" && <AnalyticsOverviewTab range={range} />}
+        {tab === "sources" && <AnalyticsSourcesTab range={range} />}
+        {tab === "funnel" && <AnalyticsFunnelTab range={range} />}
+        {tab === "velocity" && <AnalyticsVelocityTab range={range} />}
+        {tab === "insights" && <AnalyticsInsightsTab range={range} />}
+      </TabTransition>
     </PageShell>
   );
 }

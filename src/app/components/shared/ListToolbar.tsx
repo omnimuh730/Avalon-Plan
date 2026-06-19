@@ -1,5 +1,6 @@
 import React from "react";
 import { SearchField } from "./SearchField";
+import { AthensSelect } from "../forms";
 import { cn } from "../../lib/utils";
 
 export type FilterOption = { value: string; label: string };
@@ -55,58 +56,35 @@ export function ListToolbar({
           className="w-full sm:w-56 flex-1 sm:flex-none min-w-[180px]"
         />
         {filters.map((f) => (
-          <label key={f.label} className="flex items-center gap-2">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide hidden md:inline">
-              {f.label}
-            </span>
-            <select
-              value={f.value}
-              onChange={(e) => f.onChange(e.target.value)}
-              className="bg-secondary border border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 min-h-10"
-            >
-              {f.options.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <AthensSelect
+            key={f.label}
+            label={f.label}
+            value={f.value}
+            onChange={f.onChange}
+            options={f.options}
+            className="min-w-[120px]"
+            size="sm"
+          />
         ))}
         {sort && (
-          <label className="flex items-center gap-2">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide hidden md:inline">
-              Sort
-            </span>
-            <select
-              value={sort.value}
-              onChange={(e) => sort.onChange(e.target.value)}
-              className="bg-secondary border border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 min-h-10"
-            >
-              {sort.options.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <AthensSelect
+            label="Sort"
+            value={sort.value}
+            onChange={sort.onChange}
+            options={sort.options}
+            className="min-w-[120px]"
+            size="sm"
+          />
         )}
         {pageSize && (
-          <label className="flex items-center gap-2">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide hidden md:inline">
-              Per page
-            </span>
-            <select
-              value={pageSize.value}
-              onChange={(e) => pageSize.onChange(Number(e.target.value))}
-              className="bg-secondary border border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 min-h-10"
-            >
-              {pageSize.options.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
+          <AthensSelect
+            label="Per page"
+            value={String(pageSize.value)}
+            onChange={(v) => pageSize.onChange(Number(v))}
+            options={pageSize.options.map((n) => ({ value: String(n), label: String(n) }))}
+            className="min-w-[100px]"
+            size="sm"
+          />
         )}
         {children}
         {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}

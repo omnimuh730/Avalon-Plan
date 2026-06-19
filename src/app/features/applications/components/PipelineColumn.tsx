@@ -52,7 +52,11 @@ export function ApplicationCard({
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">{app.time}</span>
         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button type="button" className="icon-btn w-8 h-8 min-w-8 min-h-8 text-muted-foreground hover:text-foreground">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onSelect(); }}
+            className="icon-btn w-8 h-8 min-w-8 min-h-8 text-muted-foreground hover:text-foreground"
+          >
             <Eye className="w-4 h-4" />
           </button>
           <button type="button" className="icon-btn w-8 h-8 min-w-8 min-h-8 text-muted-foreground hover:text-foreground">

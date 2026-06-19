@@ -6,9 +6,12 @@ import type { MailThread } from "../../../types";
 
 type MailDetailPaneProps = {
   thread: MailThread | null;
+  onArchive?: () => void;
+  onTrash?: () => void;
+  onReply?: () => void;
 };
 
-export function MailDetailPane({ thread }: MailDetailPaneProps) {
+export function MailDetailPane({ thread, onArchive, onTrash, onReply }: MailDetailPaneProps) {
   if (!thread) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
@@ -33,10 +36,10 @@ export function MailDetailPane({ thread }: MailDetailPaneProps) {
                 {l}
               </Badge>
             ))}
-            <button type="button" className="icon-btn text-muted-foreground hover:text-foreground border border-border">
+            <button type="button" onClick={onArchive} className="icon-btn text-muted-foreground hover:text-foreground border border-border">
               <Archive className="w-4 h-4" />
             </button>
-            <button type="button" className="icon-btn text-muted-foreground hover:text-foreground border border-border">
+            <button type="button" onClick={onTrash} className="icon-btn text-muted-foreground hover:text-foreground border border-border">
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
@@ -51,11 +54,11 @@ export function MailDetailPane({ thread }: MailDetailPaneProps) {
       </div>
       <div className="border-t border-border p-4 flex-shrink-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <button type="button" className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10">
+          <button type="button" onClick={onReply} className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10">
             <Send className="w-4 h-4" />
             Reply
           </button>
-          <button type="button" className="flex items-center gap-2 bg-secondary border border-border px-4 py-2 rounded-xl text-sm font-bold hover:bg-muted min-h-10">
+          <button type="button" onClick={onReply} className="flex items-center gap-2 bg-secondary border border-border px-4 py-2 rounded-xl text-sm font-bold hover:bg-muted min-h-10">
             <Sparkles className="w-4 h-4 text-violet-600" />
             AI Reply
           </button>

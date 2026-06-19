@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 type CollapsibleProps = {
-  title: string;
+  title: React.ReactNode;
   children: React.ReactNode;
   defaultOpen?: boolean;
 };
@@ -25,7 +25,7 @@ export function Collapsible({ title, children, defaultOpen = false }: Collapsibl
           <ChevronRight className="w-4 h-4 text-muted-foreground" />
         )}
       </button>
-      {open && <div className="px-4 pb-4">{children}</div>}
+      {open && <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-1 duration-200">{children}</div>}
     </div>
   );
 }

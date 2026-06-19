@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ThemeToggle } from "../../../components/shared/ThemeToggle";
-import { DEFAULT_PROFILE, type UserProfile } from "../../../data/settings/profile";
+import { type UserProfile } from "../../../data/settings/profile";
+import { loadProfile, saveProfile } from "../../../lib/profileStorage";
 import { ProfileBanner, VendorAccessRow } from "./ProfileBanner";
 import {
   ProfileIdentityCard,
@@ -11,8 +12,12 @@ import {
 } from "./ProfileCards";
 
 export function ProfileTab() {
-  const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  const [profile, setProfile] = useState<UserProfile>(() => loadProfile());
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setProfile(loadProfile());
+  }, []);
 
   const patch = (p: Partial<UserProfile>) => {
     setProfile((prev) => ({ ...prev, ...p }));
@@ -20,6 +25,7 @@ export function ProfileTab() {
   };
 
   const save = () => {
+    saveProfile(profile);
     setSaved(true);
     toast.success("Profile saved successfully");
   };

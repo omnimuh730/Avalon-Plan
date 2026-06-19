@@ -2,7 +2,7 @@ import React from "react";
 import { cn } from "../../../lib/utils";
 import { CALENDAR_EVENTS } from "../../../data/calendar";
 
-export function MiniCalendarStrip() {
+export function MiniCalendarStrip({ onNavigate }: { onNavigate?: () => void }) {
   const today = 18;
   const month = "June 2026";
   const days = Array.from({ length: 14 }, (_, i) => i + 15);
@@ -11,7 +11,11 @@ export function MiniCalendarStrip() {
     CALENDAR_EVENTS.some((e) => new Date(e.start).getDate() === day && new Date(e.start).getMonth() === 5);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
+    <button
+      type="button"
+      onClick={onNavigate}
+      className="w-full bg-card border border-border rounded-xl p-4 shadow-sm text-left hover:shadow-md transition-shadow"
+    >
       <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">{month}</p>
       <div className="flex gap-1.5 overflow-x-auto scroll-row pb-1">
         {days.map((d) => (
@@ -31,6 +35,6 @@ export function MiniCalendarStrip() {
           </div>
         ))}
       </div>
-    </div>
+    </button>
   );
 }

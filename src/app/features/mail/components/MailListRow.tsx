@@ -9,9 +9,23 @@ type MailListRowProps = {
   thread: MailThread;
   selected: boolean;
   onSelect: () => void;
+  onStar?: () => void;
+  onArchive?: () => void;
+  onTrash?: () => void;
+  onMarkUnread?: () => void;
 };
 
-export function MailListRow({ thread, selected, onSelect }: MailListRowProps) {
+export function MailListRow({
+  thread,
+  selected,
+  onSelect,
+  onStar,
+  onArchive,
+  onTrash,
+  onMarkUnread,
+}: MailListRowProps) {
+  const starred = thread.labels.includes("starred");
+
   return (
     <button
       type="button"
@@ -38,7 +52,7 @@ export function MailListRow({ thread, selected, onSelect }: MailListRowProps) {
         <span className="text-muted-foreground font-normal"> — {thread.prev}</span>
       </span>
       <div className="flex items-center gap-1 flex-shrink-0">
-        {thread.labels.slice(0, 2).map((l) => (
+        {thread.labels.filter((l) => l !== "starred").slice(0, 2).map((l) => (
           <Badge key={l} v={MAIL_TAG_VARIANTS[l] ?? "subtle"}>
             {l}
           </Badge>
@@ -46,16 +60,16 @@ export function MailListRow({ thread, selected, onSelect }: MailListRowProps) {
       </div>
       <span className="text-xs text-muted-foreground w-14 text-right flex-shrink-0">{thread.time}</span>
       <div className="hidden group-hover:flex items-center gap-0.5 absolute right-16 bg-background/90 rounded-lg px-1 shadow-sm border border-border">
-        <button type="button" className="icon-btn w-7 h-7 text-muted-foreground hover:text-amber-500" onClick={(e) => e.stopPropagation()}>
-          <Star className="w-3.5 h-3.5" />
+        <button type="button" className={cn("icon-btn w-7 h-7", starred ? "text-amber-500" : "text-muted-foreground hover:text-amber-500")} onClick={(e) => { e.stopPropagation(); onStar?.(); }}>
+          <Star className={cn("w-3.5 h-3.5", starred && "fill-current")} />
         </button>
-        <button type="button" className="icon-btn w-7 h-7 text-muted-foreground hover:text-foreground" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="icon-btn w-7 h-7 text-muted-foreground hover:text-foreground" onClick={(e) => { e.stopPropagation(); onArchive?.(); }}>
           <Archive className="w-3.5 h-3.5" />
         </button>
-        <button type="button" className="icon-btn w-7 h-7 text-muted-foreground hover:text-destructive" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="icon-btn w-7 h-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); onTrash?.(); }}>
           <Trash2 className="w-3.5 h-3.5" />
         </button>
-        <button type="button" className="icon-btn w-7 h-7 text-muted-foreground hover:text-foreground" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="icon-btn w-7 h-7 text-muted-foreground hover:text-foreground" onClick={(e) => { e.stopPropagation(); onMarkUnread?.(); }}>
           <Mail className="w-3.5 h-3.5" />
         </button>
       </div>

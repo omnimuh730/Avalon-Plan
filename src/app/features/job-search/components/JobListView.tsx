@@ -9,6 +9,8 @@ type JobListViewProps = {
   selectedIds?: Set<string>;
   onSelectJob?: (id: string, shiftKey: boolean) => void;
   showScores?: boolean;
+  bookmarkedIds?: Set<string>;
+  onToggleBookmark?: (id: string) => void;
 };
 
 export function JobListView({
@@ -17,6 +19,8 @@ export function JobListView({
   selectedIds,
   onSelectJob,
   showScores = true,
+  bookmarkedIds,
+  onToggleBookmark,
 }: JobListViewProps) {
   if (jobs.length === 0) {
     return (
@@ -42,6 +46,8 @@ export function JobListView({
           selected={selectedIds?.has(job.id)}
           onSelect={onSelectJob ? (shiftKey) => onSelectJob(job.id, shiftKey) : undefined}
           showScores={showScores}
+          bookmarked={bookmarkedIds?.has(job.id)}
+          onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
         />
       ))}
     </div>

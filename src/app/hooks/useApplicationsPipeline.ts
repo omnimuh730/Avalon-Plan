@@ -34,6 +34,7 @@ export function useApplicationsPipeline() {
 
   return {
     apps,
+    setApps,
     dragId,
     overStage,
     selected,

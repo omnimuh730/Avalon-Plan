@@ -5,9 +5,10 @@ import { formatTimeRange, type CalendarEvent } from "../../../data/calendar";
 
 type UpcomingInterviewsPanelProps = {
   interviews: CalendarEvent[];
+  onNavigatePrep?: () => void;
 };
 
-export function UpcomingInterviewsPanel({ interviews }: UpcomingInterviewsPanelProps) {
+export function UpcomingInterviewsPanel({ interviews, onNavigatePrep }: UpcomingInterviewsPanelProps) {
   return (
     <div className="bg-card border border-border rounded-xl p-5 shadow-sm h-full">
       <div className="flex items-center gap-2 mb-4">
@@ -19,7 +20,12 @@ export function UpcomingInterviewsPanel({ interviews }: UpcomingInterviewsPanelP
           <p className="text-sm text-muted-foreground">No upcoming interviews scheduled.</p>
         ) : (
           interviews.map((e) => (
-            <div key={e.id} className="flex items-start gap-3 p-3 rounded-xl bg-secondary/40 border border-border/50">
+            <button
+              key={e.id}
+              type="button"
+              onClick={onNavigatePrep}
+              className="w-full flex items-start gap-3 p-3 rounded-xl bg-secondary/40 border border-border/50 hover:bg-secondary/70 transition-colors text-left"
+            >
               <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center text-violet-600 font-bold text-sm flex-shrink-0">
                 {e.company?.[0] ?? "I"}
               </div>
@@ -32,7 +38,7 @@ export function UpcomingInterviewsPanel({ interviews }: UpcomingInterviewsPanelP
                 </div>
               </div>
               <Badge v={e.confirmed ? "success" : "warn"}>{e.confirmed ? "Confirmed" : "Pending"}</Badge>
-            </div>
+            </button>
           ))
         )}
       </div>

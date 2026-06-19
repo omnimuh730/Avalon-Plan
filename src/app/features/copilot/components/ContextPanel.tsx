@@ -1,14 +1,20 @@
 import React, { useEffect, useState } from "react";
 import { ChevronRight, FileText } from "lucide-react";
 import { Av } from "../../../components/ui";
-import { ToggleSwitch } from "../../../components/shared/ToggleSwitch";
+import { AthensSwitch } from "../../../components/forms";
 import { mono } from "../../../lib/utils";
 import { APPLICATIONS } from "../../../data/applications";
 import { COPILOT_QUICK_ACTIONS, COPILOT_WORKFLOWS, TOP_APPLICATION_IDS } from "../../../data/copilot";
 import { useResumeNavigationOptional } from "../../../context/ResumeNavigationContext";
 import { getEditorDraft } from "../../../services/resumeStorage";
 
-export function ContextPanel() {
+type ContextPanelProps = {
+  onQuickAction?: (action: string) => void;
+  workflows?: Record<string, boolean>;
+  onToggleWorkflow?: (name: string, on: boolean) => void;
+};
+
+export function ContextPanel({ onQuickAction, workflows, onToggleWorkflow }: ContextPanelProps) {
   const resumeNav = useResumeNavigationOptional();
   const [resumeName, setResumeName] = useState<string | null>(null);
 
@@ -74,7 +80,12 @@ export function ContextPanel() {
         <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Quick Actions</p>
         <div className="space-y-1">
           {COPILOT_QUICK_ACTIONS.map((a) => (
-            <button key={a} type="button" className="w-full text-left text-sm font-semibold text-muted-foreground hover:text-foreground flex items-center gap-2 py-2.5 px-3 rounded-xl hover:bg-secondary transition-colors min-h-10">
+            <button
+              key={a}
+              type="button"
+              onClick={() => onQuickAction?.(a)}
+              className="w-full text-left text-sm font-semibold text-muted-foreground hover:text-foreground flex items-center gap-2 py-2.5 px-3 rounded-xl hover:bg-secondary transition-colors min-h-10"
+            >
               <ChevronRight className="w-4 h-4 flex-shrink-0" />
               {a}
             </button>
@@ -84,12 +95,14 @@ export function ContextPanel() {
 
       <div>
         <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Workflow</p>
-        <div className="space-y-2">
+        <div className="space-y-3">
           {COPILOT_WORKFLOWS.map((w) => (
-            <div key={w.n} className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground font-semibold">{w.n}</span>
-              <ToggleSwitch on={w.on} />
-            </div>
+            <AthensSwitch
+              key={w.n}
+              label={w.n}
+              checked={workflows?.[w.n] ?? w.on}
+              onCheckedChange={(checked) => onToggleWorkflow?.(w.n, checked)}
+            />
           ))}
         </div>
       </div>

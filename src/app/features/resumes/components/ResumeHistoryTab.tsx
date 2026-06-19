@@ -1,6 +1,7 @@
 import { formatDistanceToNow } from "date-fns";
 import { CheckCircle, Clock, Coins, Hash } from "lucide-react";
 import { KPI, Pill, Badge } from "../../../components/ui";
+import { AthensSelect } from "../../../components/forms";
 import { SearchField } from "../../../components/shared/SearchField";
 import { cn } from "../../../lib/utils";
 import { useResumeHistory } from "../hooks/useResumeHistory";
@@ -41,20 +42,19 @@ export function ResumeHistoryTab() {
           ))}
         </div>
         <div className="flex flex-wrap gap-3">
-          <FilterSelect label="Model" value={filters.model} onChange={(model) => setFilters({ ...filters, model })} options={["all", ...models]} />
-          <FilterSelect label="Provider" value={filters.provider} onChange={(provider) => setFilters({ ...filters, provider })} options={["all", ...providers]} />
-          <FilterSelect label="Template" value={filters.templateId} onChange={(templateId) => setFilters({ ...filters, templateId })} options={["all", ...templates]} />
-          <div>
-            <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1">Sort</label>
-            <select
-              value={filters.sort}
-              onChange={(e) => setFilters({ ...filters, sort: e.target.value as "newest" | "oldest" })}
-              className="bg-secondary border border-border rounded-lg px-3 py-2 text-sm min-h-10"
-            >
-              <option value="newest">Newest first</option>
-              <option value="oldest">Oldest first</option>
-            </select>
-          </div>
+          <AthensSelect label="Model" value={filters.model} onChange={(model) => setFilters({ ...filters, model })} options={["all", ...models].map((o) => ({ value: o, label: o === "all" ? "All" : o }))} className="min-w-[140px]" />
+          <AthensSelect label="Provider" value={filters.provider} onChange={(provider) => setFilters({ ...filters, provider })} options={["all", ...providers].map((o) => ({ value: o, label: o === "all" ? "All" : o }))} className="min-w-[140px]" />
+          <AthensSelect label="Template" value={filters.templateId} onChange={(templateId) => setFilters({ ...filters, templateId })} options={["all", ...templates].map((o) => ({ value: o, label: o === "all" ? "All" : o }))} className="min-w-[140px]" />
+          <AthensSelect
+            label="Sort"
+            value={filters.sort}
+            onChange={(sort) => setFilters({ ...filters, sort: sort as "newest" | "oldest" })}
+            options={[
+              { value: "newest", label: "Newest first" },
+              { value: "oldest", label: "Oldest first" },
+            ]}
+            className="min-w-[140px]"
+          />
         </div>
       </div>
 
@@ -143,29 +143,3 @@ export function ResumeHistoryTab() {
   );
 }
 
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: string[];
-}) {
-  return (
-    <div>
-      <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1">{label}</label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="bg-secondary border border-border rounded-lg px-3 py-2 text-sm min-h-10"
-      >
-        {options.map((o) => (
-          <option key={o} value={o}>{o === "all" ? "All" : o}</option>
-        ))}
-      </select>
-    </div>
-  );
-}

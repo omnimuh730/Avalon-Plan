@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Pill } from "../../components/ui";
+import { TabTransition } from "../../components/overlays";
 import { PrepContextSidebar } from "./components/PrepContextSidebar";
 import { PrepPlaygroundTab } from "./components/PrepPlaygroundTab";
 import { PrepQuestionBankTab, PrepScorecardsTab } from "./components/PrepSecondaryTabs";
@@ -8,6 +9,7 @@ import { CALENDAR_EVENTS, type CalendarEvent } from "../../data/calendar";
 export function InterviewPrepPage() {
   const [tab, setTab] = useState("playground");
   const [selected, setSelected] = useState<CalendarEvent | null>(null);
+  const [playgroundPrompt, setPlaygroundPrompt] = useState("");
 
   const upcoming = useMemo(() => {
     const now = new Date("2026-06-18T08:00:00");
@@ -34,9 +36,23 @@ export function InterviewPrepPage() {
             </Pill>
           ))}
         </div>
-        {tab === "playground" && <PrepPlaygroundTab selectedInterview={selected ?? upcoming[0] ?? null} />}
-        {tab === "questions" && <PrepQuestionBankTab />}
-        {tab === "scorecards" && <PrepScorecardsTab />}
+        <TabTransition tabKey={tab}>
+          {tab === "playground" && (
+            <PrepPlaygroundTab
+              selectedInterview={selected ?? upcoming[0] ?? null}
+              initialPrompt={playgroundPrompt}
+            />
+          )}
+          {tab === "questions" && (
+            <PrepQuestionBankTab
+              onUseQuestion={(q) => {
+                setPlaygroundPrompt(q);
+                setTab("playground");
+              }}
+            />
+          )}
+          {tab === "scorecards" && <PrepScorecardsTab />}
+        </TabTransition>
       </div>
     </div>
   );

@@ -42,6 +42,8 @@ type JobCardProps = {
   selected?: boolean;
   onSelect?: (shiftKey: boolean) => void;
   showScores?: boolean;
+  bookmarked?: boolean;
+  onToggleBookmark?: () => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -82,9 +84,10 @@ export function JobCard({
   selected,
   onSelect,
   showScores = true,
+  bookmarked = false,
+  onToggleBookmark,
 }: JobCardProps) {
   const [jdOpen, setJdOpen] = useState(false);
-  const [saved, setSaved] = useState(job.status === "new");
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;
@@ -200,13 +203,13 @@ export function JobCard({
               variant="ghost"
               size="icon"
               className="size-8"
-              title={saved ? "Unsave" : "Save job"}
+              title={bookmarked ? "Unsave" : "Save job"}
               onClick={(e) => {
                 e.stopPropagation();
-                setSaved((s) => !s);
+                onToggleBookmark?.();
               }}
             >
-              <Bookmark className={cn("w-4 h-4", saved && "fill-current text-primary")} />
+              <Bookmark className={cn("w-4 h-4", bookmarked && "fill-current text-primary")} />
             </Button>
             <Button size="sm" asChild>
               <a href={job.applyUrl} target="_blank" rel="noopener noreferrer">

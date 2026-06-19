@@ -16,11 +16,22 @@ type MailSidebarProps = {
   labelFilter: string | null;
   onFolderChange: (f: MailFolderId) => void;
   onLabelChange: (label: string | null) => void;
+  onCompose?: () => void;
 };
 
-export function MailSidebar({ folder, labelFilter, onFolderChange, onLabelChange }: MailSidebarProps) {
+export function MailSidebar({ folder, labelFilter, onFolderChange, onLabelChange, onCompose }: MailSidebarProps) {
   return (
     <aside className="w-52 border-r border-border flex flex-col flex-shrink-0 bg-card/40 py-3">
+      <div className="px-3 mb-3">
+        <button
+          type="button"
+          onClick={onCompose}
+          className="w-full flex items-center justify-center gap-2 bg-primary text-white px-3 py-2 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-9"
+        >
+          <Plus className="w-4 h-4" />
+          Compose
+        </button>
+      </div>
       <nav className="px-2 space-y-0.5">
         {MAIL_FOLDERS.map((f) => {
           const Icon = FOLDER_ICONS[f.id];

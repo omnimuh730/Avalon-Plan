@@ -5,12 +5,18 @@ import { KPI, ChartTip } from "../../../components/ui";
 import { AREA_DATA, ROLE_PIE } from "../../../data/analytics";
 import { mono } from "../../../lib/utils";
 import { AnalyticsHeatmap } from "./AnalyticsHeatmap";
+import type { DateRange } from "../../../hooks/useAnalyticsFilters";
+import { sliceByRange, scaleMetric, rangeLabel } from "../lib/rangeFilter";
 
-export function AnalyticsOverviewTab() {
+export function AnalyticsOverviewTab({ range = "30d" }: { range?: DateRange }) {
+  const trendData = sliceByRange(AREA_DATA, range);
+  const appsYtd = scaleMetric(47, range);
+
   return (
     <div className="space-y-5">
+      <p className="text-xs text-muted-foreground">Showing data for {rangeLabel(range)}</p>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPI label="Applications YTD" value="47" trend="+18%" sub="vs last year" icon={Briefcase} accent="violet" />
+        <KPI label="Applications YTD" value={String(appsYtd)} trend="+18%" sub="vs last year" icon={Briefcase} accent="violet" />
         <KPI label="Response Rate" value="38%" trend="+6pts" icon={CheckCircle} accent="emerald" />
         <KPI label="Interview Rate" value="22%" sub="above avg" icon={TrendingUp} accent="blue" />
         <KPI label="Avg Time to Response" value="4.2d" sub="↓1.3d" icon={Clock} accent="amber" />
@@ -20,7 +26,7 @@ export function AnalyticsOverviewTab() {
           <h3 className="text-sm font-bold text-foreground mb-1">Application Trend</h3>
           <p className="text-sm text-muted-foreground mb-5">Submissions & responses — Jan to Jun 2026</p>
           <ResponsiveContainer width="100%" height={220}>
-            <ComposedChart data={AREA_DATA} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+            <ComposedChart data={trendData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
               <CartesianGrid strokeDasharray="2 4" stroke="rgba(0,0,0,0.06)" vertical={false} />
               <XAxis dataKey="m" tick={{ fill: "#6b6b84", fontSize: 12 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: "#6b6b84", fontSize: 12 }} axisLine={false} tickLine={false} />

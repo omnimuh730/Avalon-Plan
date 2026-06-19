@@ -14,7 +14,7 @@ import { ChartTip } from "../../../components/ui";
 import { AnalyticsChartCard } from "./AnalyticsHeatmap";
 import { VELOCITY_SERIES, COHORT_DATA } from "../../../data/analytics";
 
-export function AnalyticsVelocityTab() {
+export function AnalyticsVelocityTab({ range: _range = "30d" }: { range?: import("../../../hooks/useAnalyticsFilters").DateRange }) {
   return (
     <div className="space-y-5">
       <AnalyticsChartCard title="Time-to-response trend" subtitle="Days from application to first reply">

@@ -1,5 +1,6 @@
 import React from "react";
 import { Send, Paperclip } from "lucide-react";
+import { AthensTextarea } from "../../../components/forms";
 import { COPILOT_CHIPS } from "../../../data/copilot";
 
 type ChatInputProps = {
@@ -26,7 +27,7 @@ export function ChatInput({ input, typing, onChange, onSend }: ChatInputProps) {
       </div>
       <div className="p-5 border-t border-border flex-shrink-0">
         <div className="flex items-end gap-3 bg-secondary border border-border rounded-xl px-5 py-3 focus-within:border-primary/40 transition-colors">
-          <textarea
+          <AthensTextarea
             value={input}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={(e) => {
@@ -36,8 +37,9 @@ export function ChatInput({ input, typing, onChange, onSend }: ChatInputProps) {
               }
             }}
             placeholder="Ask Copilot about your job search..."
-            className="flex-1 bg-transparent text-sm text-foreground placeholder-muted-foreground resize-none outline-none leading-relaxed min-h-[24px] max-h-32"
+            autoResize
             rows={1}
+            className="flex-1 border-0 bg-transparent px-0 py-0 min-h-[24px] max-h-32 shadow-none focus-visible:border-0"
           />
           <div className="flex items-center gap-2 flex-shrink-0">
             <button type="button" className="icon-btn text-muted-foreground hover:text-foreground w-10 h-10">

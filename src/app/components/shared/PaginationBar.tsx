@@ -9,6 +9,7 @@ import {
   PaginationPrevious,
 } from "../ui/pagination";
 import { cn } from "../../lib/utils";
+import { AthensSelect } from "../forms";
 
 type PaginationBarProps = {
   page: number;
@@ -70,20 +71,16 @@ export function PaginationBar({
               : `${start}–${end} of ${total}`}
         </p>
         {onPageSizeChange && (
-          <label className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Per page</span>
-            <select
-              value={pageSize}
-              onChange={(e) => onPageSizeChange(Number(e.target.value))}
-              className="bg-secondary border border-border rounded-xl px-3 py-1.5 text-sm text-foreground outline-none focus:border-primary/40 min-h-9"
-            >
-              {pageSizeOptions.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
+            <AthensSelect
+              value={String(pageSize)}
+              onChange={(v) => onPageSizeChange(Number(v))}
+              options={pageSizeOptions.map((n) => ({ value: String(n), label: String(n) }))}
+              size="sm"
+              className="w-20"
+            />
+          </div>
         )}
       </div>
       <Pagination className="mx-0 w-auto">

@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
+import { AthensSelect } from "../../../components/forms";
 import { cn } from "../../../lib/utils";
 import {
   countAttributeFilters,
@@ -145,22 +146,13 @@ export function JobSearchFilterPanel({
             className="flex-1 min-w-[120px] sm:max-w-[160px]"
           />
 
-          <div className="relative shrink-0">
-            <ArrowDownUp className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <select
-              value={filters.sort}
-              onChange={(e) => patch({ sort: e.target.value as JobSearchFilterState["sort"] })}
-              className="appearance-none h-9 pl-8 pr-7 bg-secondary/60 border border-border rounded-lg text-sm outline-none focus:border-primary/40"
-              aria-label="Sort by"
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
+          <AthensSelect
+            value={filters.sort}
+            onChange={(sort) => patch({ sort: sort as JobSearchFilterState["sort"] })}
+            options={SORT_OPTIONS}
+            size="sm"
+            className="w-[140px] shrink-0"
+          />
 
           <Button
             variant="outline"

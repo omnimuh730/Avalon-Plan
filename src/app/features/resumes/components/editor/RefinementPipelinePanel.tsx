@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
+import { AthensInput, AthensSelect, AthensTextarea, FormField } from "../../../../components/forms";
 import { cn } from "../../../../lib/utils";
 import type { RefinementStep } from "../../../../types/resume";
 
@@ -6,6 +7,11 @@ type RefinementPipelinePanelProps = {
   steps: RefinementStep[];
   onChange: (steps: RefinementStep[]) => void;
 };
+
+const SECTION_OPTIONS = ["experience", "summary", "skills", "education"].map((s) => ({
+  value: s,
+  label: s,
+}));
 
 export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelinePanelProps) {
   const addStep = () => {
@@ -47,10 +53,10 @@ export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelineP
         {steps.map((step, idx) => (
           <div key={step.id} className="border border-border rounded-xl p-4 bg-secondary/30">
             <div className="flex items-start gap-2 mb-3">
-              <input
+              <AthensInput
                 value={step.title}
                 onChange={(e) => update(step.id, { title: e.target.value })}
-                className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm font-bold"
+                className="flex-1 font-bold"
               />
               <div className="flex gap-1">
                 <button type="button" disabled={idx === 0} onClick={() => move(step.id, -1)} className="icon-btn w-8 h-8 disabled:opacity-30">
@@ -65,21 +71,15 @@ export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelineP
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3 mb-3">
+              <AthensSelect
+                label="Section"
+                value={step.section}
+                onChange={(section) => update(step.id, { section })}
+                options={SECTION_OPTIONS}
+              />
               <div>
-                <label className="text-xs text-muted-foreground font-semibold">Section</label>
-                <select
-                  value={step.section}
-                  onChange={(e) => update(step.id, { section: e.target.value })}
-                  className="w-full mt-1 bg-background border border-border rounded-lg px-2 py-1.5 text-sm"
-                >
-                  {["experience", "summary", "skills", "education"].map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground font-semibold">Mode</label>
-                <div className="flex gap-1 mt-1">
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Mode</span>
+                <div className="flex gap-1 mt-1.5">
                   {(["fine-tune", "final"] as const).map((mode) => (
                     <button
                       key={mode}
@@ -87,7 +87,7 @@ export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelineP
                       onClick={() => update(step.id, { mode })}
                       className={cn(
                         "flex-1 py-1.5 rounded-lg text-xs font-bold capitalize border",
-                        step.mode === mode ? "bg-primary text-white border-primary" : "bg-background border-border text-muted-foreground"
+                        step.mode === mode ? "bg-primary text-white border-primary" : "bg-background border-border text-muted-foreground",
                       )}
                     >
                       {mode}
@@ -96,23 +96,22 @@ export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelineP
                 </div>
               </div>
             </div>
-            <textarea
+            <AthensTextarea
               value={step.prompt}
               onChange={(e) => update(step.id, { prompt: e.target.value })}
               placeholder="Prompt instructions for this step…"
               rows={3}
-              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm mb-2"
+              className="mb-2"
             />
             {step.mode === "final" && (
-              <div>
-                <label className="text-xs text-muted-foreground font-semibold">Output schema (JSON)</label>
-                <textarea
+              <FormField label="Output schema (JSON)">
+                <AthensTextarea
                   value={step.outputSchema ?? ""}
                   onChange={(e) => update(step.id, { outputSchema: e.target.value })}
                   rows={4}
-                  className="w-full mt-1 bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono"
+                  className="font-mono text-xs"
                 />
-              </div>
+              </FormField>
             )}
           </div>
         ))}

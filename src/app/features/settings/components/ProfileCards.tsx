@@ -1,59 +1,9 @@
 import React from "react";
 import { Briefcase, GraduationCap, Trash2 } from "lucide-react";
 import { Badge } from "../../../components/ui";
+import { AthensInput, AthensSelect, FormField } from "../../../components/forms";
 import { cn } from "../../../lib/utils";
 import type { CareerEntry, UserProfile } from "../../../data/settings/profile";
-
-function Field({
-  label,
-  value,
-  onChange,
-  type = "text",
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  type?: string;
-}) {
-  return (
-    <label className="block">
-      <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="mt-1.5 w-full bg-secondary border border-border rounded-xl px-4 py-2.5 text-sm text-foreground outline-none focus:border-primary/40 min-h-10"
-      />
-    </label>
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: string[];
-}) {
-  return (
-    <label className="block">
-      <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="mt-1.5 w-full bg-secondary border border-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-primary/40 min-h-10"
-      >
-        {options.map((o) => (
-          <option key={o}>{o}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
 
 export function ProfileIdentityCard({
   profile,
@@ -66,20 +16,42 @@ export function ProfileIdentityCard({
     <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
       <h3 className="text-base font-bold text-foreground mb-4">Identity</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Field label="First name" value={profile.firstName} onChange={(v) => onChange({ firstName: v })} />
-        <Field label="Last name" value={profile.lastName} onChange={(v) => onChange({ lastName: v })} />
-        <Field label="Age" value={profile.age} onChange={(v) => onChange({ age: v })} />
-        <SelectField label="Gender" value={profile.gender} onChange={(v) => onChange({ gender: v })} options={["Male", "Female", "Non-binary", "Prefer not to say"]} />
-        <SelectField label="Pronouns" value={profile.pronouns} onChange={(v) => onChange({ pronouns: v })} options={["they/them", "she/her", "he/him", "Prefer not to say"]} />
-        <SelectField label="Orientation" value={profile.orientation} onChange={(v) => onChange({ orientation: v })} options={["Prefer not to say", "Straight", "LGBTQ+"]} />
-        <Field label="Email" value={profile.email} onChange={(v) => onChange({ email: v })} type="email" />
-        <Field label="Phone" value={profile.phone} onChange={(v) => onChange({ phone: v })} />
-        <Field label="Gmail app password" value={profile.gmailAppPassword} onChange={(v) => onChange({ gmailAppPassword: v })} type="password" />
-        <Field label="Street address" value={profile.street} onChange={(v) => onChange({ street: v })} />
-        <Field label="City" value={profile.city} onChange={(v) => onChange({ city: v })} />
-        <Field label="State" value={profile.state} onChange={(v) => onChange({ state: v })} />
-        <Field label="Zip" value={profile.zip} onChange={(v) => onChange({ zip: v })} />
-        <Field label="Country" value={profile.country} onChange={(v) => onChange({ country: v })} />
+        <FormField label="First name">
+          <AthensInput value={profile.firstName} onChange={(e) => onChange({ firstName: e.target.value })} />
+        </FormField>
+        <FormField label="Last name">
+          <AthensInput value={profile.lastName} onChange={(e) => onChange({ lastName: e.target.value })} />
+        </FormField>
+        <FormField label="Age">
+          <AthensInput value={profile.age} onChange={(e) => onChange({ age: e.target.value })} />
+        </FormField>
+        <AthensSelect label="Gender" value={profile.gender} onChange={(v) => onChange({ gender: v })} options={["Male", "Female", "Non-binary", "Prefer not to say"].map((o) => ({ value: o, label: o }))} />
+        <AthensSelect label="Pronouns" value={profile.pronouns} onChange={(v) => onChange({ pronouns: v })} options={["they/them", "she/her", "he/him", "Prefer not to say"].map((o) => ({ value: o, label: o }))} />
+        <AthensSelect label="Orientation" value={profile.orientation} onChange={(v) => onChange({ orientation: v })} options={["Prefer not to say", "Straight", "LGBTQ+"].map((o) => ({ value: o, label: o }))} />
+        <FormField label="Email">
+          <AthensInput type="email" value={profile.email} onChange={(e) => onChange({ email: e.target.value })} />
+        </FormField>
+        <FormField label="Phone">
+          <AthensInput value={profile.phone} onChange={(e) => onChange({ phone: e.target.value })} />
+        </FormField>
+        <FormField label="Gmail app password">
+          <AthensInput type="password" value={profile.gmailAppPassword} onChange={(e) => onChange({ gmailAppPassword: e.target.value })} />
+        </FormField>
+        <FormField label="Street address">
+          <AthensInput value={profile.street} onChange={(e) => onChange({ street: e.target.value })} />
+        </FormField>
+        <FormField label="City">
+          <AthensInput value={profile.city} onChange={(e) => onChange({ city: e.target.value })} />
+        </FormField>
+        <FormField label="State">
+          <AthensInput value={profile.state} onChange={(e) => onChange({ state: e.target.value })} />
+        </FormField>
+        <FormField label="Zip">
+          <AthensInput value={profile.zip} onChange={(e) => onChange({ zip: e.target.value })} />
+        </FormField>
+        <FormField label="Country">
+          <AthensInput value={profile.country} onChange={(e) => onChange({ country: e.target.value })} />
+        </FormField>
       </div>
     </div>
   );
@@ -96,11 +68,11 @@ export function ProfileDisclosuresCard({
     <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
       <h3 className="text-base font-bold text-foreground mb-4">Voluntary disclosures</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <SelectField label="Hispanic / Latino" value={profile.hispanic} onChange={(v) => onChange({ hispanic: v })} options={["No", "Yes", "Prefer not to say"]} />
-        <SelectField label="Race / ethnicity" value={profile.race} onChange={(v) => onChange({ race: v })} options={["Asian", "White", "Black", "Hispanic", "Prefer not to say"]} />
-        <SelectField label="Visa / sponsorship" value={profile.visa} onChange={(v) => onChange({ visa: v })} options={["No sponsorship needed", "Require sponsorship", "Prefer not to say"]} />
-        <SelectField label="Disability" value={profile.disability} onChange={(v) => onChange({ disability: v })} options={["No", "Yes", "Prefer not to say"]} />
-        <SelectField label="Veteran status" value={profile.veteran} onChange={(v) => onChange({ veteran: v })} options={["No", "Yes", "Prefer not to say"]} />
+        <AthensSelect label="Hispanic / Latino" value={profile.hispanic} onChange={(v) => onChange({ hispanic: v })} options={["No", "Yes", "Prefer not to say"].map((o) => ({ value: o, label: o }))} />
+        <AthensSelect label="Race / ethnicity" value={profile.race} onChange={(v) => onChange({ race: v })} options={["Asian", "White", "Black", "Hispanic", "Prefer not to say"].map((o) => ({ value: o, label: o }))} />
+        <AthensSelect label="Visa / sponsorship" value={profile.visa} onChange={(v) => onChange({ visa: v })} options={["No sponsorship needed", "Require sponsorship", "Prefer not to say"].map((o) => ({ value: o, label: o }))} />
+        <AthensSelect label="Disability" value={profile.disability} onChange={(v) => onChange({ disability: v })} options={["No", "Yes", "Prefer not to say"].map((o) => ({ value: o, label: o }))} />
+        <AthensSelect label="Veteran status" value={profile.veteran} onChange={(v) => onChange({ veteran: v })} options={["No", "Yes", "Prefer not to say"].map((o) => ({ value: o, label: o }))} />
       </div>
     </div>
   );
@@ -117,10 +89,14 @@ export function ProfilePreferencesCard({
     <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
       <h3 className="text-base font-bold text-foreground mb-4">Job search preferences</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Field label="Target role" value={profile.targetRole} onChange={(v) => onChange({ targetRole: v })} />
-        <Field label="Desired salary (annual)" value={profile.desiredSalary} onChange={(v) => onChange({ desiredSalary: v })} />
-        <SelectField label="Work authorization" value={profile.workAuth} onChange={(v) => onChange({ workAuth: v })} options={["Authorized to work in US", "Require sponsorship"]} />
-        <SelectField label="Remote preference" value={profile.remotePreference} onChange={(v) => onChange({ remotePreference: v })} options={["Remote preferred", "Hybrid", "On-site OK"]} />
+        <FormField label="Target role">
+          <AthensInput value={profile.targetRole} onChange={(e) => onChange({ targetRole: e.target.value })} />
+        </FormField>
+        <FormField label="Desired salary (annual)">
+          <AthensInput value={profile.desiredSalary} onChange={(e) => onChange({ desiredSalary: e.target.value })} />
+        </FormField>
+        <AthensSelect label="Work authorization" value={profile.workAuth} onChange={(v) => onChange({ workAuth: v })} options={["Authorized to work in US", "Require sponsorship"].map((o) => ({ value: o, label: o }))} />
+        <AthensSelect label="Remote preference" value={profile.remotePreference} onChange={(v) => onChange({ remotePreference: v })} options={["Remote preferred", "Hybrid", "On-site OK"].map((o) => ({ value: o, label: o }))} />
       </div>
     </div>
   );
@@ -168,10 +144,10 @@ export function CareerTimeline({
                 </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <input placeholder="Title" value={entry.title} onChange={(e) => onChange(timeline.map((x) => x.id === entry.id ? { ...x, title: e.target.value } : x))} className="bg-card border border-border rounded-lg px-3 py-2 text-sm outline-none min-h-9" />
-                <input placeholder="Organization" value={entry.org} onChange={(e) => onChange(timeline.map((x) => x.id === entry.id ? { ...x, org: e.target.value } : x))} className="bg-card border border-border rounded-lg px-3 py-2 text-sm outline-none min-h-9" />
-                <input type="month" value={entry.start} onChange={(e) => onChange(timeline.map((x) => x.id === entry.id ? { ...x, start: e.target.value } : x))} className="bg-card border border-border rounded-lg px-3 py-2 text-sm outline-none min-h-9" />
-                <input type="month" value={entry.end} onChange={(e) => onChange(timeline.map((x) => x.id === entry.id ? { ...x, end: e.target.value } : x))} className="bg-card border border-border rounded-lg px-3 py-2 text-sm outline-none min-h-9" />
+                <AthensInput placeholder="Title" value={entry.title} onChange={(e) => onChange(timeline.map((x) => x.id === entry.id ? { ...x, title: e.target.value } : x))} />
+                <AthensInput placeholder="Organization" value={entry.org} onChange={(e) => onChange(timeline.map((x) => x.id === entry.id ? { ...x, org: e.target.value } : x))} />
+                <AthensInput type="month" value={entry.start} onChange={(e) => onChange(timeline.map((x) => x.id === entry.id ? { ...x, start: e.target.value } : x))} />
+                <AthensInput type="month" value={entry.end} onChange={(e) => onChange(timeline.map((x) => x.id === entry.id ? { ...x, end: e.target.value } : x))} />
               </div>
             </div>
           </div>
