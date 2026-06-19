@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { Badge } from "../../../components/ui";
+import { useResumeNavigationOptional } from "../../../context/ResumeNavigationContext";
 import { PipelineNodeCard } from "./PipelineNode";
 import { PipelineEdges } from "./PipelineEdge";
 import { AgentMetricsPanel } from "./AgentMetricsPanel";
@@ -30,6 +31,7 @@ export function AgentPipelineMonitor({
 }) {
   const [zoom, setZoom] = useState(100);
   const [showGrid, setShowGrid] = useState(true);
+  const resumeNav = useResumeNavigationOptional();
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -59,6 +61,15 @@ export function AgentPipelineMonitor({
           <Settings className="w-4 h-4" />
           Configure
         </button>
+        {agent.id === "ag2" && (
+          <button
+            type="button"
+            onClick={() => resumeNav?.openEditor({ tab: "history" })}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 min-h-10"
+          >
+            View generation history
+          </button>
+        )}
         <Badge v={agent.status === "active" ? "success" : agent.status === "complete" ? "blue" : "subtle"}>
           {agent.status}
         </Badge>

@@ -1,76 +1,41 @@
 import type { Job } from "../../types";
 
-export const JOBS: Job[] = [
-  {
-    id: "j1",
-    title: "Senior Frontend Engineer",
-    company: "Vercel",
-    location: "Remote",
-    type: "Full-time",
-    status: "saved",
-    matchScore: 94,
-    posted: "2d ago",
-    salary: "$160k–$200k",
-    source: "LinkedIn",
-  },
-  {
-    id: "j2",
-    title: "Engineering Lead",
-    company: "Linear",
-    location: "San Francisco, CA",
-    type: "Full-time",
-    status: "saved",
-    matchScore: 91,
-    posted: "3d ago",
-    salary: "$200k–$260k",
-    source: "Referral",
-  },
-  {
-    id: "j3",
-    title: "Product Designer",
-    company: "Figma",
-    location: "Remote",
-    type: "Full-time",
-    status: "applied",
-    matchScore: 88,
-    posted: "1w ago",
-    salary: "$140k–$180k",
-    source: "LinkedIn",
-  },
-  {
-    id: "j4",
-    title: "ML Engineer",
-    company: "OpenAI",
-    location: "New York, NY",
-    type: "Full-time",
-    status: "saved",
-    matchScore: 96,
-    posted: "5d ago",
-    salary: "$180k–$240k",
-    source: "Direct",
-  },
-  {
-    id: "j5",
-    title: "DevOps Engineer",
-    company: "GitHub",
-    location: "Remote",
-    type: "Full-time",
-    status: "applied",
-    matchScore: 91,
-    posted: "1w ago",
-    salary: "$150k–$190k",
-    source: "LinkedIn",
-  },
-  {
-    id: "j6",
-    title: "Staff Engineer",
-    company: "Stripe",
-    location: "Remote",
-    type: "Full-time",
-    status: "saved",
-    matchScore: 85,
-    posted: "4d ago",
-    salary: "$190k–$250k",
-    source: "Indeed",
-  },
+const COMPANIES = [
+  "Vercel", "Linear", "Figma", "OpenAI", "GitHub", "Stripe", "Notion", "Anthropic",
+  "Meta", "Google", "Apple", "Netflix", "Airbnb", "Databricks", "Snowflake",
+  "Coinbase", "Robinhood", "Plaid", "Ramp", "Brex", "Scale AI", "Hugging Face",
+  "Replicate", "Supabase", "PlanetScale", "Cloudflare", "Datadog", "MongoDB", "Elastic", "HashiCorp",
 ];
+
+const TITLES = [
+  "Senior Frontend Engineer", "Staff Engineer", "Engineering Lead", "ML Engineer",
+  "DevOps Engineer", "Product Designer", "Backend Engineer", "Full Stack Engineer",
+  "Platform Engineer", "Data Engineer", "Security Engineer", "Mobile Engineer",
+];
+
+const LOCATIONS = ["Remote", "San Francisco, CA", "New York, NY", "Seattle, WA", "Austin, TX", "Boston, MA"];
+const SOURCES = ["LinkedIn", "Indeed", "Referral", "Direct", "Glassdoor", "Company Site"];
+const STATUSES: Job["status"][] = ["saved", "applied", "closed"];
+
+function seeded(i: number, max: number) {
+  return ((i * 17 + 7) % max);
+}
+
+export const JOBS: Job[] = Array.from({ length: 30 }, (_, i) => {
+  const status = STATUSES[seeded(i, 3)];
+  const matchScore = 72 + seeded(i, 27);
+  const daysAgo = 1 + seeded(i, 14);
+  const salaryBase = 120 + seeded(i, 8) * 10;
+  return {
+    id: `j${i + 1}`,
+    title: TITLES[seeded(i, TITLES.length)],
+    company: COMPANIES[i],
+    location: LOCATIONS[seeded(i, LOCATIONS.length)],
+    type: seeded(i, 5) === 0 ? "Contract" : "Full-time",
+    status,
+    matchScore,
+    posted: daysAgo === 1 ? "1d ago" : `${daysAgo}d ago`,
+    salary: `$${salaryBase}k–$${salaryBase + 40}k`,
+    source: SOURCES[seeded(i, SOURCES.length)],
+  };
+});

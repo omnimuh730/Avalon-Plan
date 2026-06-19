@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   AreaChart,
   Area,
@@ -12,33 +12,43 @@ import { ChartTip } from "../../../components/ui";
 import { cn } from "../../../lib/utils";
 import { AREA_DATA } from "../../../data/analytics";
 
+const RANGES = [
+  { key: "1M", months: 1 },
+  { key: "3M", months: 3 },
+  { key: "6M", months: 6 },
+  { key: "1Y", months: 12 },
+] as const;
+
 export function ActivityChart() {
+  const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("6M");
+  const months = RANGES.find((r) => r.key === range)?.months ?? 6;
+  const data = AREA_DATA.slice(-months);
+
   return (
     <div className="lg:col-span-2 bg-card border border-border rounded-xl p-6 shadow-sm">
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
           <h3 className="text-sm font-bold text-foreground">Application Activity</h3>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Submissions, responses & interviews — 6 month trend
-          </p>
+          <p className="text-sm text-muted-foreground mt-0.5">Submissions, responses & interviews</p>
         </div>
         <div className="flex items-center gap-1 bg-secondary rounded-xl p-1">
-          {["1M", "3M", "6M", "1Y"].map((t, i) => (
+          {RANGES.map((r) => (
             <button
-              key={t}
+              key={r.key}
               type="button"
+              onClick={() => setRange(r.key)}
               className={cn(
                 "px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors min-h-9",
-                i === 2 ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                range === r.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
               )}
             >
-              {t}
+              {r.key}
             </button>
           ))}
         </div>
       </div>
       <ResponsiveContainer width="100%" height={220}>
-        <AreaChart data={AREA_DATA} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+        <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
           <defs>
             {[["gA", "#6c5ce7"], ["gR", "#2dd4bf"], ["gI", "#f472b6"]].map(([id, c]) => (
               <linearGradient key={id} id={id} x1="0" y1="0" x2="0" y2="1">

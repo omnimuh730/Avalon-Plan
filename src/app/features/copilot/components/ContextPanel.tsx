@@ -1,12 +1,21 @@
-import React from "react";
-import { ChevronRight } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { ChevronRight, FileText } from "lucide-react";
 import { Av } from "../../../components/ui";
 import { ToggleSwitch } from "../../../components/shared/ToggleSwitch";
 import { mono } from "../../../lib/utils";
 import { APPLICATIONS } from "../../../data/applications";
 import { COPILOT_QUICK_ACTIONS, COPILOT_WORKFLOWS, TOP_APPLICATION_IDS } from "../../../data/copilot";
+import { useResumeNavigationOptional } from "../../../context/ResumeNavigationContext";
+import { getEditorDraft } from "../../../services/resumeStorage";
 
 export function ContextPanel() {
+  const resumeNav = useResumeNavigationOptional();
+  const [resumeName, setResumeName] = useState<string | null>(null);
+
+  useEffect(() => {
+    getEditorDraft().then((d) => setResumeName(d.document.identity.fullName));
+  }, []);
+
   return (
     <div className="w-60 border-l border-border flex-shrink-0 overflow-y-auto p-5 space-y-5 bg-secondary/20 subtle-scroll">
       <div>
@@ -20,6 +29,23 @@ export function ContextPanel() {
           </div>
           <p className="text-xs text-muted-foreground mt-1">Strong fit — apply soon</p>
         </div>
+      </div>
+
+      <div>
+        <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Attached resume</p>
+        <button
+          type="button"
+          onClick={() => resumeNav?.openEditor({ tab: "editor" })}
+          className="w-full bg-card border border-border rounded-xl p-4 shadow-sm text-left hover:shadow-md transition-all"
+        >
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-primary flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-foreground truncate">{resumeName ?? "Current draft"}</p>
+              <p className="text-xs text-muted-foreground">Open in Resume Generator</p>
+            </div>
+          </div>
+        </button>
       </div>
 
       <div>

@@ -45,7 +45,7 @@ export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
 export const VIEW_TITLES: Record<View, string> = {
   dashboard: "Dashboard",
   "job-board": "Job Search",
-  resumes: "My Resumes",
+  resumes: "Resume Generator",
   ats: "My Applications",
   copilot: "Career Copilot",
   agents: "AI Agents",

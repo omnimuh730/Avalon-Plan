@@ -1,8 +1,9 @@
 import React from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { ChartTip } from "../../../components/ui";
-import { SRC_DATA } from "../../../data/analytics";
+import { SRC_DATA, SOURCE_RADAR } from "../../../data/analytics";
 import { mono } from "../../../lib/utils";
+import { AnalyticsChartCard } from "./AnalyticsHeatmap";
 
 export function AnalyticsSourcesTab() {
   return (
@@ -40,6 +41,18 @@ export function AnalyticsSourcesTab() {
           ))}
         </div>
       </div>
+      <AnalyticsChartCard title="Source comparison" subtitle="Multi-dimensional channel quality">
+        <ResponsiveContainer width="100%" height={280}>
+          <RadarChart data={SOURCE_RADAR} cx="50%" cy="50%" outerRadius="75%">
+            <PolarGrid stroke="rgba(0,0,0,0.08)" />
+            <PolarAngleAxis dataKey="metric" tick={{ fill: "#6b6b84", fontSize: 11 }} />
+            <Radar name="LinkedIn" dataKey="LinkedIn" stroke="#6c5ce7" fill="#6c5ce7" fillOpacity={0.2} />
+            <Radar name="Referral" dataKey="Referral" stroke="#2dd4bf" fill="#2dd4bf" fillOpacity={0.2} />
+            <Radar name="Direct" dataKey="Direct" stroke="#f472b6" fill="#f472b6" fillOpacity={0.2} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+          </RadarChart>
+        </ResponsiveContainer>
+      </AnalyticsChartCard>
     </div>
   );
 }

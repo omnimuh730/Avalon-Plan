@@ -10,9 +10,18 @@ export interface MailThread {
   from: string;
   subj: string;
   prev: string;
+  body: string;
   time: string;
   unread: boolean;
   tag: string;
+  folder: "inbox" | "sent" | "drafts" | "trash" | "spam";
+  labels: string[];
+}
+
+export interface MailLabel {
+  id: string;
+  name: string;
+  color: BadgeVariant;
 }
 
 export interface Resume {

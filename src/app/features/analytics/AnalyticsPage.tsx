@@ -1,32 +1,46 @@
-import React, { useState } from "react";
-import { CheckCircle, Clock, TrendingUp, Briefcase } from "lucide-react";
+import React from "react";
 import { PageShell } from "../../components/layout/PageShell";
-import { KPI, Pill } from "../../components/ui";
+import { Pill } from "../../components/ui";
+import { useAnalyticsFilters, DATE_RANGE_OPTIONS } from "../../hooks/useAnalyticsFilters";
 import { AnalyticsOverviewTab } from "./components/AnalyticsOverviewTab";
 import { AnalyticsSourcesTab } from "./components/AnalyticsSourcesTab";
 import { AnalyticsFunnelTab } from "./components/AnalyticsFunnelTab";
+import { AnalyticsVelocityTab } from "./components/AnalyticsVelocityTab";
+import { AnalyticsInsightsTab } from "./components/AnalyticsInsightsTab";
+
+const TABS = ["overview", "sources", "funnel", "velocity", "insights"] as const;
 
 export function AnalyticsPage() {
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = React.useState<(typeof TABS)[number]>("overview");
+  const { range, setRange } = useAnalyticsFilters();
 
   return (
     <PageShell>
-      <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 w-fit mb-6 scroll-row">
-        {["overview", "sources", "funnel", "velocity"].map((t) => (
-          <Pill key={t} active={tab === t} onClick={() => setTab(t)}>{t}</Pill>
-        ))}
+      <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+        <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 scroll-row">
+          {TABS.map((t) => (
+            <Pill key={t} active={tab === t} onClick={() => setTab(t)}>
+              {t}
+            </Pill>
+          ))}
+        </div>
+        <select
+          value={range}
+          onChange={(e) => setRange(e.target.value as typeof range)}
+          className="bg-secondary border border-border rounded-xl px-4 py-2 text-sm font-semibold outline-none focus:border-primary/40 min-h-10"
+        >
+          {DATE_RANGE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
       </div>
       {tab === "overview" && <AnalyticsOverviewTab />}
       {tab === "sources" && <AnalyticsSourcesTab />}
       {tab === "funnel" && <AnalyticsFunnelTab />}
-      {tab === "velocity" && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPI label="Apps / Week" value="5.2" trend="+0.8" icon={Briefcase} accent="violet" />
-          <KPI label="Follow-ups Sent" value="18" sub="this month" icon={TrendingUp} accent="blue" />
-          <KPI label="Interviews / Month" value="4.5" sub="on track" icon={CheckCircle} accent="emerald" />
-          <KPI label="Offer Rate" value="4.3%" sub="2 of 47 apps" icon={Clock} accent="amber" />
-        </div>
-      )}
+      {tab === "velocity" && <AnalyticsVelocityTab />}
+      {tab === "insights" && <AnalyticsInsightsTab />}
     </PageShell>
   );
 }

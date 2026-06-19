@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { KPI, ChartTip } from "../../../components/ui";
 import { AREA_DATA, ROLE_PIE } from "../../../data/analytics";
 import { mono } from "../../../lib/utils";
+import { AnalyticsHeatmap } from "./AnalyticsHeatmap";
 
 export function AnalyticsOverviewTab() {
   return (
@@ -52,6 +53,7 @@ export function AnalyticsOverviewTab() {
           </div>
         </div>
       </div>
+      <AnalyticsHeatmap />
     </div>
   );
 }

@@ -1,48 +1,98 @@
-import React, { useState } from "react";
-import { Filter, Upload, Eye, Download, MoreHorizontal, Star } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Wand2 } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
-import { SearchField } from "../../components/shared/SearchField";
-import { Badge, Score } from "../../components/ui";
-import { RESUMES } from "../../data/resumes";
+import { Pill } from "../../components/ui";
+import { useResumeNavigationOptional } from "../../context/ResumeNavigationContext";
+import { initResumeStorage } from "../../services/resumeStorage";
+import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
+import { ResumeEditorTab } from "./components/ResumeEditorTab";
+import { ResumeHistoryTab } from "./components/ResumeHistoryTab";
+
+type ResumeTab = "library" | "editor" | "history";
 
 export function ResumesPage() {
-  const [q, setQ] = useState("");
-  const filtered = RESUMES.filter(
-    (r) => !q || [r.name, ...r.skills].some((x) => x.toLowerCase().includes(q.toLowerCase()))
-  );
+  const nav = useResumeNavigationOptional();
+  const [tab, setTab] = useState<ResumeTab>("library");
+  const [editorJd, setEditorJd] = useState<string | undefined>();
+  const [editorResumeId, setEditorResumeId] = useState<string | undefined>();
+  const [ready, setReady] = useState(false);
+  const [historyKey, setHistoryKey] = useState(0);
+
+  useEffect(() => {
+    initResumeStorage().then(() => setReady(true));
+  }, []);
+
+  useEffect(() => {
+    const pending = nav?.pendingEditorOpen;
+    if (!pending || !ready) return;
+    if (pending.tab) setTab(pending.tab);
+    else setTab("editor");
+    if (pending.jd) setEditorJd(pending.jd);
+    if (pending.resumeId) setEditorResumeId(pending.resumeId);
+    nav.clearPendingEditorOpen();
+  }, [nav?.pendingEditorOpen, ready, nav]);
+
+  const openEditor = useCallback((opts?: { resumeId?: string; jd?: string }) => {
+    setEditorResumeId(opts?.resumeId);
+    setEditorJd(opts?.jd);
+    setTab("editor");
+  }, []);
+
+  const handleGenerateShortcut = () => {
+    setTab("editor");
+  };
+
+  if (!ready) {
+    return (
+      <PageShell>
+        <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">Loading resume data…</div>
+      </PageShell>
+    );
+  }
 
   return (
-    <PageShell>
-      <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <SearchField value={q} onChange={setQ} placeholder="Search resumes or skills..." className="flex-1 max-w-md" />
-        <button type="button" className="flex items-center gap-2 bg-secondary border border-border text-muted-foreground px-4 py-2.5 rounded-xl text-sm font-semibold hover:text-foreground min-h-10">
-          <Filter className="w-4 h-4" />Filter
-        </button>
-        <button type="button" className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10">
-          <Upload className="w-4 h-4" />Upload Resume
-        </button>
-        <span className="text-sm text-muted-foreground ml-auto">{filtered.length} versions</span>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-        {filtered.map((r) => (
-          <div key={r.id} className="bg-card border border-border rounded-xl p-5 hover:shadow-md transition-all group cursor-pointer shadow-sm">
-            <div className="flex items-start justify-between mb-4">
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center"><Star className="w-6 h-6 text-primary" /></div>
-              <div className="flex items-center gap-2">{r.isPrimary && <Badge v="violet">Primary</Badge>}<Score score={r.matchScore} /></div>
+    <PageShell fullWidth={tab === "editor"}>
+      <div className={tab === "editor" ? "h-full flex flex-col overflow-hidden" : "page-container"}>
+        {tab !== "editor" && (
+          <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+            <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 scroll-row">
+              {(["library", "editor", "history"] as const).map((t) => (
+                <Pill key={t} active={tab === t} onClick={() => setTab(t)}>
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </Pill>
+              ))}
             </div>
-            <p className="text-base font-bold text-foreground mb-1">{r.name}</p>
-            <p className="text-sm text-muted-foreground mb-4">{r.version} · Updated {r.updated}</p>
-            <div className="flex flex-wrap gap-1.5 mb-4">{r.skills.map((t) => <Badge key={t} v="subtle">{t}</Badge>)}</div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">AI-optimized for frontend roles</span>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button type="button" className="icon-btn w-9 h-9 min-w-9 min-h-9 text-muted-foreground hover:text-foreground"><Eye className="w-4 h-4" /></button>
-                <button type="button" className="icon-btn w-9 h-9 min-w-9 min-h-9 text-muted-foreground hover:text-foreground"><Download className="w-4 h-4" /></button>
-                <button type="button" className="icon-btn w-9 h-9 min-w-9 min-h-9 text-muted-foreground hover:text-foreground"><MoreHorizontal className="w-4 h-4" /></button>
-              </div>
+            <button
+              type="button"
+              onClick={handleGenerateShortcut}
+              className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10"
+            >
+              <Wand2 className="w-4 h-4" />Generate
+            </button>
+          </div>
+        )}
+
+        {tab === "library" && <ResumeLibraryTab onOpenEditor={openEditor} />}
+        {tab === "editor" && (
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 m-4 mb-0 w-fit scroll-row flex-shrink-0">
+              {(["library", "editor", "history"] as const).map((t) => (
+                <Pill key={t} active={tab === t} onClick={() => setTab(t)}>
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </Pill>
+              ))}
+            </div>
+            <div className="flex-1 min-h-0">
+              <ResumeEditorTab
+                initialJd={editorJd}
+                initialResumeId={editorResumeId}
+                onGenerated={() => setHistoryKey((k) => k + 1)}
+                onSwitchToHistory={() => setTab("history")}
+              />
             </div>
           </div>
-        ))}
+        )}
+        {tab === "history" && <ResumeHistoryTab key={historyKey} />}
       </div>
     </PageShell>
   );

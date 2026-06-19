@@ -4,6 +4,7 @@ import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer } fro
 import { Av, Badge, Score } from "../../../components/ui";
 import { RADAR_DATA } from "../../../data/applications";
 import { mono } from "../../../lib/utils";
+import { useResumeNavigationOptional } from "../../../context/ResumeNavigationContext";
 import type { Application, BadgeVariant } from "../../../types";
 
 function stageBadgeVariant(stage: string): BadgeVariant {
@@ -19,6 +20,11 @@ type ApplicationDetailPanelProps = {
 };
 
 export function ApplicationDetailPanel({ app, onClose }: ApplicationDetailPanelProps) {
+  const resumeNav = useResumeNavigationOptional();
+
+  const buildJd = () =>
+    `${app.role} at ${app.company}\nLocation: ${app.location}\nRequired skills: ${app.tags.join(", ")}\n${app.salary ? `Compensation: ${app.salary}\n` : ""}Source: ${app.source}`;
+
   return (
     <div className="w-72 border-l border-border bg-card flex flex-col overflow-hidden flex-shrink-0 shadow-lg">
       <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
@@ -81,7 +87,11 @@ export function ApplicationDetailPanel({ app, onClose }: ApplicationDetailPanelP
         <button type="button" className="w-full bg-primary text-white rounded-xl py-3 text-sm font-bold hover:bg-primary/90 transition-colors min-h-10">
           Prep for Interview →
         </button>
-        <button type="button" className="w-full bg-secondary border border-border text-foreground rounded-xl py-3 text-sm font-semibold hover:bg-muted transition-colors min-h-10">
+        <button
+          type="button"
+          onClick={() => resumeNav?.openEditor({ jd: buildJd(), tab: "editor" })}
+          className="w-full bg-secondary border border-border text-foreground rounded-xl py-3 text-sm font-semibold hover:bg-muted transition-colors min-h-10"
+        >
           Tailor Resume
         </button>
         <button type="button" className="w-full text-rose-600 text-sm font-semibold py-2.5 hover:bg-rose-50 rounded-xl transition-colors min-h-10">

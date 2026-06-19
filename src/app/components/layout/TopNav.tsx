@@ -2,6 +2,7 @@ import React from "react";
 import { Search, Bell, Plus, Sparkles } from "lucide-react";
 import { VIEW_TITLES } from "../../config/navigation";
 import { Badge } from "../ui";
+import { ThemeToggle } from "../shared/ThemeToggle";
 import { display, mono } from "../../lib/utils";
 import type { View } from "../../types";
 
@@ -27,6 +28,7 @@ export function TopNav({ active }: { active: View }) {
           <Sparkles className="w-4 h-4" />
           AI
         </button>
+        <ThemeToggle compact />
         <button type="button" className="relative icon-btn text-muted-foreground hover:text-foreground hover:bg-secondary">
           <Bell className="w-5 h-5" />
           <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary" />
