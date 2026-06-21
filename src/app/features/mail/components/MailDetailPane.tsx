@@ -1,5 +1,5 @@
 import React from "react";
-import { ArrowLeft, Send, Sparkles, Archive, Trash2 } from "lucide-react";
+import { ArrowLeft, Send, Sparkles, Archive, Trash2, Loader2 } from "lucide-react";
 import { Av, Badge } from "../../../components/ui";
 import { MAIL_TAG_VARIANTS } from "../../../data/mail";
 import type { MailThread } from "../../../types";
@@ -7,6 +7,7 @@ import type { MailThread } from "../../../types";
 type MailDetailPaneProps = {
   thread: MailThread | null;
   fullView?: boolean;
+  loading?: boolean;
   onBack?: () => void;
   onArchive?: () => void;
   onTrash?: () => void;
@@ -16,6 +17,7 @@ type MailDetailPaneProps = {
 export function MailDetailPane({
   thread,
   fullView = false,
+  loading = false,
   onBack,
   onArchive,
   onTrash,
@@ -51,7 +53,7 @@ export function MailDetailPane({
           <Av name={thread.from} size={fullView ? "md" : "sm"} />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-foreground">{thread.from}</p>
-            <p className="text-xs text-muted-foreground">to Jordan Doe · {thread.time}</p>
+            <p className="text-xs text-muted-foreground">{thread.time}</p>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {thread.labels.filter((l) => l !== "starred").map((l) => (
@@ -69,11 +71,23 @@ export function MailDetailPane({
         </div>
       </div>
       <div className={`flex-1 overflow-auto subtle-scroll ${fullView ? "px-8 py-6 max-w-3xl mx-auto w-full" : "p-5"}`}>
-        {thread.body.split("\n").map((line, i) => (
-          <p key={i} className={`text-foreground/85 leading-relaxed mb-3 last:mb-0 ${fullView ? "text-base" : "text-sm"}`}>
-            {line || "\u00A0"}
-          </p>
-        ))}
+        {loading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Loading message…
+          </div>
+        ) : thread.bodyHtml ? (
+          <div
+            className={`prose prose-sm max-w-none text-foreground/85 ${fullView ? "text-base" : "text-sm"}`}
+            dangerouslySetInnerHTML={{ __html: thread.bodyHtml }}
+          />
+        ) : (
+          thread.body.split("\n").map((line, i) => (
+            <p key={i} className={`text-foreground/85 leading-relaxed mb-3 last:mb-0 ${fullView ? "text-base" : "text-sm"}`}>
+              {line || "\u00A0"}
+            </p>
+          ))
+        )}
       </div>
       <div className={`border-t border-border p-4 flex-shrink-0 ${fullView ? "max-w-3xl mx-auto w-full" : ""}`}>
         <div className="flex items-center gap-2 flex-wrap">

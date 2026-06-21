@@ -1,20 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { fetchMailLabels, saveMailLabels } from "@/api/mail";
 import { MAIL_LABELS } from "../../../data/mail";
 import type { BadgeVariant, MailLabel } from "../../../types";
 
-const STORAGE_KEY = "athens-mail-labels";
-
 const LABEL_COLORS: BadgeVariant[] = ["violet", "blue", "success", "amber", "pink", "subtle"];
-
-function loadLabels(): MailLabel[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as MailLabel[];
-  } catch {
-    /* ignore */
-  }
-  return MAIL_LABELS.map((l) => ({ ...l }));
-}
 
 function slugify(name: string): string {
   return name
@@ -24,13 +13,46 @@ function slugify(name: string): string {
     .slice(0, 32);
 }
 
-export function useMailLabels() {
-  const [labels, setLabels] = useState<MailLabel[]>(loadLabels);
+export function useMailLabels(applierName: string | undefined) {
+  const [labels, setLabels] = useState<MailLabel[]>(MAIL_LABELS.map((l) => ({ ...l })));
+  const [ready, setReady] = useState(false);
 
-  const persist = useCallback((next: MailLabel[]) => {
-    setLabels(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  }, []);
+  useEffect(() => {
+    if (!applierName) {
+      setReady(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const serverLabels = await fetchMailLabels(applierName);
+        if (!cancelled && serverLabels.length > 0) {
+          setLabels(serverLabels);
+        }
+      } catch {
+        /* keep defaults */
+      } finally {
+        if (!cancelled) setReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applierName]);
+
+  const persist = useCallback(
+    async (next: MailLabel[]) => {
+      setLabels(next);
+      if (applierName) {
+        try {
+          await saveMailLabels(applierName, next);
+        } catch (e) {
+          console.error("save mail labels failed", e);
+        }
+      }
+    },
+    [applierName],
+  );
 
   const createLabel = useCallback(
     (name: string, parentId?: string) => {
@@ -47,13 +69,13 @@ export function useMailLabels() {
         color: LABEL_COLORS[labels.length % LABEL_COLORS.length],
         ...(parentId ? { parentId } : {}),
       };
-      persist([...labels, label]);
+      void persist([...labels, label]);
       return label;
     },
     [labels, persist],
   );
 
-  return { labels, createLabel };
+  return { labels, createLabel, ready };
 }
 
 /** Build a nested tree for sidebar rendering. */

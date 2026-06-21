@@ -7,15 +7,20 @@ export interface Msg {
 
 export interface MailThread {
   id: string;
+  uid?: number;
   from: string;
+  fromEmail?: string;
   subj: string;
   prev: string;
   body: string;
+  bodyHtml?: string | null;
   time: string;
+  date?: string;
   unread: boolean;
   tag: string;
   folder: "inbox" | "sent" | "drafts" | "trash" | "spam" | "archive";
   labels: string[];
+  hasBody?: boolean;
 }
 
 export interface MailLabel {
