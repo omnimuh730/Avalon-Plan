@@ -9,6 +9,7 @@ import {
 	patchMailMessage,
 	getMailLabels,
 	postMailLabel,
+	deleteMailLabel,
 	putMailLabels,
 	checkMailCredentials,
 	getMailFolderCounts,
@@ -27,6 +28,7 @@ router.post('/mail/send', sendMailMessage);
 router.patch('/mail/messages/:uid', patchMailMessage);
 router.get('/mail/labels', getMailLabels);
 router.post('/mail/labels', postMailLabel);
+router.delete('/mail/labels/:labelId', deleteMailLabel);
 router.put('/mail/labels', putMailLabels);
 
 export default router;

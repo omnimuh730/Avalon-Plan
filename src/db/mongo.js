@@ -18,6 +18,7 @@ let bidRecordsLocalCollection;
 let bidRecordsCloudCollection;
 let skillEnrichmentQueueCollection;
 let skillCooccurrenceCollection;
+let userKnowledgeGraphsCollection;
 // Resume generator: saved config per applier + a history of generation runs.
 // Always local (AIMS_local) — this is the user's working data.
 let resumeGeneratorConfigCollection;
@@ -53,6 +54,10 @@ async function ensureSkillCollectionsIndexes() {
 		await personalInfoCollection.createIndex({ name: 1 }, { unique: true });
 		await personalInfoCollection.createIndex({ canonicalId: 1 });
 	}
+	if (userKnowledgeGraphsCollection) {
+		await userKnowledgeGraphsCollection.createIndex({ applierName: 1, resumeId: 1 }, { unique: true });
+		await userKnowledgeGraphsCollection.createIndex({ applierName: 1, updatedAt: -1 });
+	}
 	if (jobsCollection) {
 		await jobsCollection.createIndex({ 'skillAnalysis.status': 1, 'skillAnalysis.queuedAt': 1 });
 	}
@@ -74,6 +79,7 @@ async function initMongo() {
 	personalInfoCollection = db.collection('personal_info');
 	skillEnrichmentQueueCollection = db.collection('skill_enrichment_queue');
 	skillCooccurrenceCollection = db.collection('skill_cooccurrence');
+	userKnowledgeGraphsCollection = db.collection('user_knowledge_graphs');
 	accountInfoCollection = db.collection('account_info');
 	rulesCollection = db.collection('rules');
 	resumeGeneratorConfigCollection = db.collection('resume_generator_config');
@@ -180,6 +186,7 @@ export {
 	personalInfoCollection,
 	skillEnrichmentQueueCollection,
 	skillCooccurrenceCollection,
+	userKnowledgeGraphsCollection,
 	accountInfoCollection,
 	accountInfoCloudCollection,
 	isCloudMirrorConfigured,

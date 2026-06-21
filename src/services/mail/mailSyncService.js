@@ -21,6 +21,27 @@ import {
 } from './mailStore.js';
 
 /**
+ * Read one folder page from MongoDB cache only (instant).
+ */
+export async function loadCachedFolderPage(applierName, folder, page, pageSize) {
+	const state = await getSyncState(applierName);
+	const cachedTotal = state?.[`folderTotal_${folder}`];
+	const mongoCount = await countMessages(applierName, { folder });
+	const total =
+		typeof cachedTotal === 'number' && cachedTotal > 0 ? cachedTotal : mongoCount;
+
+	const docs = await listMessages(applierName, { folder, page, pageSize });
+	return {
+		ok: true,
+		threads: docs.map(messageToThread),
+		total,
+		page,
+		pageSize,
+		fromCache: true,
+	};
+}
+
+/**
  * Fetch one folder page from Gmail if not fully cached; returns threads + total.
  */
 export async function loadFolderPage(applierName, folder, page, pageSize) {

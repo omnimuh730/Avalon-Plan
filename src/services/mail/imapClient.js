@@ -364,6 +364,19 @@ export async function createGmailLabel(email, password, name, parentPath) {
 	});
 }
 
+/**
+ * Delete a Gmail label (messages keep their content; label is removed from Gmail).
+ */
+export async function deleteGmailLabel(email, password, labelPath) {
+	const path = String(labelPath ?? '').trim();
+	if (!path) throw new Error('Label path required');
+
+	return withClient(email, password, async (client) => {
+		await client.mailboxDelete(path);
+		return { deleted: path };
+	});
+}
+
 export async function addLabelsToMessage(email, password, uid, labelNames) {
 	const tokens = (labelNames || []).map(toImapLabelToken).filter(Boolean);
 	if (!tokens.length) return;

@@ -7,6 +7,7 @@ import {
 	moveToInbox,
 	fetchGmailLabelList,
 	createGmailLabel,
+	deleteGmailLabel,
 	addLabelsToMessage,
 	removeLabelsFromMessage,
 } from '../services/mail/imapClient.js';
@@ -21,6 +22,7 @@ import {
 	ensureMessageBody,
 	runIncrementalSync,
 	loadFolderPage,
+	loadCachedFolderPage,
 	loadLabelOrSearchPage,
 	getFolderCounts,
 	prefetchMessageBodies,
@@ -47,6 +49,7 @@ export async function getMailThreads(req, res) {
 		const label = req.query.label ? String(req.query.label) : undefined;
 		const search = req.query.search ? String(req.query.search) : undefined;
 		const { page, pageSize } = parsePageQuery(req);
+		const cacheOnly = req.query.cacheOnly === 'true' || req.query.cacheOnly === '1';
 
 		const creds = await resolveMailCredentials(applierName);
 		if (!creds.ok) {
@@ -54,7 +57,14 @@ export async function getMailThreads(req, res) {
 		}
 
 		let result;
-		if (label || search) {
+		if (cacheOnly) {
+			if (label || search) {
+				result = await loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize });
+				result.fromCache = true;
+			} else {
+				result = await loadCachedFolderPage(applierName, folder, page, pageSize);
+			}
+		} else if (label || search) {
 			result = await loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize });
 		} else {
 			result = await loadFolderPage(applierName, folder, page, pageSize);
@@ -64,9 +74,10 @@ export async function getMailThreads(req, res) {
 			return res.status(500).json({ success: false, error: result.error });
 		}
 
-		// Background prefetch bodies for list previews
-		const uids = result.threads.map((t) => Number(t.uid)).filter(Boolean);
-		void prefetchMessageBodies(applierName, uids);
+		if (!cacheOnly) {
+			const uids = result.threads.map((t) => Number(t.uid)).filter(Boolean);
+			void prefetchMessageBodies(applierName, uids);
+		}
 
 		return res.json({
 			success: true,
@@ -74,6 +85,7 @@ export async function getMailThreads(req, res) {
 			total: result.total,
 			page: result.page,
 			pageSize: result.pageSize,
+			fromCache: result.fromCache ?? false,
 		});
 	} catch (err) {
 		console.error('GET /api/mail/threads error', err);
@@ -358,6 +370,35 @@ export async function postMailLabel(req, res) {
 		return res.json({ success: true, label });
 	} catch (err) {
 		console.error('POST /api/mail/labels error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function deleteMailLabel(req, res) {
+	try {
+		const applierName = await requireApplier(req, res);
+		if (!applierName) return;
+
+		const creds = await resolveMailCredentials(applierName);
+		if (!creds.ok) {
+			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
+		}
+
+		const labelId = String(req.params.labelId || '').trim();
+		if (!labelId) {
+			return res.status(400).json({ success: false, error: 'Label id required' });
+		}
+
+		const labels = await fetchGmailLabelList(creds.email, creds.password);
+		const label = labels.find((l) => l.id === labelId);
+		if (!label) {
+			return res.status(404).json({ success: false, error: 'Label not found' });
+		}
+
+		await deleteGmailLabel(creds.email, creds.password, label.path || label.name);
+		return res.json({ success: true, deleted: label.path || label.name });
+	} catch (err) {
+		console.error('DELETE /api/mail/labels/:labelId error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }
