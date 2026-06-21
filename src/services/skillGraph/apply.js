@@ -1,4 +1,9 @@
 import { runWrite } from '../../db/neo4j.js';
+import {
+	getKgConfidenceAliasExact,
+	getKgConfidenceAliasLlmDefault,
+	getKgConfidenceRelationDefault,
+} from '../../config/graphAndVectorConfig.js';
 import { normalizeSkillKey, normalizeSurfaceForm, slugifySkillId } from './normalize.js';
 import { traceNeo4j } from '../skillEnrichment/trace.js';
 
@@ -17,10 +22,11 @@ function nowIso() {
 }
 
 /** Link a raw surface form to an existing canonical skill. */
-export async function linkAlias({ surfaceForm, normalizedKey, skillId, confidence = 1, source = 'exact' }) {
+export async function linkAlias({ surfaceForm, normalizedKey, skillId, confidence, source = 'exact' }) {
 	const form = normalizeSurfaceForm(surfaceForm);
 	const key = normalizedKey || normalizeSkillKey(form);
 	if (!key || !skillId) throw new Error('linkAlias requires normalizedKey and skillId');
+	const resolvedConfidence = confidence ?? getKgConfidenceAliasExact();
 
 	await runWrite(
 		`
@@ -31,10 +37,10 @@ export async function linkAlias({ surfaceForm, normalizedKey, skillId, confidenc
 		MERGE (a)-[r:ALIAS_OF]->(s)
 		SET r.confidence = $confidence, r.source = $source, r.createdAt = coalesce(r.createdAt, datetime($now))
 		`,
-		{ key, form, skillId, confidence, source, now: nowIso() },
+		{ key, form, skillId, confidence: resolvedConfidence, source, now: nowIso() },
 	);
 
-	traceNeo4j('link_alias', { normalizedKey: key, surfaceForm: form, skillId, confidence, source });
+	traceNeo4j('link_alias', { normalizedKey: key, surfaceForm: form, skillId, confidence: resolvedConfidence, source });
 	return { skillId, normalizedKey: key };
 }
 
@@ -69,7 +75,7 @@ export async function createSkillWithAlias({
 		MERGE (a:RawAlias { normalizedKey: $key })
 		ON CREATE SET a.surfaceForm = $form, a.firstSeenAt = datetime($now)
 		MERGE (a)-[r:ALIAS_OF]->(s)
-		SET r.confidence = 1.0, r.source = $source, r.createdAt = coalesce(r.createdAt, datetime($now))
+		SET r.confidence = $confidence, r.source = $source, r.createdAt = coalesce(r.createdAt, datetime($now))
 		`,
 		{
 			id,
@@ -80,6 +86,7 @@ export async function createSkillWithAlias({
 			form,
 			modelVersion,
 			source,
+			confidence: getKgConfidenceAliasExact(),
 			now: nowIso(),
 		},
 	);
@@ -117,7 +124,7 @@ export async function upsertRelationships(fromId, relationships = [], { source =
 		if (!mergeRel) continue;
 		const toId = rel.toId || rel.id;
 		if (!toId || toId === fromId) continue;
-		const confidence = Number(rel.confidence ?? 0.8);
+		const confidence = Number(rel.confidence ?? getKgConfidenceRelationDefault());
 		const weight = Number(rel.weight ?? confidence);
 
 		await runWrite(
@@ -149,7 +156,7 @@ export async function applyEnrichmentResult({
 	modelVersion = 'enrichment-v1',
 }) {
 	const action = result.action || 'new_node';
-	const confidence = Number(result.confidence ?? 0.85);
+	const confidence = Number(result.confidence ?? getKgConfidenceAliasLlmDefault());
 
 	if (action === 'alias' && result.targetId) {
 		await linkAlias({

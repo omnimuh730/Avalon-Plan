@@ -4,22 +4,27 @@ import {
 	RESUME_VECTORS_COLLECTION,
 	getVectorDimensions,
 } from './collections.js';
+import {
+	getQdrantApiKey,
+	getQdrantUrl,
+} from '../../config/graphAndVectorConfig.js';
 
 let collectionsReady = false;
 
 export function isQdrantConfigured() {
-	return Boolean(process.env.QDRANT_URL);
+	return Boolean(getQdrantUrl());
 }
 
 function baseUrl() {
-	return (process.env.QDRANT_URL || '').replace(/\/$/, '');
+	return getQdrantUrl().replace(/\/$/, '');
 }
 
 async function qdrantFetch(path, { method = 'GET', body } = {}) {
 	const url = `${baseUrl()}${path}`;
 	const headers = { 'Content-Type': 'application/json' };
-	if (process.env.QDRANT_API_KEY) {
-		headers['api-key'] = process.env.QDRANT_API_KEY;
+	const apiKey = getQdrantApiKey();
+	if (apiKey) {
+		headers['api-key'] = apiKey;
 	}
 
 	const res = await fetch(url, {
@@ -73,7 +78,7 @@ export async function initQdrantCollections() {
 		console.log('[qdrant] collections ready');
 		return true;
 	} catch (err) {
-		const url = process.env.QDRANT_URL || '(not set)';
+		const url = getQdrantUrl() || '(not set)';
 		console.error(
 			`[qdrant] init failed: ${err.message}. `
 			+ `Is Qdrant running at ${url}? Try: cd Athens-server && npm run qdrant:start`,

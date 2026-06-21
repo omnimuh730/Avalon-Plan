@@ -1,6 +1,7 @@
 /** DeepSeek LLM config for skill graph enrichment — key from MongoDB account_info only. */
 
 import { accountInfoCollection } from '../../db/mongo.js';
+import { getKgAmbiguousScoreMin } from '../../config/graphAndVectorConfig.js';
 
 const DEEPSEEK_MODEL = 'deepseek-v4-flash';
 
@@ -79,5 +80,5 @@ export function getFuzzyAliasThreshold() {
 
 /** Fuzzy scores in [min, max) with competing candidates → LLM in smart mode. */
 export function getAmbiguousScoreRange() {
-	return { min: 0.5, max: getFuzzyAliasThreshold() };
+	return { min: getKgAmbiguousScoreMin(), max: getFuzzyAliasThreshold() };
 }

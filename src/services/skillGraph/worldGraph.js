@@ -1,4 +1,5 @@
 import { isNeo4jReady, runReadBatch, toNeo4jInt } from '../../db/neo4j.js';
+import { getKgConfidenceDefaultEdgeWeight } from '../../config/graphAndVectorConfig.js';
 import { RELATION_TYPES } from '../skillGraph/search.js';
 import { mapToSkillCategory } from './categoryMap.js';
 
@@ -52,10 +53,14 @@ export async function fetchWorldGraph({ nodeLimit = DEFAULT_NODE_LIMIT, edgeLimi
 			cypher: `
 				MATCH (a:Skill)-[r]->(b:Skill)
 				WHERE type(r) IN $relTypes
-				RETURN a.id AS from, b.id AS to, type(r) AS type, coalesce(r.weight, 0.5) AS weight
+				RETURN a.id AS from, b.id AS to, type(r) AS type, coalesce(r.weight, $defaultWeight) AS weight
 				LIMIT $limit
 			`,
-			params: { relTypes: RELATION_TYPES, limit: intParam(edgeLimit) },
+			params: {
+				relTypes: RELATION_TYPES,
+				limit: intParam(edgeLimit),
+				defaultWeight: getKgConfidenceDefaultEdgeWeight(),
+			},
 		},
 		{
 			cypher: 'MATCH (s:Skill) RETURN count(s) AS total',
@@ -80,7 +85,7 @@ export async function fetchWorldGraph({ nodeLimit = DEFAULT_NODE_LIMIT, edgeLimi
 			from: r.get('from'),
 			to: r.get('to'),
 			type: r.get('type'),
-			weight: num(r.get('weight')),
+			weight: num(r.get('weight')) || getKgConfidenceDefaultEdgeWeight(),
 		}))
 		.filter(e => nodeIds.has(e.from) && nodeIds.has(e.to));
 

@@ -1,4 +1,5 @@
 import { isNeo4jReady, runRead } from '../../db/neo4j.js';
+import { getKgConfidenceAliasExact } from '../../config/graphAndVectorConfig.js';
 import { normalizeSkillKey, stringSimilarity } from '../skillGraph/normalize.js';
 import { findExactMatch, searchCandidates } from '../skillGraph/search.js';
 import { applyEnrichmentResult, linkAlias } from '../skillGraph/apply.js';
@@ -49,7 +50,7 @@ export async function processEnrichmentItem(item, llmConfig = null, ctx = {}) {
 			surfaceForm,
 			normalizedKey,
 			skillId: exact.id,
-			confidence: 1,
+			confidence: getKgConfidenceAliasExact(),
 			source: 'exact',
 		});
 		return {

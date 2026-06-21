@@ -7,7 +7,10 @@ import {
 import { isNeo4jReady, runRead } from '../db/neo4j.js';
 import { normalizeSkillKey, toComparable } from '../services/skillGraph/normalize.js';
 import { resolveMany } from '../services/skillGraph/resolve.js';
-import { DIRECT_MATCH_WEIGHTS } from '../services/skillGraph/activation.js';
+import { getDirectMatchWeights } from '../services/skillGraph/activation.js';
+import {
+	getKgConfidenceUnknownRelation,
+} from '../config/graphAndVectorConfig.js';
 import { PROFILE_GRAPH_ID } from '../services/userKnowledgeGraph/index.js';
 import { rankResumesForJob } from '../services/recommendation/vectorRetrieval.js';
 
@@ -73,6 +76,8 @@ async function findGraphUserMatch(jobCanonicalId, userSkills = []) {
 	);
 
 	let best = null;
+	const directMatchWeights = getDirectMatchWeights();
+	const unknownRelationWeight = getKgConfidenceUnknownRelation();
 	for (const r of records) {
 		const userId = r.get('userId');
 		const relTypes = r.get('relTypes') || [];
@@ -80,7 +85,7 @@ async function findGraphUserMatch(jobCanonicalId, userSkills = []) {
 
 		let weight = 0;
 		for (const t of relTypes) {
-			weight = Math.max(weight, DIRECT_MATCH_WEIGHTS[t] ?? 0.3);
+			weight = Math.max(weight, directMatchWeights[t] ?? unknownRelationWeight);
 		}
 
 		const userSkill = userWithCanonical.find((s) => s.canonicalId === userId);

@@ -15,5 +15,8 @@ router.get("/jobs", proxyToAgentBff);
 router.get("/models", proxyToAgentBff);
 router.post("/deploy", proxyToAgentBff);
 router.post("/runs/:runId/resume", proxyToAgentBff);
+router.post("/runs/:runId/pause", proxyToAgentBff);
+router.post("/runs/:runId/stop", proxyToAgentBff);
+router.post("/browsers/sweep", proxyToAgentBff);
 
 export default router;

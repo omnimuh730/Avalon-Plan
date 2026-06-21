@@ -1,4 +1,9 @@
 import { skillCooccurrenceCollection } from '../../db/mongo.js';
+import {
+	getCoocWeightBase,
+	getCoocWeightCap,
+	getCoocWeightLogFactor,
+} from '../../config/graphAndVectorConfig.js';
 import { normalizeSkillKey } from '../skillGraph/normalize.js';
 import { resolveRawSkills } from '../skillGraph/search.js';
 import { upsertUsedWith } from '../skillGraph/apply.js';
@@ -6,7 +11,6 @@ import { isNeo4jReady } from '../../db/neo4j.js';
 import { traceCooccurrence } from '../skillEnrichment/trace.js';
 
 const COOC_THRESHOLD = Number(process.env.SKILL_COOC_THRESHOLD) || 3;
-const COOC_WEIGHT_CAP = 0.85;
 
 /** Increment pair counts for raw skills on the same job. */
 export async function recordCooccurrenceForJob(rawSkills = [], ctx = {}) {
@@ -76,7 +80,10 @@ async function promoteCooccurrenceToGraph(keyA, keyB, count) {
 		return false;
 	}
 
-	const weight = Math.min(COOC_WEIGHT_CAP, 0.3 + Math.log1p(count) * 0.15);
+	const weight = Math.min(
+		getCoocWeightCap(),
+		getCoocWeightBase() + Math.log1p(count) * getCoocWeightLogFactor(),
+	);
 	await upsertUsedWith(idA, idB, weight, 'cooccurrence');
 	traceCooccurrence('promoted_used_with', { keyA, keyB, idA, idB, count, weight });
 	return true;

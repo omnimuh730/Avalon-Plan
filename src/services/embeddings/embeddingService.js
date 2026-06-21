@@ -1,4 +1,11 @@
 import crypto from 'crypto';
+import {
+	getEmbeddingDimensionsForProvider,
+	getEmbeddingMaxInputChars,
+	getEmbeddingModel,
+	getEmbeddingProvider,
+	getOllamaUrl as getConfiguredOllamaUrl,
+} from '../../config/graphAndVectorConfig.js';
 import { accountInfoCollection } from '../../db/mongo.js';
 import { getProvider } from '../llm/llmService.js';
 
@@ -11,22 +18,15 @@ export const MXBAI_QUERY_PREFIX = 'Represent this sentence for searching relevan
 const textHashCache = new Map();
 
 export function getOllamaUrl() {
-	return (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+	return getConfiguredOllamaUrl();
 }
 
 export function getEmbeddingConfig() {
-	const provider = (process.env.EMBEDDING_PROVIDER || 'ollama').toLowerCase();
-	if (provider === 'openai') {
-		return {
-			provider: 'openai',
-			model: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
-			dimensions: Number(process.env.EMBEDDING_DIMENSIONS) || 1536,
-		};
-	}
+	const provider = getEmbeddingProvider();
 	return {
-		provider: 'ollama',
-		model: process.env.EMBEDDING_MODEL || DEFAULT_OLLAMA_EMBED_MODEL,
-		dimensions: Number(process.env.EMBEDDING_DIMENSIONS) || 1024,
+		provider,
+		model: getEmbeddingModel(),
+		dimensions: getEmbeddingDimensionsForProvider(),
 	};
 }
 
@@ -51,7 +51,7 @@ export function prepareEmbeddingInput(text, { role = 'document', model } = {}) {
 export function truncateForEmbeddingModel(text, model) {
 	const modelName = model || getEmbeddingConfig().model;
 	if (!modelName.startsWith('mxbai-embed')) return text;
-	const max = Number(process.env.EMBEDDING_MAX_INPUT_CHARS) || 1800;
+	const max = getEmbeddingMaxInputChars();
 	if (text.length <= max) return text;
 	return `${text.slice(0, max)}\n[truncated]`;
 }

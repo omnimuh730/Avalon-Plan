@@ -1,5 +1,6 @@
 import { resolveSkillToCanonical, resolvePersonalSkill } from '../skillGraph/resolve.js';
 import { findExactMatches } from '../skillGraph/search.js';
+import { getProfileGraphCoocEdgeWeight } from '../../config/graphAndVectorConfig.js';
 import { normalizeSkillKey, normalizeSurfaceForm } from '../skillGraph/normalize.js';
 import {
 	userKnowledgeGraphsCollection,
@@ -107,7 +108,7 @@ export async function buildUserGraphFromResume({
 			const a = resolvedSkills[i].canonicalId;
 			const b = resolvedSkills[j].canonicalId;
 			if (a && b && a !== b) {
-				edges.push({ fromId: a, toId: b, type: 'USED_WITH', weight: 0.3 });
+				edges.push({ fromId: a, toId: b, type: 'USED_WITH', weight: getProfileGraphCoocEdgeWeight() });
 			}
 		}
 	}

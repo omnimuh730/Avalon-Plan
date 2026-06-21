@@ -5,7 +5,10 @@ import { isNeo4jReady } from '../../db/neo4j.js';
 import { normalizeSkillKey, toComparable } from '../skillGraph/normalize.js';
 import { resolveMany } from '../skillGraph/resolve.js';
 import { fetchSubgraph } from '../skillGraph/search.js';
-import { computeActivation, DIRECT_MATCH_WEIGHTS } from '../skillGraph/activation.js';
+import { computeActivation, getDirectMatchWeights } from '../skillGraph/activation.js';
+import {
+	getKgConfidenceUnknownRelation,
+} from '../../config/graphAndVectorConfig.js';
 import { runRead } from '../../db/neo4j.js';
 
 function clampPercentage(value) {
@@ -43,7 +46,8 @@ function collectUserSeeds(userGraphSkills = []) {
 
 async function directGraphMatchWeight(jobCanonicalId, userCanonicalIds) {
 	if (!jobCanonicalId || !userCanonicalIds.size) return 0;
-	if (userCanonicalIds.has(jobCanonicalId)) return DIRECT_MATCH_WEIGHTS.direct;
+	const directMatchWeights = getDirectMatchWeights();
+	if (userCanonicalIds.has(jobCanonicalId)) return directMatchWeights.direct;
 	if (!isNeo4jReady()) return 0;
 
 	const records = await runRead(
@@ -63,10 +67,11 @@ async function directGraphMatchWeight(jobCanonicalId, userCanonicalIds) {
 	);
 
 	let best = 0;
+	const unknownRelationWeight = getKgConfidenceUnknownRelation();
 	for (const r of records) {
 		const relTypes = r.get('relTypes') || [];
 		for (const t of relTypes) {
-			const w = DIRECT_MATCH_WEIGHTS[t] ?? 0.3;
+			const w = directMatchWeights[t] ?? unknownRelationWeight;
 			best = Math.max(best, w);
 		}
 	}
@@ -133,6 +138,7 @@ export async function computeGraphBoost(jobSkills = [], userGraphSkills = []) {
 	if (!canonicalIds.size && !rawKeys.size) return 0;
 
 	const resolved = await resolveMany(normalizedJobSkills, { enqueueIfMissing: false });
+	const directMatchWeights = getDirectMatchWeights();
 	const jobCanonicalIds = [];
 	let totalWeight = 0;
 
@@ -142,7 +148,7 @@ export async function computeGraphBoost(jobSkills = [], userGraphSkills = []) {
 		const canonicalId = entry?.canonicalId;
 
 		if (rawKeys.has(key)) {
-			totalWeight += DIRECT_MATCH_WEIGHTS.direct;
+			totalWeight += directMatchWeights.direct;
 			if (canonicalId) jobCanonicalIds.push(canonicalId);
 			continue;
 		}
@@ -152,7 +158,7 @@ export async function computeGraphBoost(jobSkills = [], userGraphSkills = []) {
 			const w = await directGraphMatchWeight(canonicalId, canonicalIds);
 			if (w > 0) totalWeight += w;
 		} else if (rawKeys.has(key)) {
-			totalWeight += DIRECT_MATCH_WEIGHTS.unresolved;
+			totalWeight += directMatchWeights.unresolved;
 		}
 	}
 

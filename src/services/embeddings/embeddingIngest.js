@@ -1,4 +1,5 @@
 import { ObjectId } from 'mongodb';
+import { getEmbeddingModel } from '../../config/graphAndVectorConfig.js';
 import { jobsCollection, userResumesCollection } from '../../db/mongo.js';
 import { PROFILE_GRAPH_ID } from '../userKnowledgeGraph/index.js';
 import {
@@ -76,7 +77,7 @@ export async function upsertJobEmbedding(jobId, { applierName } = {}) {
 			{
 				$set: {
 					embedding: {
-						model: model || process.env.EMBEDDING_MODEL || 'mxbai-embed-large',
+						model: model || getEmbeddingModel(),
 						updatedAt: new Date().toISOString(),
 						textHash,
 					},
@@ -132,7 +133,7 @@ export async function upsertResumeEmbedding(resumeId, ownerName, { applierName }
 			{
 				$set: {
 					embedding: {
-						model: model || process.env.EMBEDDING_MODEL || 'mxbai-embed-large',
+						model: model || getEmbeddingModel(),
 						updatedAt: new Date().toISOString(),
 						textHash,
 					},
@@ -181,7 +182,7 @@ export async function upsertProfileEmbedding(ownerName, { applierName } = {}) {
 				{
 					$set: {
 						profileEmbedding: {
-							model: model || process.env.EMBEDDING_MODEL || 'mxbai-embed-large',
+							model: model || getEmbeddingModel(),
 							updatedAt: new Date().toISOString(),
 							textHash,
 						},

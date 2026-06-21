@@ -1,31 +1,22 @@
 /**
  * Spreading-activation engine for skill knowledge graph scoring.
- * Ported from Athens/src/app/features/knowledge-graph/lib/activation.ts
+ * Tunables live in src/config/graphAndVectorConfig.js (.env).
  */
-
-export const RELATION_MULTIPLIER = {
-	PREREQUISITE_OF: 1.0,
-	BUILDS_ON: 0.95,
-	USED_WITH: 0.8,
-	RELATED_TO: 0.6,
-	PART_OF: 0.7,
-	ALTERNATIVE_TO: 0.5,
-	SPECIALIZATION_OF: 0.75,
-};
-
-export const DEFAULT_PARAMS = {
-	alpha: 0.82,
-	lambda: 0.35,
-	eta: 0.6,
-	maxIterations: 100,
-	tolerance: 1e-6,
-};
+import {
+	getActivationParams,
+	getDirectMatchWeights,
+	getKgConfidenceDefaultEdgeWeight,
+	getRelationMultipliers,
+} from '../../config/graphAndVectorConfig.js';
 
 export function edgeKey(from, to) {
 	return `${from}->${to}`;
 }
 
-export function buildEffectiveWeights(graph, cooccurrence = {}, params = DEFAULT_PARAMS) {
+export function buildEffectiveWeights(graph, cooccurrence = {}, params) {
+	const resolvedParams = params ?? getActivationParams();
+	const relationMultiplier = getRelationMultipliers();
+	const defaultEdgeWeight = getKgConfidenceDefaultEdgeWeight();
 	const weights = {};
 	const add = (from, to, w) => {
 		const k = edgeKey(from, to);
@@ -33,9 +24,9 @@ export function buildEffectiveWeights(graph, cooccurrence = {}, params = DEFAULT
 	};
 
 	for (const edge of graph.edges) {
-		const mult = RELATION_MULTIPLIER[edge.type] ?? 0.5;
+		const mult = relationMultiplier[edge.type] ?? defaultEdgeWeight;
 		const base = edge.weight * mult;
-		const hebbian = params.eta * (cooccurrence[edgeKey(edge.from, edge.to)] ?? 0);
+		const hebbian = resolvedParams.eta * (cooccurrence[edgeKey(edge.from, edge.to)] ?? 0);
 		const effective = Math.min(1, base + hebbian);
 		add(edge.from, edge.to, effective);
 		add(edge.to, edge.from, effective);
@@ -44,12 +35,13 @@ export function buildEffectiveWeights(graph, cooccurrence = {}, params = DEFAULT
 	return weights;
 }
 
-export function buildEvidenceVector(items, params = DEFAULT_PARAMS) {
+export function buildEvidenceVector(items, params) {
+	const resolvedParams = params ?? getActivationParams();
 	const vector = {};
 	const contributors = {};
 
 	for (const item of items) {
-		const recency = Math.exp(-params.lambda * Math.max(0, item.ageYears ?? 0));
+		const recency = Math.exp(-resolvedParams.lambda * Math.max(0, item.ageYears ?? 0));
 		const raw = (item.proficiency ?? 1) * recency * Math.log(1 + (item.freq ?? 1));
 		vector[item.id] = (vector[item.id] ?? 0) + raw;
 		contributors[item.id] = [...new Set([...(contributors[item.id] ?? []), ...(item.sources ?? ['user'])])];
@@ -63,7 +55,8 @@ export function buildEvidenceVector(items, params = DEFAULT_PARAMS) {
 	return { vector, contributors };
 }
 
-export function personalizedPageRank(nodeIds, effectiveWeights, evidence, params = DEFAULT_PARAMS) {
+export function personalizedPageRank(nodeIds, effectiveWeights, evidence, params) {
+	const resolvedParams = params ?? getActivationParams();
 	const index = new Map(nodeIds.map((id, i) => [id, i]));
 	const n = nodeIds.length;
 	const neighbors = Array.from({ length: n }, () => []);
@@ -90,9 +83,9 @@ export function personalizedPageRank(nodeIds, effectiveWeights, evidence, params
 	let a = new Float64Array(e);
 	let iterations = 0;
 
-	for (let step = 0; step < params.maxIterations; step++) {
+	for (let step = 0; step < resolvedParams.maxIterations; step++) {
 		const next = new Float64Array(n);
-		for (let i = 0; i < n; i++) next[i] = (1 - params.alpha) * e[i];
+		for (let i = 0; i < n; i++) next[i] = (1 - resolvedParams.alpha) * e[i];
 
 		let dangling = 0;
 		for (let i = 0; i < n; i++) {
@@ -100,20 +93,20 @@ export function personalizedPageRank(nodeIds, effectiveWeights, evidence, params
 				dangling += a[i];
 				continue;
 			}
-			const share = (params.alpha * a[i]) / outSum[i];
+			const share = (resolvedParams.alpha * a[i]) / outSum[i];
 			for (const out of neighbors[i]) {
 				next[out.to] += share * out.w;
 			}
 		}
 		if (dangling > 0) {
-			for (let i = 0; i < n; i++) next[i] += params.alpha * dangling * e[i];
+			for (let i = 0; i < n; i++) next[i] += resolvedParams.alpha * dangling * e[i];
 		}
 
 		let diff = 0;
 		for (let i = 0; i < n; i++) diff += Math.abs(next[i] - a[i]);
 		a = next;
 		iterations = step + 1;
-		if (diff < params.tolerance) break;
+		if (diff < resolvedParams.tolerance) break;
 	}
 
 	let max = 0;
@@ -126,7 +119,7 @@ export function personalizedPageRank(nodeIds, effectiveWeights, evidence, params
 	return { activation, iterations };
 }
 
-export function computeActivation(graph, evidenceItems, params = DEFAULT_PARAMS) {
+export function computeActivation(graph, evidenceItems, params) {
 	const effectiveWeights = buildEffectiveWeights(graph, {}, params);
 	const { vector: evidence } = buildEvidenceVector(evidenceItems, params);
 	const nodeIds = graph.nodes.map(n => n.id);
@@ -134,17 +127,4 @@ export function computeActivation(graph, evidenceItems, params = DEFAULT_PARAMS)
 	return { activation, iterations, edgeWeights: effectiveWeights };
 }
 
-/** Direct match weights when graph is sparse or activation unavailable. */
-export const DIRECT_MATCH_WEIGHTS = {
-	direct: 1.0,
-	BUILDS_ON: 0.85,
-	PREREQUISITE_OF: 0.85,
-	SPECIALIZATION_OF: 0.75,
-	RELATED_TO: 0.55,
-	USED_WITH: 0.55,
-	ALTERNATIVE_TO: 0.4,
-	PART_OF: 0.2,
-	unresolved: 0.5,
-	ROLE: 0.3,
-	SOFT_SKILL: 0.3,
-};
+export { getDirectMatchWeights };

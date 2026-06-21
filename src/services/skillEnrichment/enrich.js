@@ -1,5 +1,9 @@
 import { chatCompletion } from '../llm/llmService.js';
-import { getEnrichmentModel } from './config.js';
+import {
+	getKgConfidenceEnrichHeuristic,
+	getKgConfidenceEnrichHeuristicRelated,
+} from '../../config/graphAndVectorConfig.js';
+import { getEnrichmentModel, getFuzzyAliasThreshold } from './config.js';
 import { traceLlm, clip } from './trace.js';
 
 const SYSTEM = `You enrich a software skill knowledge graph. Given a raw skill name and candidate nodes already in the graph, decide how to integrate it.
@@ -90,9 +94,10 @@ export async function enrichAgainstCandidates({
 	return { result: parsed, usage };
 }
 
-export function buildHeuristicResult(rawSkill, normalizedKey, candidates, fuzzyThreshold = 0.85) {
+export function buildHeuristicResult(rawSkill, normalizedKey, candidates, fuzzyThreshold) {
+	const threshold = fuzzyThreshold ?? getFuzzyAliasThreshold();
 	const top = candidates[0];
-	if (candidates.length === 1 && top && top.score >= fuzzyThreshold) {
+	if (candidates.length === 1 && top && top.score >= threshold) {
 		return {
 			result: {
 				action: 'alias',
@@ -108,14 +113,14 @@ export function buildHeuristicResult(rawSkill, normalizedKey, candidates, fuzzyT
 		result: {
 			action: 'new_node',
 			targetId: null,
-			confidence: 0.5,
+			confidence: getKgConfidenceEnrichHeuristic(),
 			skillType: 'TECHNOLOGY',
 			category: 'concept',
 			newNode: { label: rawSkill, category: 'concept', skillType: 'TECHNOLOGY' },
 			relationships: candidates.slice(0, 2).map(c => ({
 				toId: c.id,
 				type: 'RELATED_TO',
-				confidence: 0.4,
+				confidence: getKgConfidenceEnrichHeuristicRelated(),
 			})),
 		},
 		usage: null,

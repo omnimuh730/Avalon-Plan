@@ -1,12 +1,10 @@
 import { inferJobSource, SOURCE_MAP_VERSION } from '../config/jobSources.js';
+import { getJobListScoreWeights } from '../config/graphAndVectorConfig.js';
 
-/** Weights for list sort/filter aggregation (skill match is computed per-request for recommended sort). */
-export const SCORE_WEIGHTS = {
-	skill: 0.45,
-	applicant: 0.2,
-	freshness: 0.2,
-	salary: 0.15,
-};
+/** @deprecated use getJobListScoreWeights() from graphAndVectorConfig */
+export function getScoreWeights() {
+	return getJobListScoreWeights();
+}
 
 /** Map API / filter keys to aggregation field names on each job doc. */
 export const SCORE_FIELD_MAP = {
@@ -60,6 +58,7 @@ export function attachStaticScoreFields(job) {
  * Skill defaults to neutral 45 when not injected by the recommendation pipeline.
  */
 export function scoreDerivationStages() {
+	const SCORE_WEIGHTS = getJobListScoreWeights();
 	return [
 		{
 			$addFields: {

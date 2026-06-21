@@ -1,5 +1,9 @@
 import { runRead } from '../../db/neo4j.js';
 import { chatCompletion, EMPTY_USAGE } from '../llm/llmService.js';
+import {
+	getKgConfidenceEnhanceMax,
+	getKgConfidenceEnhanceMin,
+} from '../../config/graphAndVectorConfig.js';
 import { upsertRelationships } from '../skillGraph/apply.js';
 import { invalidateWorldGraphCache } from '../skillGraph/worldGraph.js';
 import { resolveLlmConfig, getEnrichmentModel } from './config.js';
@@ -7,7 +11,10 @@ import { traceLlm, clip } from './trace.js';
 
 const MAX_SKILLS_PER_CALL = 25;
 
-const SYSTEM = `You enhance a software skill knowledge graph by proposing relationships between a given set of skills.
+function buildEnhanceRelationsSystemPrompt() {
+	const min = getKgConfidenceEnhanceMin();
+	const max = getKgConfidenceEnhanceMax();
+	return `You enhance a software skill knowledge graph by proposing relationships between a given set of skills.
 
 Return JSON only:
 {
@@ -20,8 +27,9 @@ Rules:
 - Only use fromId and toId from the provided skill ids.
 - Propose meaningful relationships that strengthen the graph (prerequisites, builds-on, specializations, ecosystem pairs).
 - Prefer specific typed relations over generic RELATED_TO when appropriate.
-- confidence in [0.5, 1.0].
+- confidence in [${min}, ${max}].
 - Do not propose self-loops or duplicate pairs.`;
+}
 
 async function fetchSkillsByIds(skillIds) {
 	const records = await runRead(
@@ -57,7 +65,7 @@ async function llmProposeRelationships(skills, llmConfig) {
 		apiKey: llmConfig.apiKey,
 		model,
 		messages: [
-			{ role: 'system', content: SYSTEM },
+			{ role: 'system', content: buildEnhanceRelationsSystemPrompt() },
 			{ role: 'user', content: JSON.stringify({ skills }) },
 		],
 		jsonMode: true,

@@ -1,5 +1,8 @@
 import {
-	SCORE_WEIGHTS,
+	getJobListScoreWeights,
+	getMatchScoreWeights,
+} from '../config/graphAndVectorConfig.js';
+import {
 	applicantScoreFromJob,
 	salaryScoreFromJob,
 } from '../jobListPipeline.js';
@@ -23,20 +26,32 @@ function secondarySignalsScore(job) {
 	const salary = salaryScoreFromJob(job);
 	const applicant = applicantScoreFromJob(job);
 	const freshness = freshnessScoreFromJob(job);
+	const secondaryWeights = getMatchScoreWeights();
 
 	if (salary === null) {
-		return clampScore(applicant * 0.5 + freshness * 0.5);
+		return clampScore(
+			applicant * secondaryWeights.secondaryNoSalaryApplicant
+				+ freshness * secondaryWeights.secondaryNoSalaryFreshness,
+		);
 	}
-	return clampScore(salary * 0.34 + applicant * 0.33 + freshness * 0.33);
+	return clampScore(
+		salary * secondaryWeights.secondaryWithSalarySalary
+			+ applicant * secondaryWeights.secondaryWithSalaryApplicant
+			+ freshness * secondaryWeights.secondaryWithSalaryFreshness,
+	);
 }
 
 /**
  * Compose final match and overall scores for a job.
  */
 export function composeJobScores(job, { vectorScore = 0, graphBoost = 0 } = {}) {
+	const matchWeights = getMatchScoreWeights();
+	const scoreWeights = getJobListScoreWeights();
 	const secondary = secondarySignalsScore(job);
 	const matchScore = clampScore(
-		vectorScore * 0.55 + graphBoost * 0.30 + secondary * 0.15,
+		vectorScore * matchWeights.vector
+			+ graphBoost * matchWeights.graph
+			+ secondary * matchWeights.secondary,
 	);
 
 	const scoreSkill = matchScore;
@@ -46,16 +61,16 @@ export function composeJobScores(job, { vectorScore = 0, graphBoost = 0 } = {}) 
 
 	let scoreOverall;
 	if (scoreSalary === null) {
-		const base = scoreSkill * SCORE_WEIGHTS.skill
-			+ scoreApplicant * SCORE_WEIGHTS.applicant
-			+ scoreFreshness * SCORE_WEIGHTS.freshness;
-		scoreOverall = clampScore(base / (1 - SCORE_WEIGHTS.salary));
+		const base = scoreSkill * scoreWeights.skill
+			+ scoreApplicant * scoreWeights.applicant
+			+ scoreFreshness * scoreWeights.freshness;
+		scoreOverall = clampScore(base / (1 - scoreWeights.salary));
 	} else {
 		scoreOverall = clampScore(
-			scoreSkill * SCORE_WEIGHTS.skill
-			+ scoreApplicant * SCORE_WEIGHTS.applicant
-			+ scoreFreshness * SCORE_WEIGHTS.freshness
-			+ scoreSalary * SCORE_WEIGHTS.salary,
+			scoreSkill * scoreWeights.skill
+			+ scoreApplicant * scoreWeights.applicant
+			+ scoreFreshness * scoreWeights.freshness
+			+ scoreSalary * scoreWeights.salary,
 		);
 	}
 

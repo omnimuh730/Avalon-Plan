@@ -1,3 +1,8 @@
+import {
+	getKgConfidenceDefaultEdgeWeight,
+	getKgSearchKeywordExactScore,
+	getKgSearchKeywordPartialScore,
+} from '../../config/graphAndVectorConfig.js';
 import { runRead, runReadBatch } from '../../db/neo4j.js';
 import { normalizeSkillKey, stringSimilarity } from './normalize.js';
 import { mapToSkillCategory } from './categoryMap.js';
@@ -115,7 +120,7 @@ export async function searchCandidates({ rawSkill, normalizedKey, searchKeywords
 				category: r.get('category'),
 				skillType: r.get('skillType'),
 				matchType: keywordSet.has(kw) ? 'keyword_exact' : 'keyword',
-				score: kw === normalizedKey ? 0.98 : 0.9,
+				score: kw === normalizedKey ? getKgSearchKeywordExactScore() : getKgSearchKeywordPartialScore(),
 			});
 		}
 	}
@@ -207,7 +212,7 @@ export async function fetchSubgraph(skillIds) {
 			from: rel.from,
 			to: rel.to,
 			type: rel.type,
-			weight: rel.weight ?? 0.5,
+			weight: rel.weight ?? getKgConfidenceDefaultEdgeWeight(),
 		});
 	}
 
@@ -236,9 +241,9 @@ export async function fetchInternalSubgraph(skillIds) {
 			cypher: `
 				MATCH (a:Skill)-[r]->(b:Skill)
 				WHERE a.id IN $ids AND b.id IN $ids AND type(r) IN $relTypes
-				RETURN a.id AS from, b.id AS to, type(r) AS type, coalesce(r.weight, 0.5) AS weight
+				RETURN a.id AS from, b.id AS to, type(r) AS type, coalesce(r.weight, $defaultWeight) AS weight
 			`,
-			params: { ids, relTypes: RELATION_TYPES },
+			params: { ids, relTypes: RELATION_TYPES, defaultWeight: getKgConfidenceDefaultEdgeWeight() },
 		},
 	]);
 
@@ -260,7 +265,7 @@ export async function fetchInternalSubgraph(skillIds) {
 		from: r.get('from'),
 		to: r.get('to'),
 		type: r.get('type'),
-		weight: num(r.get('weight')),
+		weight: num(r.get('weight')) || getKgConfidenceDefaultEdgeWeight(),
 	}));
 
 	return { nodes, edges };
