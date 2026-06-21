@@ -20,5 +20,10 @@ export function detailToFullRun(detail: HistoryRunDetail): FullRun {
     config,
     sections: detail.sections,
     identity: detail.identity ?? null,
+    skillProfile: detail.skillProfile,
+    techStack: detail.techStack,
+    analyzed: detail.analyzed,
+    analyzedAt: detail.analyzedAt,
+    skillAnalysisError: detail.skillAnalysisError ?? null,
   };
 }

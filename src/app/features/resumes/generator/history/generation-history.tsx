@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Briefcase, CheckCircle2, ChevronLeft, ChevronRight, Clock, Coins, Eye, FileText, Filter, Loader2, Search, SlidersHorizontal, Sparkles, Wand2, X } from "lucide-react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { AlertTriangle, Briefcase, CheckCircle2, ChevronLeft, ChevronRight, Clock, Coins, Eye, FileText, Filter, Loader2, Search, SlidersHorizontal, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { useApi } from "@/api/useApi";
 import { API_BASE } from "@/lib/api-base";
+import { deleteGenerationRun } from "../../../../services/resumeApi";
 import { templateById } from "../constants/templates";
 import { defaultConfig, defaultTheme } from "../constants/defaults";
 import { ResumePreview } from "../preview/resume-preview";
@@ -11,6 +12,7 @@ import { cardCls } from "../styles";
 import type { FullRun, HistoryFacets, HistorySearchIn, HistorySort, HistoryStatus, LayoutSection, ResumeTheme, RunSummary } from "./history-types";
 import { HISTORY_PER_PAGE, HISTORY_SORTS, idStr, jdHeadline, resumeSummarySnippet } from "./history-helpers";
 import { EditorCard } from "../components/editor-ui";
+import { GenerationSkillAnalysis } from "./generation-skill-analysis";
 
 export function HistoryFilterSelect({
   label,
@@ -52,7 +54,9 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<FullRun | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [detailTab, setDetailTab] = useState<"preview" | "jd" | "usage">("preview");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [detailTab, setDetailTab] = useState<"preview" | "jd" | "usage" | "analysis">("preview");
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -140,7 +144,7 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
     return () => {
       cancelled = true;
     };
-  }, [applierName, queryString, get]);
+  }, [applierName, queryString, get, refreshKey]);
 
   const totalPages = Math.max(1, Math.ceil(total / HISTORY_PER_PAGE));
 
@@ -153,6 +157,22 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
       .then((r) => setSelected((r as { run?: FullRun })?.run ?? null))
       .catch(() => setSelected(null))
       .finally(() => setLoadingDetail(false));
+  };
+
+  const handleDelete = async (id: string, e?: MouseEvent) => {
+    e?.stopPropagation();
+    if (!applierName || deletingId) return;
+    if (!confirm("Delete this generated resume from history and the library?")) return;
+    setDeletingId(id);
+    try {
+      await deleteGenerationRun(id, applierName);
+      if (selected && idStr(selected._id) === id) setSelected(null);
+      setRefreshKey((k) => k + 1);
+    } catch {
+      /* ignore */
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   if (!applierName) {
@@ -374,13 +394,21 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
               const snippet = resumeSummarySnippet(run);
               const tpl = templateById(run.config?.templateId ?? "classic");
               const failed = run.status === "failed";
+              const stack = run.techStack?.trim();
 
               return (
-                <button
+                <div
                   key={id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => openRun(id)}
-                  className={`w-full text-left px-5 py-4 transition ${
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openRun(id);
+                    }
+                  }}
+                  className={`w-full text-left px-5 py-4 transition cursor-pointer ${
                     active ? "bg-sky-50/80 dark:bg-sky-500/10" : "hover:bg-neutral-50 dark:hover:bg-white/[0.03]"
                   }`}
                 >
@@ -388,6 +416,11 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5 mb-1">
                         <span className="text-xs font-semibold text-neutral-900 dark:text-white truncate max-w-[180px]">{jd || "Untitled run"}</span>
+                        {stack && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200 font-semibold truncate max-w-[140px]" title={stack}>
+                            {stack}
+                          </span>
+                        )}
                         {failed && (
                           <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200">
                             Failed
@@ -398,13 +431,22 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                         <p className="text-[11px] text-neutral-500 dark:text-white/50 line-clamp-2 leading-relaxed">{snippet}</p>
                       )}
                     </div>
-                    <div className="shrink-0 text-right">
-                      <div className="flex items-center gap-1 text-[10px] text-neutral-400 dark:text-white/40 justify-end">
+                    <div className="shrink-0 flex flex-col items-end gap-1">
+                      <button
+                        type="button"
+                        onClick={(e) => void handleDelete(id, e)}
+                        disabled={deletingId === id}
+                        className="p-1.5 rounded-lg text-neutral-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 disabled:opacity-50"
+                        title="Delete from history and library"
+                      >
+                        {deletingId === id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
+                      <div className="flex items-center gap-1 text-[10px] text-neutral-400 dark:text-white/40">
                         <Clock className="w-3 h-3" />
                         {run.startedAt ? fmtRelative(run.startedAt) : ""}
                       </div>
                       {run.usage && (
-                        <div className="text-[10px] text-neutral-400 dark:text-white/40 mt-0.5 tabular-nums">
+                        <div className="text-[10px] text-neutral-400 dark:text-white/40 tabular-nums">
                           {fmtTokens(run.usage.totalTokens)} tok
                         </div>
                       )}
@@ -421,7 +463,7 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                       <span className="text-[10px] tabular-nums text-neutral-400 dark:text-white/40 ml-auto">{fmtCost(run.usage.cost)}</span>
                     )}
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -462,7 +504,7 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
           {!loadingDetail && !selected && (
             <div className={`${cardCls} flex flex-col items-center justify-center py-20 text-center`}>
               <Eye className="w-10 h-10 text-neutral-300 dark:text-white/20 mb-3" />
-              <p className="text-sm text-neutral-500 dark:text-white/50">Select a run from the list to preview the resume, JD, and usage.</p>
+              <p className="text-sm text-neutral-500 dark:text-white/50">Select a run from the list to preview the resume, JD, usage, and skill analysis.</p>
             </div>
           )}
 
@@ -473,6 +515,14 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                   <div className="min-w-0">
                     <h3 className="text-sm font-semibold truncate">{jdHeadline(selected.jobDescription || "", 120) || "Generated resume"}</h3>
                     <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-neutral-500 dark:text-white/50">
+                      {selected.techStack && (
+                        <>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200 font-semibold text-[10px]">
+                            {selected.techStack}
+                          </span>
+                          <span>·</span>
+                        </>
+                      )}
                       <span className="inline-flex items-center gap-1">
                         <Clock className="w-3 h-3" />
                         {selected.startedAt ? new Date(selected.startedAt).toLocaleString() : ""}
@@ -483,13 +533,24 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                       <span>{detailTemplate.name}</span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onLoad(selected)}
-                    className="inline-flex items-center gap-1.5 px-3.5 h-9 rounded-lg bg-neutral-900 text-white text-xs hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-white/90 shrink-0"
-                  >
-                    <Wand2 className="w-3.5 h-3.5" /> Load into editor
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(idStr(selected._id))}
+                      disabled={deletingId === idStr(selected._id)}
+                      className="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg border border-rose-200 dark:border-rose-800/50 text-rose-600 dark:text-rose-300 text-xs hover:bg-rose-50 dark:hover:bg-rose-900/20 disabled:opacity-50"
+                    >
+                      {deletingId === idStr(selected._id) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      Delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onLoad(selected)}
+                      className="inline-flex items-center gap-1.5 px-3.5 h-9 rounded-lg bg-neutral-900 text-white text-xs hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-white/90"
+                    >
+                      <Wand2 className="w-3.5 h-3.5" /> Load into editor
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex border-b border-neutral-200 dark:border-white/10 px-2">
@@ -497,6 +558,7 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                     { id: "preview" as const, label: "Preview", icon: FileText },
                     { id: "jd" as const, label: "Job description", icon: Briefcase },
                     { id: "usage" as const, label: "Usage", icon: Coins },
+                    { id: "analysis" as const, label: "Analysis", icon: Sparkles },
                   ]).map((t) => {
                     const Icon = t.icon;
                     const active = detailTab === t.id;
@@ -568,6 +630,7 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                       )}
                     </div>
                   )}
+                  {detailTab === "analysis" && selected && <GenerationSkillAnalysis run={selected} />}
                 </div>
               </div>
             </>

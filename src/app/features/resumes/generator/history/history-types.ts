@@ -6,6 +6,7 @@ export type RunSummary = {
   provider?: string;
   model?: string;
   jobDescription?: string;
+  techStack?: string;
   usage?: UsageBreakdown | null;
   startedAt?: string;
   finishedAt?: string;
@@ -18,6 +19,11 @@ export type FullRun = RunSummary & {
   sections?: Record<string, unknown>;
   identity?: Identity | null;
   config?: Record<string, unknown>;
+  skillProfile?: { name: string; strength: number }[];
+  techStack?: string;
+  analyzed?: boolean;
+  analyzedAt?: string;
+  skillAnalysisError?: string | null;
 };
 
 export type HistoryFacets = {

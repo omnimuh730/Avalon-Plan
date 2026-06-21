@@ -198,6 +198,7 @@ export interface HistoryRunSummary {
   model: string;
   provider: string;
   templateId?: string;
+  techStack?: string;
   tokens: number;
   costUsd: number;
 }
@@ -208,6 +209,10 @@ export interface HistoryRunDetail extends HistoryRunSummary {
   identity?: GeneratorIdentity;
   perStep?: unknown[];
   usage?: { totalTokens?: number; cost?: number };
+  skillProfile?: ResumeSkillEntry[];
+  analyzed?: boolean;
+  analyzedAt?: string;
+  skillAnalysisError?: string | null;
 }
 
 export interface GenerateInput {

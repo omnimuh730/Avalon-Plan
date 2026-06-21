@@ -259,6 +259,7 @@ export async function fetchGenerationHistory(query: HistoryQuery): Promise<{
       model: String(r.model ?? ""),
       provider: String(r.provider ?? ""),
       templateId: config.templateId,
+      techStack: typeof r.techStack === "string" ? r.techStack : undefined,
       tokens: usage.totalTokens ?? 0,
       costUsd: usage.cost ?? 0,
     };
@@ -269,6 +270,14 @@ export async function fetchGenerationHistory(query: HistoryQuery): Promise<{
     total: data?.total ?? 0,
     facets: data?.facets,
   };
+}
+
+export async function deleteGenerationRun(id: string, applierName: string): Promise<{ deleted: boolean; generationId: string; resumeDeleted?: boolean }> {
+  await apiFetch(
+    `/personal/resume-generations/${encodeURIComponent(id)}?applierName=${encodeURIComponent(applierName)}`,
+    { method: "DELETE" },
+  );
+  return { deleted: true, generationId: id };
 }
 
 export async function fetchGenerationDetail(id: string, applierName: string): Promise<HistoryRunDetail> {
@@ -287,6 +296,7 @@ export async function fetchGenerationDetail(id: string, applierName: string): Pr
     model: String(r.model ?? ""),
     provider: String(r.provider ?? ""),
     templateId: (config.templateId as string) ?? undefined,
+    techStack: typeof r.techStack === "string" ? r.techStack : undefined,
     tokens: usage.totalTokens ?? 0,
     costUsd: usage.cost ?? 0,
     sections: r.sections as Record<string, unknown>,
@@ -294,6 +304,10 @@ export async function fetchGenerationDetail(id: string, applierName: string): Pr
     identity: r.identity as GeneratorIdentity,
     perStep: r.perStep as unknown[],
     usage,
+    skillProfile: Array.isArray(r.skillProfile) ? (r.skillProfile as HistoryRunDetail["skillProfile"]) : undefined,
+    analyzed: Boolean(r.analyzed),
+    analyzedAt: typeof r.analyzedAt === "string" ? r.analyzedAt : undefined,
+    skillAnalysisError: typeof r.skillAnalysisError === "string" ? r.skillAnalysisError : null,
   };
 }
 
