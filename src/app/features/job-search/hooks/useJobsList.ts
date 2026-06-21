@@ -17,6 +17,7 @@ type ListResponse = {
   data?: Record<string, unknown>[];
   recommendationFallback?: boolean;
   recommendationReason?: string | null;
+  catalogTotal?: number | null;
   pagination?: { total: number; page: number; limit: number; totalPages: number };
 };
 
@@ -99,6 +100,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
   const [recommendationFallback, setRecommendationFallback] = useState(false);
   const [recommendationReason, setRecommendationReason] = useState<string | null>(null);
+  const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
 
   const jobs = useMemo(
     () => rawJobs.filter((job) => !excludeIds.has(job.id)),
@@ -138,11 +140,13 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
           setTotal(res.pagination?.total ?? res.data.length);
           setRecommendationFallback(Boolean(res.recommendationFallback));
           setRecommendationReason(res.recommendationReason ?? null);
+          setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
         } else {
           setRawJobs([]);
           setTotal(0);
           setRecommendationFallback(false);
           setRecommendationReason(null);
+          setCatalogTotal(null);
         }
       } catch (e) {
         console.error(e);
@@ -205,6 +209,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     applierReady,
     recommendationFallback,
     recommendationReason,
+    catalogTotal,
   };
 }
 

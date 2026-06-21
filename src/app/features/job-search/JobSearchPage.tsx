@@ -100,6 +100,12 @@ export function JobSearchPage() {
         </div>
       )}
 
+      {!recommendationFallback && filters.sort === "matchScore" ? (
+        <div className="mb-3 rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground">
+          Best match ranks the most relevant jobs first; remaining jobs follow sorted by date.
+        </div>
+      ) : null}
+
       <JobBulkActionsBar
         selectedOnPage={selectedOnPage}
         pageCount={jobs.length}
