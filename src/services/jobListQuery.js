@@ -97,9 +97,17 @@ function finalizeQuery(query) {
 	return query;
 }
 
+const SCORE_FILTER_KEYS = new Set([
+	'scoreOverallMin', 'scoreOverallMax',
+	'scoreSkillMin', 'scoreSkillMax',
+	'scoreSalaryMin', 'scoreSalaryMax',
+	'scoreBidEstMin', 'scoreBidEstMax',
+	'scoreFreshnessMin', 'scoreFreshnessMax',
+]);
+
 /**
  * Build a Mongo filter for POST /jobs/list from the request body.
- * Pass statusTab to override applied/status: all | new | applied | scheduled | declined
+ * Pass statusTab to override applied/status: all | posted | applied | scheduled | declined
  */
 export async function buildJobsListQuery(body, { statusTab } = {}) {
 	const {
@@ -110,6 +118,11 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 		applied,
 		status,
 		applierName,
+		sort: _sort,
+		page: _page,
+		limit: _limit,
+		skip: _skip,
+		countsOnly: _countsOnly,
 		...filters
 	} = body;
 
@@ -130,6 +143,7 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 	for (const key in filters) {
 		if (!Object.hasOwnProperty.call(filters, key)) continue;
 		if (key.startsWith('$')) continue;
+		if (SCORE_FILTER_KEYS.has(key)) continue;
 		const value = filters[key];
 		if (!value) continue;
 
@@ -169,7 +183,7 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 	let statusFilter = status;
 
 	if (statusTab) {
-		if (statusTab === 'new') {
+		if (statusTab === 'posted' || statusTab === 'new') {
 			appliedBool = false;
 			statusFilter = undefined;
 		} else if (statusTab === 'applied') {
@@ -206,7 +220,7 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 }
 
 /** Status tab keys aligned with the Athens frontend. */
-export const STATUS_TABS = ['all', 'new', 'applied', 'scheduled', 'declined'];
+export const STATUS_TABS = ['all', 'posted', 'applied', 'scheduled', 'declined'];
 
 /** Fields omitted from list responses to reduce payload size. */
 export const JOB_LIST_PROJECTION = { description: 0, jobDescription: 0 };
