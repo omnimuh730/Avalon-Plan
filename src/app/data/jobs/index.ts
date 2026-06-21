@@ -115,6 +115,9 @@ function buildJob(i: number): Job {
     source: SOURCES[seeded(i, SOURCES.length)],
     jobDescription: buildJobDescription(title, company, location, type),
     applyUrl: `https://${domain}/careers/${i + 1}`,
+    skillAnalysis: i % 4 === 0
+      ? { status: "analyzed", analyzedAt: postedAt.toISOString() }
+      : { status: "pending" },
   };
 }
 

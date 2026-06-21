@@ -4,7 +4,9 @@ import {
   Building2,
   ExternalLink,
   FileText,
+  Loader2,
   MapPin,
+  Sparkles,
   Wifi,
 } from "lucide-react";
 import { Av, Badge, Score } from "../../../components/ui";
@@ -19,7 +21,8 @@ import {
 } from "../../../components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
 import { cn, mono } from "../../../lib/utils";
-import type { BadgeVariant, Job } from "../../../types";
+import type { BadgeVariant, Job, SkillAnalysisStatus } from "../../../types";
+import { skillAnalysisLabel, useJobSkillAnalysis } from "../hooks/useJobSkillAnalysis";
 
 const STATUS_VARIANTS: Record<string, BadgeVariant> = {
   new: "blue",
@@ -45,6 +48,12 @@ type JobCardProps = {
   bookmarked?: boolean;
   onToggleBookmark?: () => void;
 };
+
+function AnalysisBadge({ status }: { status: SkillAnalysisStatus }) {
+  const variant: BadgeVariant =
+    status === "analyzed" ? "success" : status === "failed" ? "err" : status === "pending" ? "subtle" : "amber";
+  return <Badge v={variant}>{skillAnalysisLabel(status)}</Badge>;
+}
 
 function CompanyLogo({ job }: { job: Job }) {
   const [failed, setFailed] = useState(false);
@@ -88,6 +97,12 @@ export function JobCard({
   onToggleBookmark,
 }: JobCardProps) {
   const [jdOpen, setJdOpen] = useState(false);
+  const { analysis, loading: analyzeLoading, error: analyzeError, analyze } = useJobSkillAnalysis(
+    job.backendId,
+    job.skillAnalysis,
+  );
+  const canAnalyze = Boolean(job.backendId);
+  const isAnalyzing = analyzeLoading || analysis.status === "queued" || analysis.status === "analyzing";
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;
@@ -144,7 +159,10 @@ export function JobCard({
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
                 <Score score={job.scores.overall} />
-                <Badge v={STATUS_VARIANTS[job.status]}>{job.status}</Badge>
+                <div className="flex flex-col items-end gap-1">
+                  <Badge v={STATUS_VARIANTS[job.status]}>{job.status}</Badge>
+                  <AnalysisBadge status={analysis.status} />
+                </div>
               </div>
             </div>
           </div>
@@ -191,6 +209,27 @@ export function JobCard({
             <Button
               variant="outline"
               size="sm"
+              disabled={!canAnalyze || isAnalyzing || analysis.status === "analyzed"}
+              title={
+                canAnalyze
+                  ? "Run skill graph + AI analysis"
+                  : "Link this job to Athens-server (backendId) to analyze"
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                void analyze({ provider: "auto" });
+              }}
+            >
+              {isAnalyzing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              {analysis.status === "analyzed" ? "Analyzed" : isAnalyzing ? "Analyzing" : "Analyze"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={(e) => {
                 e.stopPropagation();
                 setJdOpen(true);
@@ -219,6 +258,9 @@ export function JobCard({
             </Button>
           </div>
         </div>
+        {analyzeError ? (
+          <p className="text-xs text-destructive">{analyzeError}</p>
+        ) : null}
       </article>
 
       <Dialog open={jdOpen} onOpenChange={setJdOpen}>

@@ -9,7 +9,7 @@ export type {
 } from "./knowledgeGraph";
 export type { Application } from "./application";
 export type { Agent, PipelineNode, PipelineEdge, NodeStatus } from "./agent";
-export type { Job } from "./job";
+export type { Job, SkillAnalysis, SkillAnalysisStatus } from "./job";
 export type { Msg, MailThread, Resume, BadgeVariant } from "./common";
 export type {
   ResumeIdentity,

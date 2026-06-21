@@ -2,6 +2,19 @@ export type WorkMode = "remote" | "hybrid" | "onsite";
 
 export type JobStatus = "new" | "applied" | "scheduled" | "declined";
 
+export type SkillAnalysisStatus = "pending" | "queued" | "analyzing" | "analyzed" | "failed";
+
+export interface SkillAnalysis {
+  status: SkillAnalysisStatus;
+  queuedAt?: string;
+  startedAt?: string;
+  analyzedAt?: string;
+  failedAt?: string;
+  error?: string;
+  provider?: "openai" | "deepseek" | "auto" | string;
+  skillsProcessed?: number;
+}
+
 export interface JobScores {
   overall: number;
   skill: number;
@@ -12,6 +25,8 @@ export interface JobScores {
 
 export interface Job {
   id: string;
+  /** MongoDB _id when loaded from Athens-server API */
+  backendId?: string;
   title: string;
   company: string;
   companyUrl: string;
@@ -31,4 +46,5 @@ export interface Job {
   source: string;
   jobDescription: string;
   applyUrl: string;
+  skillAnalysis?: SkillAnalysis;
 }
