@@ -17,6 +17,8 @@ export const PATHS = {
   knowledgeGraph: "/knowledge-graph",
   reports: "/reports",
   settings: "/settings",
+  signin: "/signin",
+  signup: "/signup",
 } as const;
 
 /** Default tab segments when a section has sub-routes. */

@@ -22,7 +22,8 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
 import { cn, mono } from "../../../lib/utils";
 import type { BadgeVariant, Job, SkillAnalysisStatus } from "../../../types";
-import { skillAnalysisLabel, useJobSkillAnalysis } from "../hooks/useJobSkillAnalysis";
+import { useApplier } from "@/context/applier-context";
+import { skillAnalysisLabel, formatAnalysisCost, useJobSkillAnalysis } from "../hooks/useJobSkillAnalysis";
 
 const STATUS_VARIANTS: Record<string, BadgeVariant> = {
   new: "blue",
@@ -97,6 +98,7 @@ export function JobCard({
   onToggleBookmark,
 }: JobCardProps) {
   const [jdOpen, setJdOpen] = useState(false);
+  const { applier } = useApplier();
   const { analysis, loading: analyzeLoading, error: analyzeError, analyze } = useJobSkillAnalysis(
     job.backendId,
     job.skillAnalysis,
@@ -162,6 +164,11 @@ export function JobCard({
                 <div className="flex flex-col items-end gap-1">
                   <Badge v={STATUS_VARIANTS[job.status]}>{job.status}</Badge>
                   <AnalysisBadge status={analysis.status} />
+                  {analysis.status === "analyzed" && formatAnalysisCost(analysis.usage) ? (
+                    <span className={cn("text-[10px] text-muted-foreground text-right leading-tight", mono)}>
+                      AI {formatAnalysisCost(analysis.usage)}
+                    </span>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -217,7 +224,7 @@ export function JobCard({
               }
               onClick={(e) => {
                 e.stopPropagation();
-                void analyze({ provider: "auto" });
+                void analyze({ applierName: applier?.name });
               }}
             >
               {isAnalyzing ? (

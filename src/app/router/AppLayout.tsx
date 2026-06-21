@@ -4,6 +4,7 @@ import { Sidebar } from "../components/layout/Sidebar";
 import { TopNav } from "../components/layout/TopNav";
 import { pathForView, viewFromPathname, type NavigateOptions } from "../config/routes";
 import { AgentsProvider } from "../context/AgentsContext";
+import { ApplierProvider } from "../../context/applier-context";
 import { AppNavigationContext } from "../context/AppNavigationContext";
 import {
   JobSearchNavigationContext,
@@ -64,13 +65,15 @@ function AppProviders({ children }: { children: ReactNode }) {
   const appNav = useMemo(() => ({ navigate: routerNavigate }), [routerNavigate]);
 
   return (
-    <AgentsProvider>
-      <AppNavigationContext.Provider value={appNav}>
-        <ResumeNavigationContext.Provider value={resumeNav}>
-          <JobSearchNavigationContext.Provider value={jobNav}>{children}</JobSearchNavigationContext.Provider>
-        </ResumeNavigationContext.Provider>
-      </AppNavigationContext.Provider>
-    </AgentsProvider>
+    <ApplierProvider>
+      <AgentsProvider>
+        <AppNavigationContext.Provider value={appNav}>
+          <ResumeNavigationContext.Provider value={resumeNav}>
+            <JobSearchNavigationContext.Provider value={jobNav}>{children}</JobSearchNavigationContext.Provider>
+          </ResumeNavigationContext.Provider>
+        </AppNavigationContext.Provider>
+      </AgentsProvider>
+    </ApplierProvider>
   );
 }
 

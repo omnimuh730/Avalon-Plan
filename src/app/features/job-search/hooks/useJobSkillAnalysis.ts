@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { API_BASE } from "../lib/api-base";
-import type { SkillAnalysis, SkillAnalysisStatus } from "../types";
+import { API_BASE } from "@/lib/api-base";
+import type { SkillAnalysis, SkillAnalysisStatus, SkillAnalysisUsage } from "../../../types";
 
 type AnalyzeOptions = {
-  provider?: "auto" | "openai" | "deepseek";
+  applierName?: string;
 };
 
 async function fetchAnalysis(jobId: string): Promise<SkillAnalysis> {
@@ -72,7 +72,7 @@ export function useJobSkillAnalysis(backendId?: string, initial?: SkillAnalysis)
         const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(backendId)}/analyze`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider: options.provider || "auto" }),
+          body: JSON.stringify({ applierName: options.applierName }),
         });
         const data = (await res.json()) as {
           success?: boolean;
@@ -114,4 +114,16 @@ export function skillAnalysisLabel(status: SkillAnalysisStatus): string {
     default:
       return "Not analyzed";
   }
+}
+
+/** Format DeepSeek usage cost for job card display (deepseek-v4-flash pricing on server). */
+export function formatAnalysisCost(usage?: SkillAnalysisUsage | null): string | null {
+  if (!usage || usage.cost == null || !Number.isFinite(usage.cost)) return null;
+  const inTok = usage.inputTokens ?? 0;
+  const outTok = usage.outputTokens ?? 0;
+  if (inTok + outTok === 0) {
+    return usage.cost === 0 ? "$0.0000 · graph only" : `$${usage.cost.toFixed(4)}`;
+  }
+  const cost = `$${usage.cost.toFixed(4)}`;
+  return `${cost} · ${inTok.toLocaleString()} in · ${outTok.toLocaleString()} out`;
 }

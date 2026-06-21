@@ -4,6 +4,16 @@ export type JobStatus = "new" | "applied" | "scheduled" | "declined";
 
 export type SkillAnalysisStatus = "pending" | "queued" | "analyzing" | "analyzed" | "failed";
 
+export interface SkillAnalysisUsage {
+  model?: string | null;
+  inputTokens: number;
+  cachedTokens?: number;
+  outputTokens: number;
+  totalTokens: number;
+  cost: number | null;
+  savings?: number | null;
+}
+
 export interface SkillAnalysis {
   status: SkillAnalysisStatus;
   queuedAt?: string;
@@ -11,8 +21,11 @@ export interface SkillAnalysis {
   analyzedAt?: string;
   failedAt?: string;
   error?: string;
-  provider?: "openai" | "deepseek" | "auto" | string;
+  provider?: "deepseek" | string;
+  model?: string;
+  applierName?: string | null;
   skillsProcessed?: number;
+  usage?: SkillAnalysisUsage | null;
 }
 
 export interface JobScores {

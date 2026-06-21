@@ -1,4 +1,5 @@
 import type { Job, JobStatus, WorkMode } from "../../types";
+import { JobSourceTitles } from "../../../../../FoxHire/configs/pub.js";
 
 const COMPANIES = [
   "Vercel", "Linear", "Figma", "OpenAI", "GitHub", "Stripe", "Notion", "Anthropic",
@@ -123,8 +124,26 @@ function buildJob(i: number): Job {
 
 export const JOBS: Job[] = Array.from({ length: 120 }, (_, i) => buildJob(i));
 
-export const JOB_SOURCES = ["all", ...Array.from(new Set(JOBS.map((j) => j.source)))];
-export const JOB_LOCATIONS = ["all", ...Array.from(new Set(JOBS.map((j) => j.location)))];
+export const JOB_SOURCES = ["all", ...JobSourceTitles];
+export const JOB_LOCATIONS = [
+  "all",
+  "Remote",
+  "San Francisco, CA",
+  "New York, NY",
+  "Seattle, WA",
+  "Austin, TX",
+  "Boston, MA",
+];
 export const JOB_WORK_MODES = ["all", "remote", "hybrid", "onsite"] as const;
-export const JOB_SENIORITIES = ["all", ...Array.from(new Set(JOBS.map((j) => j.seniority)))];
-export const JOB_INDUSTRIES = ["all", ...Array.from(new Set(JOBS.flatMap((j) => j.industries)))];
+export const JOB_SENIORITIES = ["all", "Junior", "Mid", "Senior", "Staff", "Lead", "Principal"];
+export const JOB_INDUSTRIES = [
+  "all",
+  "SaaS",
+  "Developer Tools",
+  "Fintech",
+  "AI/ML",
+  "Cloud",
+  "Security",
+  "Data",
+  "Enterprise",
+];

@@ -1,20 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { LayoutGrid } from "lucide-react";
+import { LayoutGrid, Loader2 } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { TabTransition } from "../../components/overlays";
 import { useJobSearchNavigationOptional } from "../../context/JobSearchNavigationContext";
-import { usePaginatedList } from "../../hooks/usePaginatedList";
 import {
   DEFAULT_JOB_FILTERS,
   downloadJobsCsv,
-  useJobSearchResults,
   type JobSearchFilterState,
 } from "../../hooks/useJobSearchFilters";
 import { JobBulkActionsBar } from "./components/JobBulkActionsBar";
 import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { useJobSelection } from "./hooks/useJobSelection";
+import { useJobsList } from "./hooks/useJobsList";
 import { cn } from "../../lib/utils";
 
 export function JobSearchPage() {
@@ -32,14 +31,11 @@ export function JobSearchPage() {
 
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
-  const { results, statusCounts, total } = useJobSearchResults(filters, removedIds);
-  const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } =
-    useJobSelection(results);
-
-  const { items, page, pageSize, setPage, setPageSize, resetPage } = usePaginatedList({
-    items: results,
-    pageSize: 25,
-  });
+  const { jobs, total, loading, page, pageSize, setPage, setPageSize, statusCounts } = useJobsList(
+    filters,
+    removedIds,
+  );
+  const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
 
   useEffect(() => {
     const pending = jobNav?.pendingFilters;
@@ -49,11 +45,10 @@ export function JobSearchPage() {
   }, [jobNav?.pendingFilters, jobNav]);
 
   useEffect(() => {
-    resetPage();
     clearSelection();
-  }, [filters, removedIds, resetPage, clearSelection]);
+  }, [filters, page, clearSelection]);
 
-  const pageIds = useMemo(() => items.map((j) => j.id), [items]);
+  const pageIds = useMemo(() => jobs.map((j) => j.id), [jobs]);
   const selectedOnPage = useMemo(
     () => pageIds.filter((id) => selectedIds.has(id)).length,
     [pageIds, selectedIds],
@@ -103,7 +98,7 @@ export function JobSearchPage() {
 
       <JobBulkActionsBar
         selectedOnPage={selectedOnPage}
-        pageCount={items.length}
+        pageCount={jobs.length}
         totalSelected={selectedIds.size}
         allOnPageSelected={allOnPageSelected}
         onToggleSelectAll={toggleSelectAllOnPage}
@@ -136,17 +131,24 @@ export function JobSearchPage() {
         </button>
       </div>
 
-      <TabTransition tabKey={showGrid ? "grid" : "list"}>
-        <JobListView
-          jobs={items}
-          layout={showGrid ? "grid" : "list"}
-          selectedIds={selectedIds}
-          onSelectJob={selectJob}
-          showScores={showScoresOnCards}
-          bookmarkedIds={bookmarkedIds}
-          onToggleBookmark={toggleBookmark}
-        />
-      </TabTransition>
+      {loading ? (
+        <div className="py-16 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
+          <Loader2 className="w-6 h-6 animate-spin" />
+          Loading jobs from server…
+        </div>
+      ) : (
+        <TabTransition tabKey={showGrid ? "grid" : "list"}>
+          <JobListView
+            jobs={jobs}
+            layout={showGrid ? "grid" : "list"}
+            selectedIds={selectedIds}
+            onSelectJob={selectJob}
+            showScores={showScoresOnCards}
+            bookmarkedIds={bookmarkedIds}
+            onToggleBookmark={toggleBookmark}
+          />
+        </TabTransition>
+      )}
 
       <PaginationBar
         page={page}

@@ -1,10 +1,28 @@
-import { NavLink } from "react-router";
-import { Zap, ChevronDown, Plus, MoreHorizontal } from "lucide-react";
+import { NavLink, useNavigate } from "react-router";
+import { LogOut, Plus, Zap } from "lucide-react";
+import { useAuth } from "@/context/auth-context";
 import { cn, display } from "../../lib/utils";
-import { pathForView } from "../../config/routes";
+import { pathForView, PATHS } from "../../config/routes";
 import { NAV_GROUPS, NAV_ITEMS } from "../../config/navigation";
 
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
 export function Sidebar() {
+  const { user, signout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSignOut = () => {
+    signout();
+    navigate(PATHS.signin, { replace: true });
+  };
+
   return (
     <aside
       className="w-60 flex-shrink-0 flex flex-col h-full border-r border-border shadow-sm"
@@ -21,7 +39,6 @@ export function Sidebar() {
             </span>
             <span className="text-xs text-muted-foreground">AI career command center</span>
           </div>
-          <ChevronDown className="w-4 h-4 text-muted-foreground opacity-50 flex-shrink-0" />
         </NavLink>
       </div>
 
@@ -73,15 +90,22 @@ export function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-border">
-        <div className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-secondary cursor-pointer transition-colors group">
+        <div className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-secondary transition-colors group">
           <div className="w-10 h-10 rounded-full bg-violet-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-            JD
+            {user?.name ? initials(user.name) : "?"}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-foreground truncate">Jordan Doe</p>
-            <p className="text-xs text-muted-foreground">Job Seeker</p>
+            <p className="text-sm font-bold text-foreground truncate">{user?.name ?? "Signed out"}</p>
+            <p className="text-xs text-muted-foreground truncate">{user?.tier ?? "Job seeker"}</p>
           </div>
-          <MoreHorizontal className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-background opacity-0 group-hover:opacity-100 transition-opacity"
+            title="Sign out"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </aside>
