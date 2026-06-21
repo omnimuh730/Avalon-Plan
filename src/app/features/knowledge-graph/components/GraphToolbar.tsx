@@ -144,9 +144,10 @@ export function GraphToolbar({
                 <button
                   key={p.id}
                   type="button"
+                  title={p.subtitle ?? p.name}
                   onClick={() => onToggleResume(p.id)}
                   className={cn(
-                    "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all",
+                    "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all max-w-full",
                     active
                       ? "bg-primary/10 border-primary/40 text-foreground"
                       : "bg-secondary border-border text-muted-foreground hover:text-foreground",
@@ -154,11 +155,11 @@ export function GraphToolbar({
                 >
                   <span
                     className={cn(
-                      "inline-block w-1.5 h-1.5 rounded-full mr-2 align-middle",
+                      "inline-block w-1.5 h-1.5 rounded-full mr-2 align-middle shrink-0",
                       active ? "bg-primary" : "bg-muted-foreground/40",
                     )}
                   />
-                  {p.name}
+                  <span className="truncate">{p.name}</span>
                 </button>
               );
             })}

@@ -18,6 +18,8 @@ type SkillGraphCanvasProps = {
   onSelect: (id: string | null) => void;
   /** Relation types to show; when undefined all are shown. */
   visibleRelations?: Set<string>;
+  /** Neo4j-style: visible edges, category-colored nodes, strong activation contrast. */
+  neo4jStyle?: boolean;
 };
 
 type Palette = {
@@ -36,6 +38,7 @@ export function SkillGraphCanvas({
   selectedId,
   onSelect,
   visibleRelations,
+  neo4jStyle = false,
 }: SkillGraphCanvasProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const fgRef = useRef<ForceGraphMethods<GraphRenderNode, GraphRenderLink> | undefined>(undefined);
@@ -74,6 +77,20 @@ export function SkillGraphCanvas({
     fittedRef.current = false;
   }, [data.nodes.length, data.links.length]);
 
+  // Re-render for activation pulse on highly activated nodes.
+  useEffect(() => {
+    if (!neo4jStyle) return;
+    let frame = 0;
+    let raf = 0;
+    const tick = () => {
+      frame += 1;
+      if (frame % 2 === 0) fgRef.current?.refresh?.();
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [neo4jStyle, graphData.nodes.length]);
+
   const fitView = useCallback(() => {
     const fg = fgRef.current;
     if (!fg || graphData.nodes.length === 0) return;
@@ -91,11 +108,11 @@ export function SkillGraphCanvas({
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
-    fg.d3Force("charge")?.strength(-120).distanceMax(600);
+    fg.d3Force("charge")?.strength(neo4jStyle ? -80 : -120).distanceMax(600);
     const link = fg.d3Force("link");
     if (link) {
-      link.distance((l: GraphRenderLink) => 35 + (1 - l.weight) * 70).strength(
-        (l: GraphRenderLink) => 0.08 + l.weight * 0.35,
+      link.distance((l: GraphRenderLink) => (neo4jStyle ? 28 : 35) + (1 - l.weight) * 70).strength(
+        (l: GraphRenderLink) => (neo4jStyle ? 0.15 : 0.08) + l.weight * 0.35,
       );
     }
     // Keep isolated nodes (no edges) bounded near the center instead of drifting
@@ -118,7 +135,7 @@ export function SkillGraphCanvas({
     };
     fg.d3Force("center-pull", centeringForce as unknown as never);
     fg.d3ReheatSimulation?.();
-  }, [size.width, size.height, graphData.nodes.length]);
+  }, [size.width, size.height, graphData.nodes.length, neo4jStyle]);
 
   // Pan to a node when it becomes selected (e.g. via search).
   useEffect(() => {
@@ -168,52 +185,95 @@ export function SkillGraphCanvas({
       const x = node.x as number;
       const y = node.y as number;
       const a = Number.isFinite(node.activation) ? node.activation : 0;
-      const baseR = 3 + a * 9 + (node.isSeed ? 2 : 0);
-      const dimmed = neighborIds ? !neighborIds.has(node.id) : false;
-      const alpha = dimmed ? 0.18 : 1;
+      const isSeed = Boolean(node.isSeed);
+      const isActivated = isSeed || a > 0.04;
+      const isHighlyActivated = isSeed || a > 0.12;
 
-      // Pulsing glow halo, intensity scaled by activation.
-      const pulse = 1 + Math.sin(Date.now() / 600 + x) * 0.12 * a;
-      const glowR = Math.max(0.5, baseR * (2.6 + a * 1.6) * pulse);
-      const hue = nodeColor(node.category, a);
+      const focusDim = neighborIds ? !neighborIds.has(node.id) : false;
+      const alpha = focusDim
+        ? 0.12
+        : isHighlyActivated
+          ? 1
+          : isActivated
+            ? 0.55 + a * 0.45
+            : neo4jStyle
+              ? 0.28
+              : 0.18;
+
+      const strength = typeof node.strength === "number" ? node.strength : isSeed ? 8 : 0;
+      const baseR = isHighlyActivated
+        ? 6 + strength * 0.55 + a * 10
+        : isActivated
+          ? 3.5 + a * 8
+          : neo4jStyle
+            ? 3.2
+            : 2 + a * 4;
+
+      const hue = nodeColor(node.category, Math.max(a, isSeed ? 0.85 : 0.15));
       ctx.globalAlpha = alpha;
-      const grad = ctx.createRadialGradient(x, y, baseR * 0.4, x, y, glowR);
-      grad.addColorStop(0, hueToGlow(node.category, 0.35 + a * 0.45));
-      grad.addColorStop(1, hueToGlow(node.category, 0));
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(x, y, glowR, 0, Math.PI * 2);
-      ctx.fill();
 
-      // Core node.
+      // Outer halo — much stronger for seeds / activated nodes.
+      if (isHighlyActivated) {
+        const pulse = 1 + Math.sin(Date.now() / 500 + x * 0.1) * 0.15;
+        const glowR = baseR * (2.8 + a * 2.2) * pulse;
+        const grad = ctx.createRadialGradient(x, y, baseR * 0.2, x, y, glowR);
+        grad.addColorStop(0, hueToGlow(node.category, 0.75));
+        grad.addColorStop(0.45, hueToGlow(node.category, 0.35));
+        grad.addColorStop(1, hueToGlow(node.category, 0));
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, glowR, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (isActivated) {
+        const glowR = baseR * 2.2;
+        ctx.fillStyle = hueToGlow(node.category, 0.22 + a * 0.35);
+        ctx.beginPath();
+        ctx.arc(x, y, glowR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Core node (Neo4j-style solid circle).
       ctx.beginPath();
       ctx.arc(x, y, baseR, 0, Math.PI * 2);
       ctx.fillStyle = hue;
       ctx.fill();
 
-      // Seed / selection ring.
-      if (node.isSeed || node.id === selectedId) {
-        ctx.lineWidth = node.id === selectedId ? 2.2 / globalScale : 1.2 / globalScale;
-        ctx.strokeStyle = node.id === selectedId ? palette.text : hueToGlow(node.category, 0.9);
+      if (neo4jStyle) {
+        ctx.lineWidth = Math.max(0.8, 1.4 / globalScale);
+        ctx.strokeStyle = isHighlyActivated
+          ? "rgba(255,255,255,0.95)"
+          : isActivated
+            ? "rgba(255,255,255,0.55)"
+            : "rgba(255,255,255,0.18)";
         ctx.stroke();
       }
 
-      // Label when zoomed in or node is prominent (Neo4j-style readability).
+      // Seed / selection ring.
+      if (isSeed || node.id === selectedId) {
+        ctx.lineWidth = node.id === selectedId ? 2.5 / globalScale : 1.8 / globalScale;
+        ctx.strokeStyle =
+          node.id === selectedId ? palette.text : hueToGlow(node.category, 0.95);
+        ctx.beginPath();
+        ctx.arc(x, y, baseR + 2 / globalScale, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
       const showLabel =
         node.id === focusId ||
-        node.isSeed ||
-        globalScale > 0.45 ||
-        a > 0.15;
-      if (showLabel && globalScale > 0.35) {
-        const fontSize = Math.max(9, (10 + a * 4) / globalScale);
-        ctx.font = `${node.isSeed ? "600 " : ""}${fontSize}px Figtree, system-ui, sans-serif`;
+        isHighlyActivated ||
+        (neo4jStyle && isActivated && globalScale > 0.55) ||
+        globalScale > 0.75 ||
+        a > 0.08;
+      if (showLabel && globalScale > 0.32) {
+        const fontSize = Math.max(9, (10 + (isHighlyActivated ? 4 : 0) + a * 3) / globalScale);
+        ctx.font = `${isHighlyActivated || isSeed ? "600 " : ""}${fontSize}px Figtree, system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillStyle = palette.text;
-        ctx.globalAlpha = dimmed ? 0.25 : 0.92;
-        const labelY = y + baseR + 2 / globalScale;
+        ctx.fillStyle = isHighlyActivated ? palette.text : palette.text;
+        ctx.globalAlpha = focusDim ? 0.2 : isHighlyActivated ? 1 : 0.75;
+        const labelY = y + baseR + 3 / globalScale;
         ctx.fillText(node.label, x, labelY);
-        if (node.isSeed && typeof node.strength === "number") {
+        if (isSeed && typeof node.strength === "number") {
           const scoreSize = Math.max(8, fontSize * 0.85);
           ctx.font = `600 ${scoreSize}px ui-monospace, monospace`;
           ctx.fillStyle = hue;
@@ -223,7 +283,7 @@ export function SkillGraphCanvas({
 
       ctx.globalAlpha = 1;
     },
-    [neighborIds, selectedId, focusId, palette.text],
+    [neighborIds, selectedId, focusId, palette.text, neo4jStyle],
   );
 
   const drawPointerArea = useCallback(
@@ -241,19 +301,55 @@ export function SkillGraphCanvas({
     [],
   );
 
+  const drawLink = useCallback(
+    (link: GraphRenderLink, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      const s = link.source as GraphRenderNode;
+      const t = link.target as GraphRenderNode;
+      if (!Number.isFinite(s.x) || !Number.isFinite(s.y) || !Number.isFinite(t.x) || !Number.isFinite(t.y)) {
+        return;
+      }
+      const energy = link.energy ?? 0;
+      const [r, g, b] = palette.linkBase;
+
+      const focusDim =
+        neighborIds &&
+        (!neighborIds.has(s.id) || !neighborIds.has(t.id));
+
+      let opacity: number;
+      let width: number;
+      if (neo4jStyle) {
+        opacity = focusDim ? 0.06 : energy > 0.08 ? 0.35 + energy * 0.45 : 0.18;
+        width = Math.max(0.6, (0.8 + link.weight * 1.8 + energy * 2.5) / globalScale);
+      } else {
+        opacity = focusDim ? 0.04 : 0.12 + link.weight * 0.2 + energy * 0.25;
+        width = Math.max(0.5, (0.5 + link.weight * 2.5) / globalScale);
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(s.x as number, s.y as number);
+      ctx.lineTo(t.x as number, t.y as number);
+      ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${opacity})`;
+      ctx.lineWidth = width;
+      ctx.stroke();
+    },
+    [palette.linkBase, neighborIds, neo4jStyle],
+  );
+
   const linkColor = useCallback(
     (link: GraphRenderLink) => {
       const [r, g, b] = palette.linkBase;
-      let op = 0.12 + link.weight * 0.2 + link.energy * 0.25;
+      let op = neo4jStyle
+        ? 0.18 + link.weight * 0.15 + link.energy * 0.2
+        : 0.12 + link.weight * 0.2 + link.energy * 0.25;
       if (neighborIds) {
         const s = typeof link.source === "string" ? link.source : (link.source as GraphRenderNode).id;
         const t = typeof link.target === "string" ? link.target : (link.target as GraphRenderNode).id;
         const active = neighborIds.has(s) && neighborIds.has(t);
-        op = active ? Math.min(0.9, 0.3 + link.energy * 0.6) : 0.04;
+        op = active ? Math.min(0.95, 0.35 + link.energy * 0.6) : neo4jStyle ? 0.06 : 0.04;
       }
       return `rgba(${r}, ${g}, ${b}, ${op})`;
     },
-    [palette.linkBase, neighborIds],
+    [palette.linkBase, neighborIds, neo4jStyle],
   );
 
   if (size.width === 0) {
@@ -281,11 +377,15 @@ export function SkillGraphCanvas({
         }}
         nodeCanvasObject={drawNode}
         nodePointerAreaPaint={drawPointerArea}
+        linkCanvasObject={neo4jStyle ? drawLink : undefined}
+        linkCanvasObjectMode={neo4jStyle ? () => "replace" : undefined}
         linkColor={linkColor}
         linkVisibility={(l: GraphRenderLink) =>
           !visibleRelations || visibleRelations.has(l.type)
         }
-        linkWidth={(l: GraphRenderLink) => 0.5 + l.weight * 2.5}
+        linkWidth={(l: GraphRenderLink) =>
+          neo4jStyle ? 0 : 0.5 + l.weight * 2.5
+        }
         linkDirectionalParticles={(l: GraphRenderLink) => (l.energy > 0.35 ? 2 : 0)}
         linkDirectionalParticleWidth={(l: GraphRenderLink) => 1 + l.energy * 2.5}
         linkDirectionalParticleSpeed={(l: GraphRenderLink) => 0.002 + l.energy * 0.01}

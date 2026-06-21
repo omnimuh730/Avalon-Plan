@@ -116,7 +116,7 @@ export function KnowledgeGraphView({
     const seeds = canvasData.nodes.filter((n) => n.isSeed).length;
     const activated = usingDirectSkills
       ? canvasData.nodes.length
-      : canvasData.nodes.filter((n) => n.activation > 0.15).length;
+      : canvasData.nodes.filter((n) => n.isSeed || n.activation > 0.04).length;
     return {
       pending: enrichment?.stats.pending ?? 0,
       universe: usingDirectSkills ? canvasData.nodes.length : (worldGraph?.nodes.length ?? 0),
@@ -163,6 +163,7 @@ export function KnowledgeGraphView({
             selectedId={selectedId}
             onSelect={setSelectedId}
             visibleRelations={visibleRelations}
+            neo4jStyle
           />
         )}
       </div>

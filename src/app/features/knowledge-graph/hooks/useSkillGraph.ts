@@ -5,6 +5,7 @@ import {
   fetchUserGraphs,
   type UserKnowledgeGraph,
 } from "@/app/api/skillGraph";
+import { fetchUserResumes } from "@/app/services/resumeApi";
 import { useApplier } from "@/context/applier-context";
 import {
   computeActivation,
@@ -15,7 +16,10 @@ import { buildGraphData, type GraphRenderData } from "../lib/graphAdapter";
 
 export interface ProfileOption {
   id: string;
+  /** Display label — tech stack for resumes, aggregated label for profile. */
   name: string;
+  /** Original resume filename (tooltip). */
+  subtitle?: string;
   skillIds: string[];
   graph: UserKnowledgeGraph;
 }
@@ -169,15 +173,27 @@ export function useSkillGraph(options: UseSkillGraphOptions = {}): UseSkillGraph
 
       const applierName = applier?.name;
       if (applierName) {
-        const graphs = await fetchUserGraphs(applierName);
+        const [graphs, resumes] = await Promise.all([
+          fetchUserGraphs(applierName),
+          fetchUserResumes(applierName).catch(() => []),
+        ]);
+        const techByResumeId = new Map(resumes.map((r) => [r.id, r.techStack]));
         const excluded = new Set(excludeResumeIds);
         const filtered = graphs.filter((g) => !excluded.has(g.resumeId));
-        const nextProfiles: ProfileOption[] = filtered.map((g) => ({
-          id: graphProfileId(g),
-          name: g.resumeName || g.resumeId,
-          skillIds: g.skills.map((s) => s.canonicalId).filter(Boolean) as string[],
-          graph: g,
-        }));
+        const nextProfiles: ProfileOption[] = filtered.map((g) => {
+          const isProfile = g.resumeId === "__profile__";
+          const fileName = g.resumeName || g.resumeId;
+          const techStack = isProfile
+            ? "Profile (all resumes)"
+            : techByResumeId.get(g.resumeId) || fileName;
+          return {
+            id: graphProfileId(g),
+            name: techStack,
+            subtitle: isProfile ? undefined : fileName,
+            skillIds: g.skills.map((s) => s.canonicalId).filter(Boolean) as string[],
+            graph: g,
+          };
+        });
         setProfiles(nextProfiles);
 
         if (fixedResumeId) {
