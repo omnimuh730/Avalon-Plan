@@ -49,6 +49,8 @@ export interface Job {
   workMode: WorkMode;
   type: string;
   seniority: string;
+  /** Years of experience hint from details.date (e.g. "5+ years exp"). */
+  experience?: string;
   industries: string[];
   status: JobStatus;
   scores: JobScores;
@@ -56,9 +58,15 @@ export interface Job {
   matchScore: number;
   posted: string;
   postedAt: string;
+  /** Human-readable relative time from source (e.g. "2 hours ago"). */
+  postedAgo?: string;
   salary: string;
   source: string;
   jobDescription: string;
+  skills: string[];
+  /** Job-level tags (e.g. "200+ applicants"). */
+  tags: string[];
+  applicantsText?: string;
   applyUrl: string;
   skillAnalysis?: SkillAnalysis;
   /** Tech stack of the resume that best matched this job (recommendation API). */

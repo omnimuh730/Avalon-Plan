@@ -147,9 +147,9 @@ export function JobSearchPage() {
           Loading jobs from server…
         </div>
       ) : (
-        <div className={refreshing ? "relative opacity-80 pointer-events-none" : undefined}>
+        <div className={refreshing ? "relative" : undefined}>
           {refreshing ? (
-            <div className="absolute inset-x-0 top-0 z-10 flex justify-center py-2">
+            <div className="absolute inset-x-0 top-0 z-10 flex justify-center py-2 pointer-events-none">
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
             </div>
           ) : null}

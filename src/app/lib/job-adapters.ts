@@ -104,6 +104,14 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       ? (doc.skillAnalysis as Job["skillAnalysis"])
       : undefined;
 
+  const skills = Array.isArray(doc.skills) ? doc.skills.map(String).filter(Boolean) : [];
+  const tags = Array.isArray(doc.tags) ? doc.tags.map(String).filter(Boolean) : [];
+  const applicantsObj = doc.applicants as { text?: string; count?: number } | undefined;
+  const applicantsText =
+    typeof applicantsObj?.text === "string" && applicantsObj.text.trim()
+      ? applicantsObj.text.trim()
+      : tags.find((t) => /applicant/i.test(t));
+
   return {
     id: backendId,
     backendId,
@@ -115,6 +123,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     workMode,
     type,
     seniority,
+    experience: String(details.date || "").trim() || undefined,
     industries,
     status,
     scores: {
@@ -127,9 +136,13 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     matchScore: overall,
     posted,
     postedAt,
+    postedAgo: typeof doc.postedAgo === "string" ? doc.postedAgo : undefined,
     salary,
     source,
     jobDescription: String(doc.description || `${title} at ${company.name || "company"}.`),
+    skills,
+    tags,
+    applicantsText,
     applyUrl,
     skillAnalysis,
     bestResumeTechStack,
@@ -139,7 +152,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
 export const SORT_TO_API: Record<string, string> = {
   newest: "postedAt_desc",
   matchScore: "recommended",
-  skill: "recommended",
+  skill: "scoreSkill_desc",
   salary: "salary_desc",
   freshness: "postedAt_desc",
   title: "postedAt_desc",

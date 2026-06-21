@@ -115,6 +115,8 @@ function buildJob(i: number): Job {
     salary: `$${salaryBase}k–$${salaryBase + 40}k`,
     source: SOURCES[seeded(i, SOURCES.length)],
     jobDescription: buildJobDescription(title, company, location, type),
+    skills: ["TypeScript", "React", "Node.js", "AWS"].slice(0, 2 + seeded(i, 3)),
+    tags: seeded(i, 3) === 0 ? [`${50 + seeded(i, 150)} applicants`] : [],
     applyUrl: `https://${domain}/careers/${i + 1}`,
     skillAnalysis: i % 4 === 0
       ? { status: "analyzed", analyzedAt: postedAt.toISOString() }

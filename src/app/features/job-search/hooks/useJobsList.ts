@@ -153,6 +153,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
 
   const hasLoadedOnce = useRef(false);
+  const filterKeyRef = useRef("");
 
   const debouncedFilters = useDebouncedTextFilters(filters);
 
@@ -175,6 +176,11 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     [debouncedFilters, page, pageSize, applier?.name],
   );
 
+  const filterKey = useMemo(() => {
+    const { page: _p, limit: _l, ...rest } = listBody;
+    return JSON.stringify(rest);
+  }, [listBody]);
+
   const countsBody = useMemo(
     () => buildJobsCountsBody(debouncedFilters, applier?.name),
     [debouncedFilters, applier?.name],
@@ -184,8 +190,9 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     if (!applierReady) return;
     let cancelled = false;
     const isInitial = !hasLoadedOnce.current;
+    const pageOnly = hasLoadedOnce.current && filterKeyRef.current === filterKey;
     if (isInitial) setLoading(true);
-    else setRefreshing(true);
+    else if (!pageOnly) setRefreshing(true);
 
     (async () => {
       try {
@@ -198,7 +205,18 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
           setRecommendationReason(res.recommendationReason ?? null);
           setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
           hasLoadedOnce.current = true;
-        } else {
+          filterKeyRef.current = filterKey;
+
+          const totalPages = res.pagination?.totalPages ?? 1;
+          if (page < totalPages) {
+            const nextBody = buildJobsListBody(debouncedFilters, {
+              page: page + 1,
+              limit: pageSize,
+              applierName: applier?.name,
+            });
+            void post("/jobs/list", nextBody).catch(() => undefined);
+          }
+        } else if (isInitial) {
           setRawJobs([]);
           setTotal(0);
           setRecommendationFallback(false);
@@ -224,7 +242,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     return () => {
       cancelled = true;
     };
-  }, [listBody, post, applier, applierReady]);
+  }, [listBody, post, applier, applierReady, filterKey, page, pageSize, debouncedFilters]);
 
   useEffect(() => {
     if (!applierReady) return;

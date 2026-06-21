@@ -9,17 +9,10 @@ import {
 } from "lucide-react";
 import { Av, Badge, Score } from "../../../components/ui";
 import { Button } from "../../../components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../../../components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
 import { cn } from "../../../lib/utils";
 import type { BadgeVariant, Job } from "../../../types";
+import { JobDescriptionDialog } from "./JobDescriptionDialog";
 
 const STATUS_LABELS: Record<Job["status"], string> = {
   posted: "Posted",
@@ -232,30 +225,7 @@ export function JobCard({
         </div>
       </article>
 
-      <Dialog open={jdOpen} onOpenChange={setJdOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{job.title}</DialogTitle>
-            <DialogDescription>
-              {job.company} · {job.location} · {job.posted}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="text-sm text-foreground whitespace-pre-line leading-relaxed">
-            {job.jobDescription}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setJdOpen(false)}>
-              Close
-            </Button>
-            <Button asChild>
-              <a href={job.applyUrl} target="_blank" rel="noopener noreferrer">
-                Apply on company site
-                <ExternalLink className="w-4 h-4" />
-              </a>
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <JobDescriptionDialog job={job} open={jdOpen} onOpenChange={setJdOpen} />
     </>
   );
 }
