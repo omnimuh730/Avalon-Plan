@@ -71,4 +71,6 @@ export interface Job {
   skillAnalysis?: SkillAnalysis;
   /** Tech stack of the resume that best matched this job (recommendation API). */
   bestResumeTechStack?: string;
+  /** Resume id used for best-fit recommendation (Mongo _id or __profile__). */
+  bestResumeId?: string;
 }

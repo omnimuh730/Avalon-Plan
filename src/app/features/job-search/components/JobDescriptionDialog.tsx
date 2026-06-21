@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Briefcase,
   Building2,
@@ -24,6 +24,8 @@ import { cn } from "../../../lib/utils";
 import { bodyAsListItems, parseJobDescription } from "../../../lib/parseJobDescription";
 import type { Job, WorkMode } from "../../../types";
 import { useJobDetail } from "../hooks/useJobDetail";
+import { useJobSkillRadar } from "../hooks/useJobSkillRadar";
+import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
 
 const WORK_MODE_LABELS: Record<WorkMode, string> = {
   remote: "Remote",
@@ -130,16 +132,33 @@ function JobDescriptionBody({ job, loading }: { job: Job; loading: boolean }) {
 export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescriptionDialogProps) {
   const { displayJob, loading, error } = useJobDetail(job, open);
   const j = displayJob ?? job;
+  const [skillMatchOpen, setSkillMatchOpen] = useState(false);
+
+  const jobId = j.backendId || j.id;
+  const {
+    data: radarData,
+    loading: radarLoading,
+    error: radarError,
+    selectedResumeId,
+    changeResume,
+  } = useJobSkillRadar(jobId, open && skillMatchOpen, {
+    recommendedResumeId: j.bestResumeId,
+    recommendedTechStack: j.bestResumeTechStack,
+  });
+
+  useEffect(() => {
+    if (!open) setSkillMatchOpen(false);
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
-        <div className="border-b border-border bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-5">
+        <div className="border-b border-border bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-5 pr-12">
           <div className="flex items-start gap-4">
             <CompanyLogo job={j} />
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <h2 className="text-lg font-bold leading-snug text-foreground">{j.title}</h2>
                   <a
                     href={j.companyUrl}
@@ -152,7 +171,9 @@ export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescription
                     <ExternalLink className="size-3 shrink-0 opacity-60" />
                   </a>
                 </div>
-                <Score score={j.scores.overall} />
+                <div className="shrink-0 mr-2">
+                  <Score score={j.scores.overall} />
+                </div>
               </div>
               <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
@@ -176,6 +197,13 @@ export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescription
               <MetaChip icon={Users}>{j.applicantsText}</MetaChip>
             ) : null}
           </div>
+
+          {j.bestResumeTechStack ? (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Best fit:{" "}
+              <span className="font-semibold text-foreground">{j.bestResumeTechStack}</span> resume
+            </p>
+          ) : null}
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 subtle-scroll space-y-6">
@@ -210,6 +238,36 @@ export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescription
 
           {(j.skills.length > 0 || j.industries.length > 0) && <Separator />}
 
+          {skillMatchOpen ? (
+            <section className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex size-8 items-center justify-center rounded-lg bg-primary/10">
+                    <Sparkles className="size-4 text-primary" />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">AI skill match</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Required skills vs your resume — graph bridges related skills
+                    </p>
+                  </div>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setSkillMatchOpen(false)}>
+                  Hide
+                </Button>
+              </div>
+              <JobSkillMatchPanel
+                data={radarData}
+                loading={radarLoading}
+                error={radarError}
+                selectedResumeId={selectedResumeId}
+                onResumeChange={changeResume}
+              />
+            </section>
+          ) : null}
+
+          {skillMatchOpen ? <Separator /> : null}
+
           <section>
             <h3 className="mb-4 text-sm font-bold text-foreground">Job description</h3>
             {error ? (
@@ -237,6 +295,13 @@ export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescription
             </span>
           </div>
           <div className="flex w-full sm:w-auto items-center justify-end gap-2">
+            <Button
+              variant={skillMatchOpen ? "secondary" : "outline"}
+              onClick={() => setSkillMatchOpen((v) => !v)}
+            >
+              <Sparkles className="size-4 text-primary" />
+              Skill match
+            </Button>
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Close
             </Button>

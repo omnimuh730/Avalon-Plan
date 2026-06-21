@@ -99,6 +99,11 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       ? doc.bestResumeTechStack.trim()
       : undefined;
 
+  const bestResumeId =
+    typeof doc.bestResumeId === "string" && doc.bestResumeId.trim()
+      ? doc.bestResumeId.trim()
+      : undefined;
+
   const skillAnalysis =
     doc.skillAnalysis && typeof doc.skillAnalysis === "object"
       ? (doc.skillAnalysis as Job["skillAnalysis"])
@@ -146,6 +151,23 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     applyUrl,
     skillAnalysis,
     bestResumeTechStack,
+    bestResumeId,
+  };
+}
+
+/** Preserve list-time scores and recommendation metadata when detail fetch lacks them. */
+export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
+  const preferListScores =
+    listJob.scores.overall > detailJob.scores.overall ||
+    (listJob.scores.overall === detailJob.scores.overall &&
+      listJob.scores.skill > detailJob.scores.skill);
+
+  return {
+    ...detailJob,
+    scores: preferListScores ? listJob.scores : detailJob.scores,
+    matchScore: preferListScores ? listJob.matchScore : detailJob.matchScore,
+    bestResumeTechStack: listJob.bestResumeTechStack ?? detailJob.bestResumeTechStack,
+    bestResumeId: listJob.bestResumeId ?? detailJob.bestResumeId,
   };
 }
 
