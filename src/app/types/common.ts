@@ -8,6 +8,7 @@ export interface Msg {
 export interface MailThread {
   id: string;
   uid?: number;
+  mailbox?: string;
   from: string;
   fromEmail?: string;
   subj: string;

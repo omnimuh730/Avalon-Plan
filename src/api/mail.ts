@@ -73,9 +73,9 @@ export async function fetchMailFolderCounts(applierName: string) {
   return data.counts;
 }
 
-export async function fetchMailMessage(applierName: string, uid: string) {
+export async function fetchMailMessage(applierName: string, uid: string, folder?: string) {
   const data = await mailFetch<{ thread: MailThread }>(
-    `mail/messages/${encodeURIComponent(uid)}${qs({ applierName })}`,
+    `mail/messages/${encodeURIComponent(uid)}${qs({ applierName, folder })}`,
   );
   return data.thread;
 }
@@ -114,7 +114,14 @@ export async function sendMailMessage(
 export async function patchMailMessage(
   applierName: string,
   uid: string,
-  patch: { seen?: boolean; flagged?: boolean; folder?: string; addLabels?: string[]; removeLabels?: string[] },
+  patch: {
+    seen?: boolean;
+    flagged?: boolean;
+    folder?: string;
+    addLabels?: string[];
+    removeLabels?: string[];
+    sourceFolder?: string;
+  },
 ) {
   const data = await mailFetch<{ thread: MailThread }>(`mail/messages/${encodeURIComponent(uid)}`, {
     method: "PATCH",

@@ -16,6 +16,22 @@ type LoadOpts = {
   pageSize: number;
 };
 
+function mergeThreads(prev: MailThread[], fresh: MailThread[]): MailThread[] {
+  const prevById = new Map(prev.map((t) => [t.id, t]));
+  return fresh.map((t) => {
+    const existing = prevById.get(t.id);
+    if (!existing?.hasBody || !existing.bodyHtml) return t;
+    if (existing.subj !== t.subj || existing.from !== t.from) return t;
+    return {
+      ...t,
+      body: existing.body,
+      bodyHtml: existing.bodyHtml,
+      hasBody: true,
+      prev: existing.prev || t.prev,
+    };
+  });
+}
+
 export function useMailThreads(applierName: string | undefined) {
   const [threads, setThreads] = useState<MailThread[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
@@ -35,6 +51,7 @@ export function useMailThreads(applierName: string | undefined) {
     pageSize: 25,
   });
   const loadGen = useRef(0);
+  const bodyFetchGen = useRef(0);
 
   const loadThreads = useCallback(
     async (opts: Partial<LoadOpts> & { folder: MailFolderId; labelFilter: string | null; search: string }) => {
@@ -68,7 +85,7 @@ export function useMailThreads(applierName: string | undefined) {
         const cached = await fetchMailThreads(applierName, { ...queryOpts, cacheOnly: true });
         if (gen !== loadGen.current) return;
         if (cached.threads.length > 0) {
-          setThreads(cached.threads);
+          setThreads((prev) => mergeThreads(prev, cached.threads));
           setTotal(cached.total);
           setLoading(false);
           showedCache = true;
@@ -82,7 +99,7 @@ export function useMailThreads(applierName: string | undefined) {
       try {
         const fresh = await fetchMailThreads(applierName, queryOpts);
         if (gen !== loadGen.current) return;
-        setThreads(fresh.threads);
+        setThreads((prev) => mergeThreads(prev, fresh.threads));
         setTotal(fresh.total);
       } catch (e) {
         if (gen !== loadGen.current) return;
@@ -100,13 +117,16 @@ export function useMailThreads(applierName: string | undefined) {
   );
 
   const fetchThreadBody = useCallback(
-    async (uid: string) => {
+    async (uid: string, folder: MailFolderId) => {
       if (!applierName) return null;
+      const gen = ++bodyFetchGen.current;
       try {
-        const thread = await fetchMailMessage(applierName, uid);
+        const thread = await fetchMailMessage(applierName, uid, folder);
+        if (gen !== bodyFetchGen.current) return null;
         setThreads((prev) => prev.map((t) => (t.id === uid ? thread : t)));
         return thread;
       } catch (e) {
+        if (gen !== bodyFetchGen.current) return null;
         console.error("fetch message body failed", e);
         return null;
       }
@@ -114,19 +134,28 @@ export function useMailThreads(applierName: string | undefined) {
     [applierName],
   );
 
+  const cancelBodyFetch = useCallback(() => {
+    bodyFetchGen.current += 1;
+  }, []);
+
   const patchThread = useCallback(
     async (uid: string, patch: { seen?: boolean; flagged?: boolean; folder?: string }) => {
       if (!applierName) return;
       try {
-        const updated = await patchMailMessage(applierName, uid, patch);
+        const updated = await patchMailMessage(applierName, uid, {
+          ...patch,
+          sourceFolder: currentFolder,
+        });
         setThreads((prev) => {
           if (patch.folder && patch.folder !== currentFolder) {
             return prev.filter((t) => t.id !== uid);
           }
           return prev.map((t) => (t.id === uid ? updated : t));
         });
+        return updated;
       } catch (e) {
         console.error("patch message failed", e);
+        return null;
       }
     },
     [applierName, currentFolder],
@@ -208,8 +237,10 @@ export function useMailThreads(applierName: string | undefined) {
     pageSize,
     setPage,
     setPageSize,
+    currentFolder,
     loadThreads,
     fetchThreadBody,
+    cancelBodyFetch,
     star,
     archive,
     trash,

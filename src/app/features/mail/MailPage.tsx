@@ -15,6 +15,7 @@ import { useMailLabels } from "./hooks/useMailLabels";
 import { useMailSync } from "./hooks/useMailSync";
 import { groupThreadsByDate } from "./lib/mailLabelStyles";
 import type { MailFolderId } from "../../../data/mail";
+import type { MailThread } from "../../types";
 
 export function MailPage() {
   const { threadId } = useParams<{ threadId?: string }>();
@@ -27,10 +28,13 @@ export function MailPage() {
   const [search, setSearch] = useState("");
   const [credentialsConfigured, setCredentialsConfigured] = useState<boolean | null>(null);
   const [folderCounts, setFolderCounts] = useState<FolderCounts | undefined>();
+  const [activeThread, setActiveThread] = useState<MailThread | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const mail = useMailThreads(applierName);
   const { labels, createLabel, removeLabel, reload: reloadLabels } = useMailLabels(applierName);
-  const { loadThreads, fetchThreadBody, page, pageSize, setPage, setPageSize, total } = mail;
+  const { loadThreads, fetchThreadBody, cancelBodyFetch, page, pageSize, setPage, setPageSize, total } =
+    mail;
 
   const loadCurrentPage = useCallback(() => {
     void loadThreads({ folder, labelFilter, search, page, pageSize });
@@ -67,16 +71,24 @@ export function MailPage() {
   }, [applierReady, applierName, credentialsConfigured, folder, labelFilter, search, page, pageSize, loadThreads]);
 
   useEffect(() => {
-    if (!threadId || !applierName) return;
-    const thread = mail.threads.find((t) => t.id === threadId);
-    if (thread && !thread.hasBody) {
-      void fetchThreadBody(threadId);
+    if (!threadId || !applierName) {
+      setActiveThread(null);
+      setDetailLoading(false);
+      return;
     }
-  }, [threadId, applierName, mail.threads, fetchThreadBody]);
+
+    cancelBodyFetch();
+    const listThread = mail.threads.find((t) => t.id === threadId) ?? null;
+    setActiveThread(listThread);
+    setDetailLoading(true);
+
+    void fetchThreadBody(threadId, folder).then((thread) => {
+      if (thread) setActiveThread(thread);
+      setDetailLoading(false);
+    });
+  }, [threadId, applierName, folder, fetchThreadBody, cancelBodyFetch]);
 
   const grouped = useMemo(() => groupThreadsByDate(mail.threads), [mail.threads]);
-
-  const selected = threadId ? mail.threads.find((t) => t.id === threadId) ?? null : null;
   const isThreadView = Boolean(threadId);
 
   const openThread = (id: string) => {
@@ -228,13 +240,14 @@ export function MailPage() {
         </div>
       ) : (
         <MailDetailPane
-          thread={selected}
+          key={threadId}
+          thread={activeThread}
           fullView
-          loading={Boolean(selected && !selected.hasBody && !selected.bodyHtml)}
+          loading={detailLoading}
           onBack={backToList}
-          onArchive={() => selected && mail.archive(selected.id)}
-          onTrash={() => selected && mail.trash(selected.id)}
-          onReply={() => selected && mail.openCompose(selected)}
+          onArchive={() => activeThread && mail.archive(activeThread.id)}
+          onTrash={() => activeThread && mail.trash(activeThread.id)}
+          onReply={() => activeThread && mail.openCompose(activeThread)}
         />
       )}
 
