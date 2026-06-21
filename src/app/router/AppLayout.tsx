@@ -84,11 +84,11 @@ export function AppLayout() {
   return (
     <AppProviders>
       <div
-        className="flex h-dvh min-h-0 w-full overflow-hidden bg-background text-foreground"
+        className="flex h-full min-h-0 w-full overflow-hidden bg-background text-foreground"
         style={{ fontFamily: "'Figtree',system-ui,sans-serif" }}
       >
         <Sidebar />
-        <div className="flex h-dvh min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
           <TopNav active={active} />
           <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <Outlet />

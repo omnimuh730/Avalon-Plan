@@ -127,12 +127,17 @@
     @apply border-border outline-ring/50;
   }
 
-  body {
-    @apply bg-background text-foreground;
-  }
-
   html {
     font-size: var(--font-size);
+    @apply h-full overflow-hidden;
+  }
+
+  body {
+    @apply h-full overflow-hidden bg-background text-foreground;
+  }
+
+  #root {
+    @apply h-full overflow-hidden;
   }
 
   h1 {
