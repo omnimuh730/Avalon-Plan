@@ -96,8 +96,8 @@ export function JobSearchPage() {
 
       {recommendationFallback && filters.sort === "matchScore" && (
         <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-900 dark:text-amber-100">
-          Personalized ranking is unavailable. Analyze at least one resume (and ensure Qdrant + OpenAI key are
-          configured) to enable Best match sorting.
+          Personalized ranking is unavailable. Analyze at least one resume and ensure Qdrant + Ollama
+          (`mxbai-embed-large`) are running.
         </div>
       )}
 
