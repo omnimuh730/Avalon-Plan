@@ -60,4 +60,6 @@ export interface Job {
   jobDescription: string;
   applyUrl: string;
   skillAnalysis?: SkillAnalysis;
+  /** Tech stack of the resume that best matched this job (recommendation API). */
+  bestResumeTechStack?: string;
 }

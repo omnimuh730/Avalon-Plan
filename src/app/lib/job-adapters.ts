@@ -76,19 +76,32 @@ export function mapDocToJob(
   const source =
     typeof doc.source === "string" && doc.source ? doc.source : inferJobSource(String(doc.applyLink || ""));
 
+  const apiSkill =
+    typeof doc.scoreSkill === "number" && !Number.isNaN(doc.scoreSkill)
+      ? doc.scoreSkill
+      : typeof doc.matchScore === "number" && !Number.isNaN(doc.matchScore)
+        ? doc.matchScore
+        : null;
   const storedSkill =
     typeof doc.skillScore === "number" && !Number.isNaN(doc.skillScore) ? doc.skillScore : null;
-  const jsScores = calculateJobScores(doc, storedSkill === null ? userSkills : []);
-  const skill = storedSkill ?? jsScores.skillMatch;
+  const jsScores = calculateJobScores(doc, apiSkill === null && storedSkill === null ? userSkills : []);
+  const skill = apiSkill ?? storedSkill ?? jsScores.skillMatch;
   const overall =
     typeof doc._score === "number" && !Number.isNaN(doc._score)
       ? Math.round(doc._score)
-      : combineSubScores({
-          skill,
-          applicant: jsScores.applicantScore,
-          freshness: jsScores.postedDateScore,
-          salary: jsScores.salaryScore,
-        });
+      : typeof doc.scoreOverall === "number" && !Number.isNaN(doc.scoreOverall)
+        ? Math.round(doc.scoreOverall)
+        : combineSubScores({
+            skill,
+            applicant: jsScores.applicantScore,
+            freshness: jsScores.postedDateScore,
+            salary: jsScores.salaryScore,
+          });
+
+  const bestResumeTechStack =
+    typeof doc.bestResumeTechStack === "string" && doc.bestResumeTechStack.trim()
+      ? doc.bestResumeTechStack.trim()
+      : undefined;
 
   const skillAnalysis =
     doc.skillAnalysis && typeof doc.skillAnalysis === "object"
@@ -123,6 +136,7 @@ export function mapDocToJob(
     jobDescription: String(doc.description || `${title} at ${company.name || "company"}.`),
     applyUrl,
     skillAnalysis,
+    bestResumeTechStack,
   };
 }
 

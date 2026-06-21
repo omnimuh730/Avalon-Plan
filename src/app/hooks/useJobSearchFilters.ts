@@ -57,7 +57,7 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
     bidEst: { ...DEFAULT_SCORE_RANGE },
     freshness: { ...DEFAULT_SCORE_RANGE },
   },
-  sort: "newest",
+  sort: "matchScore",
 };
 
 function parseSalary(salary: string): number {

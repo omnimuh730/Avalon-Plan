@@ -15,6 +15,7 @@ import type { Job } from "../../../types";
 type ListResponse = {
   success?: boolean;
   data?: Record<string, unknown>[];
+  recommendationFallback?: boolean;
   pagination?: { total: number; page: number; limit: number; totalPages: number };
 };
 
@@ -95,6 +96,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
+  const [recommendationFallback, setRecommendationFallback] = useState(false);
 
   const jobs = useMemo(
     () => rawJobs.filter((job) => !excludeIds.has(job.id)),
@@ -132,9 +134,11 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
         if (res?.success && Array.isArray(res.data)) {
           setRawJobs(res.data.map((doc) => mapDocToJob(doc, applier)));
           setTotal(res.pagination?.total ?? res.data.length);
+          setRecommendationFallback(Boolean(res.recommendationFallback));
         } else {
           setRawJobs([]);
           setTotal(0);
+          setRecommendationFallback(false);
         }
       } catch (e) {
         console.error(e);
@@ -195,5 +199,6 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     setPageSize: setPageSizeAndReset,
     statusCounts,
     applierReady,
+    recommendationFallback,
   };
 }

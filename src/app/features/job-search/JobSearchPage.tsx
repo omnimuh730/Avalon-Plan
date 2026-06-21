@@ -31,10 +31,8 @@ export function JobSearchPage() {
 
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
-  const { jobs, total, loading, page, pageSize, setPage, setPageSize, statusCounts } = useJobsList(
-    filters,
-    removedIds,
-  );
+  const { jobs, total, loading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback } =
+    useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
 
   useEffect(() => {
@@ -95,6 +93,13 @@ export function JobSearchPage() {
         showScoresOnCards={showScoresOnCards}
         onShowScoresOnCardsChange={setShowScoresOnCards}
       />
+
+      {recommendationFallback && filters.sort === "matchScore" && (
+        <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-900 dark:text-amber-100">
+          Personalized ranking is unavailable. Analyze at least one resume (and ensure Qdrant + OpenAI key are
+          configured) to enable Best match sorting.
+        </div>
+      )}
 
       <JobBulkActionsBar
         selectedOnPage={selectedOnPage}
