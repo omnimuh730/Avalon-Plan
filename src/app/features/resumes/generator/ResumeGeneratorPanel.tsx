@@ -1,7 +1,6 @@
-import React, { useEffect } from "react";
+import { useEffect } from "react";
 import { Wand2, Loader2 } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
-import { Pill } from "../../../components/ui";
 import { GenerationHistory } from "./history/generation-history";
 import { applyHistoryRun } from "./hooks/load-history-run";
 import { useGeneratorPage } from "./hooks/use-generator-page";
@@ -17,8 +16,6 @@ type ResumeGeneratorPanelProps = {
   pendingRun?: FullRun | null;
   onPendingRunConsumed?: () => void;
   onGenerated?: () => void;
-  /** Optional tab pills rendered above content (Athens ResumesPage). */
-  tabPills?: React.ReactNode;
 };
 
 export function ResumeGeneratorPanel({
@@ -27,7 +24,6 @@ export function ResumeGeneratorPanel({
   pendingRun,
   onPendingRunConsumed,
   onGenerated,
-  tabPills,
 }: ResumeGeneratorPanelProps) {
   const vm = useGeneratorPage();
   const { applier, theme, view, setView, generating, validation, handleGenerate, setConfig, setGenerated, setUsage } = vm;
@@ -55,23 +51,11 @@ export function ResumeGeneratorPanel({
   };
 
   return (
-    <div className="h-full flex flex-col min-h-0">
+    <div className="min-h-0">
       <style>{printCss(theme.paper)}</style>
 
-      <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-border bg-card flex-shrink-0 flex-wrap">
-        <div className="flex items-center gap-3 flex-wrap">
-          {tabPills}
-          {!activeView && (
-            <div className="flex items-center gap-1 bg-secondary rounded-xl p-1">
-              {(["editor", "history"] as const).map((t) => (
-                <Pill key={t} active={view === t} onClick={() => setView(t)}>
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
-                </Pill>
-              ))}
-            </div>
-          )}
-        </div>
-        {effectiveView === "editor" && (
+      {effectiveView === "editor" && (
+        <div className="flex justify-end mb-4">
           <button
             type="button"
             onClick={() => void onGenerate()}
@@ -81,19 +65,17 @@ export function ResumeGeneratorPanel({
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
             {generating ? "Generating…" : "Generate"}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 subtle-scroll">
-        {effectiveView === "history" ? (
-          <GenerationHistory
-            applierName={applier?.name ?? null}
-            onLoad={(run) => applyHistoryRun(run, setConfig, setGenerated, setUsage, setView)}
-          />
-        ) : (
-          <GeneratorEditorView vm={vm} />
-        )}
-      </div>
+      {effectiveView === "history" ? (
+        <GenerationHistory
+          applierName={applier?.name ?? null}
+          onLoad={(run) => applyHistoryRun(run, setConfig, setGenerated, setUsage, setView)}
+        />
+      ) : (
+        <GeneratorEditorView vm={vm} />
+      )}
     </div>
   );
 }

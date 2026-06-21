@@ -42,14 +42,6 @@ export function ResumesPage() {
     nav.clearPendingEditorOpen();
   }, [nav?.pendingEditorOpen, ready, nav, navigate]);
 
-  const openEditor = useCallback(
-    (opts?: { jd?: string }) => {
-      if (opts?.jd) setEditorJd(opts.jd);
-      navigate(`${PATHS.resumes}/editor`);
-    },
-    [navigate],
-  );
-
   const handleLoadFromHistory = useCallback(
     (run: FullRun) => {
       setPendingRun(run);
@@ -79,11 +71,11 @@ export function ResumesPage() {
   );
 
   return (
-    <PageShell fullWidth={tab === "editor"}>
-      <div className={tab === "editor" ? "h-full flex flex-col overflow-hidden" : "page-container"}>
-        {tab !== "editor" && (
-          <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-            {tabPills}
+    <PageShell>
+      <div className="page-container">
+        <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+          {tabPills}
+          {tab !== "editor" && (
             <button
               type="button"
               onClick={() => setTab("editor")}
@@ -91,8 +83,8 @@ export function ResumesPage() {
             >
               <Wand2 className="w-4 h-4" />Generate
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         <TabTransition tabKey={tab}>
           {tab === "library" && (
@@ -106,23 +98,19 @@ export function ResumesPage() {
             <ResumeGeneratorPanel
               key={historyKey}
               activeView="history"
-              tabPills={tabPills}
               onGenerated={() => setHistoryKey((k) => k + 1)}
             />
           )}
-        </TabTransition>
-        {tab === "editor" && (
-          <div className="flex-1 min-h-0 flex flex-col">
+          {tab === "editor" && (
             <ResumeGeneratorPanel
               activeView="editor"
               initialJd={editorJd}
               pendingRun={pendingRun}
               onPendingRunConsumed={() => setPendingRun(null)}
               onGenerated={() => setHistoryKey((k) => k + 1)}
-              tabPills={tabPills}
             />
-          </div>
-        )}
+          )}
+        </TabTransition>
       </div>
     </PageShell>
   );
