@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import { Inbox, Send, FileEdit, Trash2, AlertOctagon, Plus, Tag } from "lucide-react";
 import { cn } from "../../../lib/utils";
-import { LABEL_DOT_CLASS, MAIL_FOLDERS, type MailFolderId } from "../../../data/mail";
+import { LABEL_DOT_CLASS, type MailFolderId } from "../../../data/mail";
 import { buildLabelTree } from "../hooks/useMailLabels";
 import { MailCreateLabelDialog } from "./MailCreateLabelDialog";
 import type { MailLabel } from "../../../types";
+import type { FolderCounts } from "@/api/mail";
 
 const FOLDER_ICONS: Record<MailFolderId, React.ElementType> = {
   inbox: Inbox,
@@ -14,10 +15,19 @@ const FOLDER_ICONS: Record<MailFolderId, React.ElementType> = {
   spam: AlertOctagon,
 };
 
+const FOLDERS: { id: MailFolderId; label: string }[] = [
+  { id: "inbox", label: "Inbox" },
+  { id: "sent", label: "Sent" },
+  { id: "drafts", label: "Drafts" },
+  { id: "trash", label: "Trash" },
+  { id: "spam", label: "Spam" },
+];
+
 type MailSidebarProps = {
   folder: MailFolderId;
   labelFilter: string | null;
   labels: MailLabel[];
+  folderCounts?: FolderCounts;
   onFolderChange: (f: MailFolderId) => void;
   onLabelChange: (label: string | null) => void;
   onCreateLabel: (name: string, parentId?: string) => void;
@@ -28,6 +38,7 @@ export function MailSidebar({
   folder,
   labelFilter,
   labels,
+  folderCounts,
   onFolderChange,
   onLabelChange,
   onCreateLabel,
@@ -50,8 +61,9 @@ export function MailSidebar({
           </button>
         </div>
         <nav className="px-2 space-y-0.5">
-          {MAIL_FOLDERS.map((f) => {
+          {FOLDERS.map((f) => {
             const Icon = FOLDER_ICONS[f.id];
+            const count = folderCounts?.[f.id]?.badge ?? 0;
             return (
               <button
                 key={f.id}
@@ -69,8 +81,8 @@ export function MailSidebar({
               >
                 <Icon className="w-4 h-4 flex-shrink-0" />
                 <span className="flex-1 text-left">{f.label}</span>
-                {f.count > 0 && (
-                  <span className="text-xs font-bold text-primary">{f.count}</span>
+                {count > 0 && (
+                  <span className="text-xs font-bold text-primary tabular-nums">{count}</span>
                 )}
               </button>
             );

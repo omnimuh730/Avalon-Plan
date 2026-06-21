@@ -90,7 +90,7 @@ export function MailListRow({
           ))}
         </div>
 
-        <span className="text-xs text-muted-foreground w-[4.5rem] text-right flex-shrink-0 tabular-nums pr-14">
+        <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0 tabular-nums min-w-[3.5rem] text-right pr-14">
           {thread.time}
         </span>
       </div>

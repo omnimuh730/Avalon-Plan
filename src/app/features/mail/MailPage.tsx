@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
-import { checkMailCredentials } from "@/api/mail";
+import { checkMailCredentials, fetchMailFolderCounts, type FolderCounts } from "@/api/mail";
 import { useApplier } from "@/context/applier-context";
+import { PaginationBar } from "../../components/shared/PaginationBar";
 import { SearchField } from "../../components/shared/SearchField";
 import { PATHS } from "../../config/routes";
 import { MailSidebar } from "./components/MailSidebar";
@@ -25,16 +26,23 @@ export function MailPage() {
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [credentialsConfigured, setCredentialsConfigured] = useState<boolean | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const [folderCounts, setFolderCounts] = useState<FolderCounts | undefined>();
 
   const mail = useMailThreads(applierName);
   const { labels, createLabel, reload: reloadLabels } = useMailLabels(applierName);
-  const { loadThreads, fetchThreadBody } = mail;
+  const { loadThreads, fetchThreadBody, page, pageSize, setPage, setPageSize, total } = mail;
+
+  const loadCurrentPage = useCallback(() => {
+    void loadThreads({ folder, labelFilter, search, page, pageSize });
+  }, [loadThreads, folder, labelFilter, search, page, pageSize]);
 
   const reload = useCallback(() => {
-    void loadThreads({ folder, labelFilter, search });
+    loadCurrentPage();
     void reloadLabels();
-  }, [loadThreads, reloadLabels, folder, labelFilter, search]);
+    if (applierName) {
+      void fetchMailFolderCounts(applierName).then(setFolderCounts).catch(console.error);
+    }
+  }, [loadCurrentPage, reloadLabels, applierName]);
 
   useMailSync({
     applierName,
@@ -50,8 +58,13 @@ export function MailPage() {
 
   useEffect(() => {
     if (!applierReady || !applierName || credentialsConfigured !== true) return;
-    void loadThreads({ folder, labelFilter, search });
-  }, [applierReady, applierName, credentialsConfigured, folder, labelFilter, search, loadThreads]);
+    void fetchMailFolderCounts(applierName).then(setFolderCounts).catch(console.error);
+  }, [applierReady, applierName, credentialsConfigured]);
+
+  useEffect(() => {
+    if (!applierReady || !applierName || credentialsConfigured !== true) return;
+    void loadThreads({ folder, labelFilter, search, page, pageSize });
+  }, [applierReady, applierName, credentialsConfigured, folder, labelFilter, search, page, pageSize, loadThreads]);
 
   useEffect(() => {
     if (!threadId || !applierName) return;
@@ -61,8 +74,7 @@ export function MailPage() {
     }
   }, [threadId, applierName, mail.threads, fetchThreadBody]);
 
-  const threads = useMemo(() => mail.threads, [mail.threads]);
-  const grouped = useMemo(() => groupThreadsByDate(threads), [threads]);
+  const grouped = useMemo(() => groupThreadsByDate(mail.threads), [mail.threads]);
 
   const selected = threadId ? mail.threads.find((t) => t.id === threadId) ?? null : null;
   const isThreadView = Boolean(threadId);
@@ -75,11 +87,21 @@ export function MailPage() {
   const backToList = () => navigate(PATHS.mail);
   const resetList = () => navigate(PATHS.mail);
 
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) {
-      void mail.loadOlder();
-    }
+  const handleFolderChange = (f: MailFolderId) => {
+    setFolder(f);
+    setPage(1);
+    resetList();
+  };
+
+  const handleLabelChange = (l: string | null) => {
+    setLabelFilter(l);
+    setPage(1);
+    resetList();
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearch(value);
+    setPage(1);
   };
 
   if (!applierReady) {
@@ -117,14 +139,9 @@ export function MailPage() {
         folder={folder}
         labelFilter={labelFilter}
         labels={labels}
-        onFolderChange={(f) => {
-          setFolder(f);
-          resetList();
-        }}
-        onLabelChange={(l) => {
-          setLabelFilter(l);
-          resetList();
-        }}
+        folderCounts={folderCounts}
+        onFolderChange={handleFolderChange}
+        onLabelChange={handleLabelChange}
         onCreateLabel={(name, parentId) => createLabel(name, parentId)}
         onCompose={() => mail.openCompose()}
       />
@@ -134,7 +151,7 @@ export function MailPage() {
           <div className="p-3 border-b border-border flex-shrink-0 flex items-center gap-3">
             <SearchField
               value={search}
-              onChange={setSearch}
+              onChange={handleSearchChange}
               placeholder="Search mail..."
               className="flex-1 max-w-xl"
             />
@@ -148,28 +165,26 @@ export function MailPage() {
               <RefreshCw className="w-4 h-4" />
             </button>
           </div>
+
           {mail.error && (
             <div className="px-4 py-2 bg-destructive/10 text-destructive text-sm border-b border-border">
               {mail.error}
             </div>
           )}
-          <div
-            ref={listRef}
-            className="flex-1 overflow-y-auto subtle-scroll"
-            onScroll={handleScroll}
-          >
-            {mail.loading && threads.length === 0 ? (
+
+          <div className="flex-1 overflow-y-auto subtle-scroll min-h-0">
+            {mail.loading && mail.threads.length === 0 ? (
               <div className="p-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Loading mail…
               </div>
-            ) : threads.length === 0 ? (
+            ) : mail.threads.length === 0 ? (
               <p className="p-6 text-sm text-muted-foreground text-center">No messages</p>
             ) : (
               grouped.map((group) => (
                 <div key={group.section}>
                   {group.label && (
-                    <div className="px-4 py-2 text-xs font-semibold text-muted-foreground sticky top-0 bg-background/95 backdrop-blur-sm border-b border-border/30">
+                    <div className="px-4 py-1.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide bg-muted/30 border-b border-border/40">
                       {group.label}
                     </div>
                   )}
@@ -188,18 +203,28 @@ export function MailPage() {
                 </div>
               ))
             )}
-            {mail.loadingOlder && (
-              <div className="p-4 flex justify-center">
-                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-              </div>
-            )}
+          </div>
+
+          <div className="border-t border-border flex-shrink-0 px-3">
+            <PaginationBar
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+              pageSizeOptions={[10, 25, 50, 100]}
+              detailed
+            />
           </div>
         </div>
       ) : (
         <MailDetailPane
           thread={selected}
           fullView
-          loading={selected && !selected.hasBody && !selected.body}
+          loading={Boolean(selected && !selected.hasBody && !selected.bodyHtml)}
           onBack={backToList}
           onArchive={() => selected && mail.archive(selected.id)}
           onTrash={() => selected && mail.trash(selected.id)}

@@ -4,7 +4,6 @@ import {
   fetchMailThreads,
   patchMailMessage,
   sendMailMessage,
-  syncMailOlder,
 } from "@/api/mail";
 import type { MailFolderId } from "../../../data/mail";
 import type { MailThread } from "../../../types";
@@ -13,6 +12,8 @@ type LoadOpts = {
   folder: MailFolderId;
   labelFilter: string | null;
   search: string;
+  page: number;
+  pageSize: number;
 };
 
 export function useMailThreads(applierName: string | undefined) {
@@ -21,28 +22,45 @@ export function useMailThreads(applierName: string | undefined) {
   const [replyTo, setReplyTo] = useState<MailThread | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [currentFolder, setCurrentFolder] = useState<MailFolderId>("inbox");
-  const lastLoadOpts = useRef<LoadOpts>({ folder: "inbox", labelFilter: null, search: "" });
+  const lastLoadOpts = useRef<LoadOpts>({
+    folder: "inbox",
+    labelFilter: null,
+    search: "",
+    page: 1,
+    pageSize: 25,
+  });
 
   const loadThreads = useCallback(
-    async (opts: LoadOpts) => {
+    async (opts: Partial<LoadOpts> & { folder: MailFolderId; labelFilter: string | null; search: string }) => {
       if (!applierName) return;
-      lastLoadOpts.current = opts;
-      setCurrentFolder(opts.folder);
+      const merged: LoadOpts = {
+        page: opts.page ?? lastLoadOpts.current.page,
+        pageSize: opts.pageSize ?? lastLoadOpts.current.pageSize,
+        folder: opts.folder,
+        labelFilter: opts.labelFilter,
+        search: opts.search,
+      };
+      lastLoadOpts.current = merged;
+      setCurrentFolder(merged.folder);
+      setPage(merged.page);
+      setPageSize(merged.pageSize);
       setLoading(true);
       setError(null);
       try {
         const data = await fetchMailThreads(applierName, {
-          folder: opts.folder,
-          label: opts.labelFilter ?? undefined,
-          search: opts.search || undefined,
-          limit: 100,
+          folder: merged.folder,
+          label: merged.labelFilter ?? undefined,
+          search: merged.search || undefined,
+          page: merged.page,
+          pageSize: merged.pageSize,
         });
-        setThreads(data);
-        setHasMore(data.length >= 100);
+        setThreads(data.threads);
+        setTotal(data.total);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load mail");
       } finally {
@@ -51,22 +69,6 @@ export function useMailThreads(applierName: string | undefined) {
     },
     [applierName],
   );
-
-  const loadOlder = useCallback(async () => {
-    if (!applierName || loadingOlder || !hasMore) return;
-    setLoadingOlder(true);
-    try {
-      const result = await syncMailOlder(applierName);
-      if (result.newCount > 0) {
-        await loadThreads(lastLoadOpts.current);
-      }
-      setHasMore(result.hasMore);
-    } catch (e) {
-      console.error("load older mail failed", e);
-    } finally {
-      setLoadingOlder(false);
-    }
-  }, [applierName, loadingOlder, hasMore, loadThreads]);
 
   const fetchThreadBody = useCallback(
     async (uid: string) => {
@@ -105,9 +107,7 @@ export function useMailThreads(applierName: string | undefined) {
     (id: string) => {
       const thread = threads.find((t) => t.id === id);
       const flagged = !(thread?.starred ?? false);
-      setThreads((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, starred: flagged } : t)),
-      );
+      setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, starred: flagged } : t)));
       void patchThread(id, { flagged });
     },
     [threads, patchThread],
@@ -173,11 +173,13 @@ export function useMailThreads(applierName: string | undefined) {
     openCompose,
     loading,
     syncing,
-    loadingOlder,
-    hasMore,
     error,
+    total,
+    page,
+    pageSize,
+    setPage,
+    setPageSize,
     loadThreads,
-    loadOlder,
     fetchThreadBody,
     star,
     archive,

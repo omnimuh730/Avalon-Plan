@@ -28,13 +28,38 @@ function qs(params: Record<string, string | number | undefined>) {
   return s ? `?${s}` : "";
 }
 
+export type MailThreadsResult = {
+  threads: MailThread[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
 export async function fetchMailThreads(
   applierName: string,
-  opts: { folder?: string; label?: string; search?: string; limit?: number; beforeDate?: string } = {},
-) {
+  opts: {
+    folder?: string;
+    label?: string;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<MailThreadsResult> {
   const query = qs({ applierName, ...opts });
-  const data = await mailFetch<{ threads: MailThread[]; count: number }>(`mail/threads${query}`);
-  return data.threads;
+  const data = await mailFetch<MailThreadsResult>(`mail/threads${query}`);
+  return {
+    threads: data.threads,
+    total: data.total,
+    page: data.page,
+    pageSize: data.pageSize,
+  };
+}
+
+export type FolderCounts = Record<string, { total: number; unread: number; badge: number }>;
+
+export async function fetchMailFolderCounts(applierName: string) {
+  const data = await mailFetch<{ counts: FolderCounts }>(`mail/folder-counts${qs({ applierName })}`);
+  return data.counts;
 }
 
 export async function fetchMailMessage(applierName: string, uid: string) {

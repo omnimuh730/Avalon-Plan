@@ -84,7 +84,7 @@ export function MailDetailPane({
           </div>
         ) : thread.bodyHtml ? (
           <div
-            className={`prose prose-sm max-w-none text-foreground/85 ${fullView ? "text-base" : "text-sm"}`}
+            className={`mail-body-html max-w-none text-foreground/85 leading-relaxed ${fullView ? "text-base" : "text-sm"} [&_img]:max-w-full [&_img]:h-auto [&_img]:my-2 [&_a]:text-primary [&_a]:underline [&_table]:max-w-full`}
             dangerouslySetInnerHTML={{ __html: thread.bodyHtml }}
           />
         ) : (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { syncMailIncremental, syncMailInitial } from "@/api/mail";
+import { syncMailIncremental } from "@/api/mail";
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -28,20 +28,8 @@ export function useMailSync({ applierName, applierReady, enabled, onSyncComplete
     }
   }, [applierName]);
 
-  const runInitialSync = useCallback(async () => {
-    if (!applierName) return;
-    try {
-      await syncMailInitial(applierName);
-      onSyncCompleteRef.current();
-    } catch (e) {
-      console.error("mail initial sync failed", e);
-    }
-  }, [applierName]);
-
   useEffect(() => {
     if (!applierReady || !applierName || !enabled) return;
-
-    void runInitialSync();
 
     const poll = () => {
       if (document.visibilityState === "visible") {
@@ -56,7 +44,7 @@ export function useMailSync({ applierName, applierReady, enabled, onSyncComplete
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", poll);
     };
-  }, [applierReady, applierName, enabled, runInitialSync, runSync]);
+  }, [applierReady, applierName, enabled, runSync]);
 
-  return { runSync, runInitialSync };
+  return { runSync };
 }
