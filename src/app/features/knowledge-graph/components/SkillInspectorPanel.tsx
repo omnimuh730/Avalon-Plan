@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { SlidePanel, SlidePanelHeader } from "../../../components/overlays";
-import { SKILL_EDGES, SKILL_NODES } from "../../../data/knowledge-graph/skillUniverse";
-import type { ActivationResult } from "../../../types/knowledgeGraph";
+import type { ActivationResult, SkillEdge, SkillCategory } from "../../../types/knowledgeGraph";
 import { strongestNeighbors } from "../lib/activation";
 import { CATEGORY_HUE, CATEGORY_LABEL, type GraphRenderNode } from "../lib/graphAdapter";
 import type { ProfileOption } from "../hooks/useSkillGraph";
@@ -10,16 +9,12 @@ type SkillInspectorPanelProps = {
   node: GraphRenderNode | null;
   result: ActivationResult;
   profiles: ProfileOption[];
+  edges: SkillEdge[];
+  nodeLabels: Record<string, string>;
+  nodeCategories: Record<string, SkillCategory>;
   onClose: () => void;
   onSelectNeighbor: (id: string) => void;
 };
-
-const NODE_LABELS: Record<string, string> = Object.fromEntries(
-  SKILL_NODES.map((n) => [n.id, n.label]),
-);
-const NODE_CAT: Record<string, GraphRenderNode["category"]> = Object.fromEntries(
-  SKILL_NODES.map((n) => [n.id, n.category]),
-);
 
 function Meter({ label, value, hint }: { label: string; value: number; hint?: string }) {
   return (
@@ -43,13 +38,16 @@ export function SkillInspectorPanel({
   node,
   result,
   profiles,
+  edges,
+  nodeLabels,
+  nodeCategories,
   onClose,
   onSelectNeighbor,
 }: SkillInspectorPanelProps) {
   const neighbors = useMemo(() => {
     if (!node) return [];
-    return strongestNeighbors(node.id, SKILL_EDGES, result.edgeWeights, 8);
-  }, [node, result.edgeWeights]);
+    return strongestNeighbors(node.id, edges, result.edgeWeights, 8);
+  }, [node, edges, result.edgeWeights]);
 
   const contributors = useMemo(() => {
     if (!node) return [];
@@ -129,10 +127,12 @@ export function SkillInspectorPanel({
                   >
                     <span
                       className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ background: `hsl(${CATEGORY_HUE[NODE_CAT[n.id] ?? "concept"]}, 70%, 55%)` }}
+                      style={{
+                        background: `hsl(${CATEGORY_HUE[nodeCategories[n.id] ?? "concept"]}, 70%, 55%)`,
+                      }}
                     />
                     <span className="text-sm text-foreground flex-1 truncate">
-                      {NODE_LABELS[n.id] ?? n.id}
+                      {nodeLabels[n.id] ?? n.id}
                     </span>
                     <span className="h-1.5 w-16 rounded-full bg-secondary overflow-hidden">
                       <span

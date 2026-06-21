@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { cn } from "../../../lib/utils";
 import { SearchField } from "../../../components/shared/SearchField";
-import { SKILL_NODES } from "../../../data/knowledge-graph/skillUniverse";
-import type { SkillRelationType } from "../../../types/knowledgeGraph";
+import type { SkillCategory, SkillRelationType } from "../../../types/knowledgeGraph";
+import type { PendingSkill } from "@/app/api/skillGraph";
 import { CATEGORY_HUE, CATEGORY_LABEL } from "../lib/graphAdapter";
 import type { ProfileOption } from "../hooks/useSkillGraph";
 
@@ -14,7 +14,17 @@ const RELATION_TYPES: { type: SkillRelationType; label: string }[] = [
   { type: "PART_OF", label: "Part of" },
 ];
 
-const CATEGORIES = Array.from(new Set(SKILL_NODES.map((n) => n.category)));
+const ALL_CATEGORIES: SkillCategory[] = [
+  "language",
+  "frontend",
+  "backend",
+  "cloud",
+  "database",
+  "devops",
+  "data",
+  "mobile",
+  "concept",
+];
 
 type GraphToolbarProps = {
   profiles: ProfileOption[];
@@ -28,6 +38,9 @@ type GraphToolbarProps = {
   onSearchSelect: (id: string) => void;
   search: string;
   onSearchChange: (value: string) => void;
+  searchNodes: { id: string; label: string; category: SkillCategory }[];
+  pendingSkills: PendingSkill[];
+  matchScoreHint?: boolean;
 };
 
 export function GraphToolbar({
@@ -42,16 +55,49 @@ export function GraphToolbar({
   onSearchSelect,
   search,
   onSearchChange,
+  searchNodes,
+  pendingSkills,
+  matchScoreHint,
 }: GraphToolbarProps) {
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
-    return SKILL_NODES.filter((n) => n.label.toLowerCase().includes(q)).slice(0, 6);
-  }, [search]);
+    return searchNodes.filter((n) => n.label.toLowerCase().includes(q)).slice(0, 8);
+  }, [search, searchNodes]);
+
+  const categoriesInGraph = useMemo(() => {
+    const seen = new Set(searchNodes.map((n) => n.category));
+    return ALL_CATEGORIES.filter((c) => seen.has(c));
+  }, [searchNodes]);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 shadow-sm space-y-4">
-      {/* Profiles */}
+    <div className="bg-card border border-border rounded-xl p-4 shadow-sm space-y-4 pointer-events-auto">
+      {pendingSkills.length > 0 ? (
+        <div className="space-y-2">
+          <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+            Not in graph yet ({pendingSkills.length})
+          </span>
+          <ul className="max-h-32 overflow-y-auto subtle-scroll space-y-1">
+            {pendingSkills.slice(0, 50).map((p) => (
+              <li
+                key={p.normalizedKey}
+                className="text-[11px] text-muted-foreground truncate px-2 py-1 rounded-md bg-muted/40 border border-border/50"
+                title={p.normalizedKey}
+              >
+                {p.surfaceForm}
+              </li>
+            ))}
+          </ul>
+          {pendingSkills.length > 50 ? (
+            <p className="text-[10px] text-muted-foreground">+{pendingSkills.length - 50} more</p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground rounded-lg bg-muted/30 px-2 py-1.5 border border-border/50">
+          All queued skills are in the world graph.
+        </p>
+      )}
+
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
@@ -75,35 +121,38 @@ export function GraphToolbar({
             </button>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {profiles.map((p) => {
-            const active = activeResumeIds.has(p.id);
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => onToggleResume(p.id)}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all",
-                  active
-                    ? "bg-primary/10 border-primary/40 text-foreground"
-                    : "bg-secondary border-border text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <span
+        {profiles.length === 0 ? (
+          <p className="text-[11px] text-muted-foreground">No user resume graphs yet — add personal skills or upload a resume.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {profiles.map((p) => {
+              const active = activeResumeIds.has(p.id);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onToggleResume(p.id)}
                   className={cn(
-                    "inline-block w-1.5 h-1.5 rounded-full mr-2 align-middle",
-                    active ? "bg-primary" : "bg-muted-foreground/40",
+                    "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all",
+                    active
+                      ? "bg-primary/10 border-primary/40 text-foreground"
+                      : "bg-secondary border-border text-muted-foreground hover:text-foreground",
                   )}
-                />
-                {p.name}
-              </button>
-            );
-          })}
-        </div>
+                >
+                  <span
+                    className={cn(
+                      "inline-block w-1.5 h-1.5 rounded-full mr-2 align-middle",
+                      active ? "bg-primary" : "bg-muted-foreground/40",
+                    )}
+                  />
+                  {p.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* Spread (alpha) */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
@@ -126,7 +175,6 @@ export function GraphToolbar({
         </p>
       </div>
 
-      {/* Relation filters */}
       <div className="space-y-2">
         <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
           Relations
@@ -153,7 +201,6 @@ export function GraphToolbar({
         </div>
       </div>
 
-      {/* Search */}
       <div className="space-y-2 relative">
         <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
           Find skill
@@ -161,7 +208,7 @@ export function GraphToolbar({
         <SearchField
           value={search}
           onChange={onSearchChange}
-          placeholder="Search skills..."
+          placeholder="Search world graph…"
           className="w-full"
         />
         {matches.length > 0 && (
@@ -187,13 +234,12 @@ export function GraphToolbar({
         )}
       </div>
 
-      {/* Category legend */}
       <div className="space-y-2 pt-1 border-t border-border">
         <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
           Categories
         </span>
         <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-          {CATEGORIES.map((c) => (
+          {(categoriesInGraph.length ? categoriesInGraph : ALL_CATEGORIES).map((c) => (
             <span key={c} className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <span
                 className="w-2.5 h-2.5 rounded-full"
@@ -204,6 +250,16 @@ export function GraphToolbar({
           ))}
         </div>
       </div>
+
+      {matchScoreHint ? (
+        <p
+          className="text-[10px] text-muted-foreground pt-1 border-t border-border leading-relaxed"
+          title="Future: compare job skills against activation from your resume graph on the world skillset."
+        >
+          Match score (coming soon): overlap between job skills and activation seeded by your resume
+          graph on the world skillset.
+        </p>
+      ) : null}
     </div>
   );
 }

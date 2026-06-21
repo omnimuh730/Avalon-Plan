@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "next-themes";
+import { Maximize2, Minus, Plus } from "lucide-react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
+import { Button } from "../../../components/ui/button";
 import {
   CATEGORY_HUE,
   nodeColor,
@@ -38,6 +40,7 @@ export function SkillGraphCanvas({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const fgRef = useRef<ForceGraphMethods<GraphRenderNode, GraphRenderLink> | undefined>(undefined);
   const posRef = useRef<Map<string, { x: number; y: number; vx: number; vy: number }>>(new Map());
+  const fittedRef = useRef(false);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hoverId, setHoverId] = useState<string | null>(null);
 
@@ -67,18 +70,55 @@ export function SkillGraphCanvas({
     return { nodes, links: data.links.map((l) => ({ ...l })) };
   }, [data]);
 
+  useEffect(() => {
+    fittedRef.current = false;
+  }, [data.nodes.length, data.links.length]);
+
+  const fitView = useCallback(() => {
+    const fg = fgRef.current;
+    if (!fg || graphData.nodes.length === 0) return;
+    fg.zoomToFit(400, 60);
+    fittedRef.current = true;
+  }, [graphData.nodes.length]);
+
+  const zoomBy = useCallback((factor: number) => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    const next = Math.min(8, Math.max(0.15, fg.zoom() * factor));
+    fg.zoom(next, 300);
+  }, []);
   // Configure forces once the instance exists.
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
-    fg.d3Force("charge")?.strength(-160);
+    fg.d3Force("charge")?.strength(-120).distanceMax(600);
     const link = fg.d3Force("link");
     if (link) {
-      link.distance((l: GraphRenderLink) => 40 + (1 - l.weight) * 90).strength(
-        (l: GraphRenderLink) => 0.05 + l.weight * 0.25,
+      link.distance((l: GraphRenderLink) => 35 + (1 - l.weight) * 70).strength(
+        (l: GraphRenderLink) => 0.08 + l.weight * 0.35,
       );
     }
-  }, [size.width, size.height]);
+    // Keep isolated nodes (no edges) bounded near the center instead of drifting
+    // off to infinity, which otherwise breaks zoom-to-fit and node positions.
+    // Custom, dependency-free centering force applied each simulation tick.
+    let centerNodes: Array<{ x?: number; y?: number; vx?: number; vy?: number }> = [];
+    const centeringForce = (alpha: number) => {
+      const k = 0.05 * alpha;
+      for (const n of centerNodes) {
+        if (typeof n.x === "number" && Number.isFinite(n.x) && typeof n.vx === "number") {
+          n.vx -= n.x * k;
+        }
+        if (typeof n.y === "number" && Number.isFinite(n.y) && typeof n.vy === "number") {
+          n.vy -= n.y * k;
+        }
+      }
+    };
+    centeringForce.initialize = (nodes: typeof centerNodes) => {
+      centerNodes = nodes;
+    };
+    fg.d3Force("center-pull", centeringForce as unknown as never);
+    fg.d3ReheatSimulation?.();
+  }, [size.width, size.height, graphData.nodes.length]);
 
   // Pan to a node when it becomes selected (e.g. via search).
   useEffect(() => {
@@ -99,6 +139,14 @@ export function SkillGraphCanvas({
     }
   }, [graphData]);
 
+  const handleEngineStop = useCallback(() => {
+    capturePositions();
+    if (!fittedRef.current && graphData.nodes.length > 0) {
+      fgRef.current?.zoomToFit(400, 60);
+      fittedRef.current = true;
+    }
+  }, [capturePositions, graphData.nodes.length]);
+
   // Neighbor set of the active (selected or hovered) node for highlighting.
   const focusId = hoverId ?? selectedId;
   const neighborIds = useMemo(() => {
@@ -115,15 +163,18 @@ export function SkillGraphCanvas({
 
   const drawNode = useCallback(
     (node: GraphRenderNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
-      const { x = 0, y = 0 } = node;
-      const a = node.activation;
+      // d3-force can briefly emit NaN/Infinity for isolated nodes; skip until finite.
+      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+      const x = node.x as number;
+      const y = node.y as number;
+      const a = Number.isFinite(node.activation) ? node.activation : 0;
       const baseR = 3 + a * 9 + (node.isSeed ? 2 : 0);
       const dimmed = neighborIds ? !neighborIds.has(node.id) : false;
       const alpha = dimmed ? 0.18 : 1;
 
       // Pulsing glow halo, intensity scaled by activation.
       const pulse = 1 + Math.sin(Date.now() / 600 + x) * 0.12 * a;
-      const glowR = baseR * (2.6 + a * 1.6) * pulse;
+      const glowR = Math.max(0.5, baseR * (2.6 + a * 1.6) * pulse);
       const hue = nodeColor(node.category, a);
       ctx.globalAlpha = alpha;
       const grad = ctx.createRadialGradient(x, y, baseR * 0.4, x, y, glowR);
@@ -147,9 +198,13 @@ export function SkillGraphCanvas({
         ctx.stroke();
       }
 
-      // Label for prominent / focused nodes.
-      const showLabel = a > 0.28 || node.id === focusId || (!neighborIds && node.category === "concept");
-      if (showLabel && globalScale > 0.6) {
+      // Label when zoomed in or node is prominent (Neo4j-style readability).
+      const showLabel =
+        node.id === focusId ||
+        node.isSeed ||
+        globalScale > 0.45 ||
+        a > 0.15;
+      if (showLabel && globalScale > 0.35) {
         const fontSize = Math.max(9, (10 + a * 4) / globalScale);
         ctx.font = `${node.isSeed ? "600 " : ""}${fontSize}px Figtree, system-ui, sans-serif`;
         ctx.textAlign = "center";
@@ -166,8 +221,11 @@ export function SkillGraphCanvas({
 
   const drawPointerArea = useCallback(
     (node: GraphRenderNode, color: string, ctx: CanvasRenderingContext2D) => {
-      const { x = 0, y = 0 } = node;
-      const r = 6 + node.activation * 9;
+      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+      const x = node.x as number;
+      const y = node.y as number;
+      const a = Number.isFinite(node.activation) ? node.activation : 0;
+      const r = 6 + a * 9;
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -179,7 +237,7 @@ export function SkillGraphCanvas({
   const linkColor = useCallback(
     (link: GraphRenderLink) => {
       const [r, g, b] = palette.linkBase;
-      let op = 0.06 + link.weight * 0.14 + link.energy * 0.25;
+      let op = 0.12 + link.weight * 0.2 + link.energy * 0.25;
       if (neighborIds) {
         const s = typeof link.source === "string" ? link.source : (link.source as GraphRenderNode).id;
         const t = typeof link.target === "string" ? link.target : (link.target as GraphRenderNode).id;
@@ -192,11 +250,11 @@ export function SkillGraphCanvas({
   );
 
   if (size.width === 0) {
-    return <div ref={wrapRef} className="w-full h-full" />;
+    return <div ref={wrapRef} className="w-full h-full min-h-[400px]" />;
   }
 
   return (
-    <div ref={wrapRef} className="w-full h-full">
+    <div ref={wrapRef} className="relative w-full h-full min-h-0 touch-none">
       <ForceGraph2D
         ref={fgRef}
         width={size.width}
@@ -204,6 +262,11 @@ export function SkillGraphCanvas({
         graphData={graphData}
         backgroundColor="rgba(0,0,0,0)"
         nodeRelSize={4}
+        minZoom={0.08}
+        maxZoom={12}
+        enableZoomInteraction
+        enablePanInteraction
+        enableNodeDrag
         nodeLabel={(n: GraphRenderNode) =>
           `${n.label} — ${Math.round(n.activation * 100)}%`
         }
@@ -221,11 +284,29 @@ export function SkillGraphCanvas({
         onNodeClick={(n: GraphRenderNode) => onSelect(n.id === selectedId ? null : n.id)}
         onNodeHover={(n: GraphRenderNode | null) => setHoverId(n ? n.id : null)}
         onBackgroundClick={() => onSelect(null)}
-        onEngineStop={capturePositions}
-        cooldownTicks={120}
-        warmupTicks={20}
-        d3VelocityDecay={0.32}
+        onNodeDragEnd={capturePositions}
+        onEngineStop={handleEngineStop}
+        cooldownTicks={150}
+        warmupTicks={30}
+        d3VelocityDecay={0.35}
       />
+
+      <div className="absolute bottom-4 right-4 flex flex-col gap-2 pointer-events-auto z-20">
+        <div className="flex flex-col gap-1 bg-card/95 border border-border rounded-lg shadow-sm p-1">
+          <Button type="button" variant="ghost" size="icon" className="size-8" title="Zoom in" onClick={() => zoomBy(1.35)}>
+            <Plus className="w-4 h-4" />
+          </Button>
+          <Button type="button" variant="ghost" size="icon" className="size-8" title="Zoom out" onClick={() => zoomBy(1 / 1.35)}>
+            <Minus className="w-4 h-4" />
+          </Button>
+          <Button type="button" variant="ghost" size="icon" className="size-8" title="Fit graph to view" onClick={fitView}>
+            <Maximize2 className="w-4 h-4" />
+          </Button>
+        </div>
+        <p className="text-[10px] text-muted-foreground bg-card/90 border border-border rounded-md px-2 py-1 max-w-[140px] leading-snug">
+          Scroll · pinch to zoom. Drag background to pan. Drag nodes to reposition. Click to inspect.
+        </p>
+      </div>
     </div>
   );
 }
