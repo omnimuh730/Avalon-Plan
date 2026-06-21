@@ -13,6 +13,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avat
 import { cn } from "../../../lib/utils";
 import type { BadgeVariant, Job } from "../../../types";
 import { JobDescriptionDialog } from "./JobDescriptionDialog";
+import { JobStatusActions } from "./JobStatusActions";
 
 const STATUS_LABELS: Record<Job["status"], string> = {
   posted: "Posted",
@@ -44,6 +45,11 @@ type JobCardProps = {
   showScores?: boolean;
   bookmarked?: boolean;
   onToggleBookmark?: () => void;
+  statusPending?: boolean;
+  onApply?: () => void;
+  onMarkScheduled?: () => void;
+  onMarkDeclined?: () => void;
+  onMarkApplied?: () => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -84,6 +90,11 @@ export function JobCard({
   showScores = true,
   bookmarked = false,
   onToggleBookmark,
+  statusPending = false,
+  onApply,
+  onMarkScheduled,
+  onMarkDeclined,
+  onMarkApplied,
 }: JobCardProps) {
   const [jdOpen, setJdOpen] = useState(false);
 
@@ -209,17 +220,28 @@ export function JobCard({
             >
               <Bookmark className={cn("w-4 h-4", bookmarked && "fill-current text-primary")} />
             </Button>
-            <Button size="sm" asChild>
-              <a href={job.applyUrl} target="_blank" rel="noopener noreferrer">
-                Apply
-                <ExternalLink className="w-4 h-4" />
-              </a>
-            </Button>
+            <JobStatusActions
+              job={job}
+              pending={statusPending}
+              onApply={() => onApply?.()}
+              onMarkScheduled={() => onMarkScheduled?.()}
+              onMarkDeclined={() => onMarkDeclined?.()}
+              onMarkApplied={() => onMarkApplied?.()}
+            />
           </div>
         </div>
       </article>
 
-      <JobDescriptionDialog job={job} open={jdOpen} onOpenChange={setJdOpen} />
+      <JobDescriptionDialog
+        job={job}
+        open={jdOpen}
+        onOpenChange={setJdOpen}
+        statusPending={statusPending}
+        onApply={() => onApply?.()}
+        onMarkScheduled={() => onMarkScheduled?.()}
+        onMarkDeclined={() => onMarkDeclined?.()}
+        onMarkApplied={() => onMarkApplied?.()}
+      />
     </>
   );
 }

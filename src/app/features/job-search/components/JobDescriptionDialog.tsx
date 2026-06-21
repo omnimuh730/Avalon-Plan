@@ -26,6 +26,7 @@ import type { Job, WorkMode } from "../../../types";
 import { useJobDetail } from "../hooks/useJobDetail";
 import { useJobResumeRank, useJobSkillRadar } from "../hooks/useJobSkillRadar";
 import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
+import { JobStatusActions } from "./JobStatusActions";
 
 const WORK_MODE_LABELS: Record<WorkMode, string> = {
   remote: "Remote",
@@ -37,6 +38,11 @@ type JobDescriptionDialogProps = {
   job: Job;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  statusPending?: boolean;
+  onApply?: () => void;
+  onMarkScheduled?: () => void;
+  onMarkDeclined?: () => void;
+  onMarkApplied?: () => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -129,7 +135,16 @@ function JobDescriptionBody({ job, loading }: { job: Job; loading: boolean }) {
   );
 }
 
-export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescriptionDialogProps) {
+export function JobDescriptionDialog({
+  job,
+  open,
+  onOpenChange,
+  statusPending = false,
+  onApply,
+  onMarkScheduled,
+  onMarkDeclined,
+  onMarkApplied,
+}: JobDescriptionDialogProps) {
   const { displayJob, loading, error } = useJobDetail(job, open);
   const j = displayJob ?? job;
   const [skillMatchOpen, setSkillMatchOpen] = useState(false);
@@ -311,12 +326,25 @@ export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescription
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Close
             </Button>
-            <Button asChild>
-              <a href={j.applyUrl} target="_blank" rel="noopener noreferrer">
-                Apply on company site
-                <ExternalLink className="size-4" />
-              </a>
-            </Button>
+            {onApply ? (
+              <JobStatusActions
+                job={j}
+                pending={statusPending}
+                onApply={onApply}
+                onMarkScheduled={() => onMarkScheduled?.()}
+                onMarkDeclined={() => onMarkDeclined?.()}
+                onMarkApplied={() => onMarkApplied?.()}
+                size="default"
+                showExternalLinkOnApply={false}
+              />
+            ) : (
+              <Button asChild>
+                <a href={j.applyUrl} target="_blank" rel="noopener noreferrer">
+                  Apply on company site
+                  <ExternalLink className="size-4" />
+                </a>
+              </Button>
+            )}
           </div>
         </DialogFooter>
       </DialogContent>

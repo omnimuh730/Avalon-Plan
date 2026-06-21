@@ -11,6 +11,11 @@ type JobListViewProps = {
   showScores?: boolean;
   bookmarkedIds?: Set<string>;
   onToggleBookmark?: (id: string) => void;
+  isJobPending?: (jobId: string) => boolean;
+  onApply?: (job: Job) => void;
+  onMarkScheduled?: (job: Job) => void;
+  onMarkDeclined?: (job: Job) => void;
+  onMarkApplied?: (job: Job) => void;
 };
 
 export function JobListView({
@@ -21,6 +26,11 @@ export function JobListView({
   showScores = true,
   bookmarkedIds,
   onToggleBookmark,
+  isJobPending,
+  onApply,
+  onMarkScheduled,
+  onMarkDeclined,
+  onMarkApplied,
 }: JobListViewProps) {
   if (jobs.length === 0) {
     return (
@@ -48,6 +58,11 @@ export function JobListView({
           showScores={showScores}
           bookmarked={bookmarkedIds?.has(job.id)}
           onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
+          statusPending={isJobPending?.(job.id)}
+          onApply={onApply ? () => onApply(job) : undefined}
+          onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
+          onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
+          onMarkApplied={onMarkApplied ? () => onMarkApplied(job) : undefined}
         />
       ))}
     </div>

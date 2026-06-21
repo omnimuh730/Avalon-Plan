@@ -14,6 +14,7 @@ import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobEmbeddings } from "./hooks/useJobEmbeddings";
+import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { cn } from "../../lib/utils";
 
@@ -32,9 +33,10 @@ export function JobSearchPage() {
 
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
-  const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason } =
+  const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, patchJob, refreshStatusCounts } =
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
+  const { applyToJob, updateJobStatus, isPending } = useJobApplicationActions(patchJob, refreshStatusCounts);
   const {
     session: embeddingSession,
     missing: missingEmbeddings,
@@ -67,7 +69,7 @@ export function JobSearchPage() {
   };
 
   const handleApplyAll = () => {
-    selectedJobs.forEach((job) => window.open(job.applyUrl, "_blank", "noopener,noreferrer"));
+    void Promise.all(selectedJobs.map((job) => applyToJob(job)));
   };
 
   const handleDownload = () => {
@@ -185,6 +187,11 @@ export function JobSearchPage() {
               showScores={showScoresOnCards}
               bookmarkedIds={bookmarkedIds}
               onToggleBookmark={toggleBookmark}
+              isJobPending={isPending}
+              onApply={(job) => void applyToJob(job)}
+              onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
+              onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
+              onMarkApplied={(job) => void updateJobStatus(job, "applied")}
             />
           </TabTransition>
         </div>

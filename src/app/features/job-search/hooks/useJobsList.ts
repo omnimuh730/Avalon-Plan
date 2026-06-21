@@ -268,6 +268,22 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     setPage(1);
   }, []);
 
+  const patchJob = useCallback((updated: Job) => {
+    setRawJobs((prev) => prev.map((job) => (job.id === updated.id ? updated : job)));
+  }, []);
+
+  const refreshStatusCounts = useCallback(async () => {
+    if (!applierReady) return;
+    try {
+      const res = (await post("/jobs/list/counts", countsBody)) as CountsResponse;
+      if (res?.success && res.counts) {
+        setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.counts });
+      }
+    } catch {
+      /* counts are optional */
+    }
+  }, [applierReady, countsBody, post]);
+
   return {
     jobs,
     total,
@@ -282,6 +298,8 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     recommendationFallback,
     recommendationReason,
     catalogTotal,
+    patchJob,
+    refreshStatusCounts,
   };
 }
 
