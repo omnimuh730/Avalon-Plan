@@ -1,9 +1,9 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { initMongo, userResumesCollection } from '../src/db/mongo.js';
-import { initQdrantCollections } from '../src/services/vectorStore/qdrantClient.js';
-import { upsertResumeEmbedding, upsertProfileEmbedding } from '../src/services/embeddings/embeddingIngest.js';
+import { initMongo, userResumesCollection } from '../db/mongo.js';
+import { initQdrantCollections } from '../services/vectorStore/qdrantClient.js';
+import { upsertResumeEmbedding, upsertProfileEmbedding } from '../services/embeddings/embeddingIngest.js';
 
 async function main() {
 	await initMongo();

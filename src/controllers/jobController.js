@@ -407,6 +407,7 @@ export async function getJobs(req, res) {
 		let docs;
 		let total;
 		let recommendationFallback = false;
+		let recommendationReason = null;
 		const useScorePipeline = needsScorePipeline(sort, hasScoreFilters);
 		const useRecommendation = sort === 'recommended' && applierName;
 
@@ -423,6 +424,7 @@ export async function getJobs(req, res) {
 				total = result.total;
 			} else {
 				recommendationFallback = true;
+				recommendationReason = result.reason || 'unknown';
 				const sortOption = { postedAt: -1, _id: -1 };
 				[docs, total] = await Promise.all([
 					jobsCollection.find(query).sort(sortOption).skip(skip).limit(limitNum).toArray(),
@@ -464,6 +466,7 @@ export async function getJobs(req, res) {
 			success: true,
 			data: docs,
 			recommendationFallback,
+			recommendationReason,
 			pagination: {
 				total,
 				page: pageNum,
