@@ -77,7 +77,6 @@ export function SkillCatalogView({
 
   useEffect(() => {
     setPage(1);
-    setSelectedIds(new Set());
   }, [debouncedSearch]);
 
   useEffect(() => {
