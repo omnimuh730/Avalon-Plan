@@ -9,6 +9,7 @@ import { normalizeSkillKey, toComparable } from '../services/skillGraph/normaliz
 import { resolveMany } from '../services/skillGraph/resolve.js';
 import { DIRECT_MATCH_WEIGHTS } from '../services/skillGraph/activation.js';
 import { PROFILE_GRAPH_ID } from '../services/userKnowledgeGraph/index.js';
+import { rankResumesForJob } from '../services/recommendation/vectorRetrieval.js';
 
 const MAX_RADAR_AXES = 12;
 const REQUIRED_SCORE = 100;
@@ -198,8 +199,36 @@ function pickDefaultResumeId(requestedResumeId, recommendedResumeId, recommended
 	return concrete?.resumeId ?? availableResumes[0]?.resumeId ?? PROFILE_GRAPH_ID;
 }
 
-function resolveRecommendedResumeId(recommendedResumeId, recommendedTechStack, availableResumes) {
-	return pickDefaultResumeId(undefined, recommendedResumeId, recommendedTechStack, availableResumes);
+/**
+ * Fast vector-only resume pick for a job (JD header). O(resumes) cosine comparisons.
+ */
+export async function buildJobResumeRank({ jobId, applierName }) {
+	const name = String(applierName || '').trim();
+	if (!name) throw new Error('applierName is required');
+	if (!ObjectId.isValid(jobId)) throw new Error('Invalid job id');
+
+	const availableResumes = await loadAvailableResumes(name);
+	if (!availableResumes.length) {
+		return {
+			availableResumes,
+			recommendedResumeId: null,
+			recommendedResumeTechStack: null,
+		};
+	}
+
+	const vectorRank = await rankResumesForJob(String(jobId), name);
+	const recommendedResumeId = vectorRank?.resumeId
+		?? availableResumes.find((r) => r.resumeId !== PROFILE_GRAPH_ID)?.resumeId
+		?? availableResumes[0]?.resumeId
+		?? null;
+
+	return {
+		availableResumes,
+		recommendedResumeId,
+		recommendedResumeTechStack: vectorRank?.techStack
+			?? availableResumes.find((r) => r.resumeId === recommendedResumeId)?.label
+			?? null,
+	};
 }
 
 /**
@@ -211,11 +240,16 @@ export async function buildJobSkillRadar({
 	resumeId,
 	recommendedResumeId,
 	recommendedTechStack,
+	rankOnly = false,
 }) {
 	const name = String(applierName || '').trim();
 	if (!name) throw new Error('applierName is required');
 	if (!ObjectId.isValid(jobId)) throw new Error('Invalid job id');
 	if (!jobsCollection) throw new Error('Database not ready');
+
+	if (rankOnly) {
+		return buildJobResumeRank({ jobId, applierName });
+	}
 
 	const job = await jobsCollection.findOne({ _id: new ObjectId(jobId) });
 	if (!job) throw new Error('Job not found');
@@ -229,20 +263,26 @@ export async function buildJobSkillRadar({
 			summary: { direct: 0, graph: 0, missing: 0 },
 			availableResumes,
 			recommendedResumeId: null,
+			recommendedResumeTechStack: null,
 			neo4jReady: isNeo4jReady(),
 		};
 	}
 
-	const resolvedRecommendedId = resolveRecommendedResumeId(
-		recommendedResumeId,
-		recommendedTechStack,
+	const vectorRank = await rankResumesForJob(String(jobId), name);
+	const vectorRecommendedId = vectorRank?.resumeId ?? null;
+	const vectorRecommendedLabel = vectorRank?.techStack ?? null;
+
+	const resolvedRecommendedId = pickDefaultResumeId(
+		undefined,
+		vectorRecommendedId ?? recommendedResumeId,
+		vectorRecommendedLabel ?? recommendedTechStack,
 		availableResumes,
 	);
 
 	const chosenResumeId = pickDefaultResumeId(
 		resumeId,
-		recommendedResumeId,
-		recommendedTechStack,
+		vectorRecommendedId ?? recommendedResumeId,
+		vectorRecommendedLabel ?? recommendedTechStack,
 		availableResumes,
 	);
 	const resumeMeta = availableResumes.find((r) => r.resumeId === chosenResumeId)
@@ -282,6 +322,9 @@ export async function buildJobSkillRadar({
 		summary,
 		availableResumes,
 		recommendedResumeId: resolvedRecommendedId,
+		recommendedResumeTechStack: vectorRecommendedLabel
+			?? availableResumes.find((r) => r.resumeId === resolvedRecommendedId)?.label
+			?? null,
 		neo4jReady: isNeo4jReady(),
 	};
 }

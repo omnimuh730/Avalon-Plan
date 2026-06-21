@@ -166,6 +166,17 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 					query.$and.push({ [key]: { $all: tagRegexes } });
 				}
 			}
+		} else if (key === 'details.seniority' && typeof value === 'string') {
+			const parts = value.split(',').map((s) => s.trim()).filter(Boolean);
+			if (parts.length === 1) {
+				const filter = buildMongoCaseInsensitiveRegexFilter(parts[0]);
+				if (filter) query.$and.push({ [key]: filter });
+			} else if (parts.length > 1) {
+				const regexes = parts.map((part) => buildSafeRegExp(part)).filter(Boolean);
+				if (regexes.length) {
+					query.$and.push({ [key]: { $in: regexes } });
+				}
+			}
 		} else if (key === 'details.remote' || key === 'details.time') {
 			query.$and.push({ [key]: value });
 		} else if (typeof value === 'string') {

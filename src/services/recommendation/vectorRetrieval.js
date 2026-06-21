@@ -1,118 +1,99 @@
-import { getVectorTopK } from '../vectorStore/collections.js';
-import { getResumeVector, searchJobVectors } from '../vectorStore/qdrantClient.js';
+import { userResumesCollection } from '../../db/mongo.js';
+import { getJobVector, getResumeVector, isQdrantReady } from '../vectorStore/qdrantClient.js';
+import { upsertJobEmbedding, upsertResumeEmbedding } from '../embeddings/embeddingIngest.js';
 import { PROFILE_GRAPH_ID } from '../userKnowledgeGraph/index.js';
 
-function isProfileResume(resumeId) {
-	return resumeId === PROFILE_GRAPH_ID;
+export function cosineSimilarity(a, b) {
+	if (!a?.length || !b?.length || a.length !== b.length) return 0;
+
+	let dot = 0;
+	let normA = 0;
+	let normB = 0;
+	for (let i = 0; i < a.length; i += 1) {
+		dot += a[i] * b[i];
+		normA += a[i] * a[i];
+		normB += b[i] * b[i];
+	}
+
+	const denom = Math.sqrt(normA) * Math.sqrt(normB);
+	return denom > 0 ? dot / denom : 0;
 }
 
-function upsertJobMeta(merged, jobId, vectorScore, resume) {
-	const prev = merged.get(jobId);
-	const isConcrete = !isProfileResume(resume.resumeId);
+async function loadAnalyzedResumeDocs(applierName) {
+	if (!userResumesCollection) return [];
+	const name = String(applierName || '').trim();
+	if (!name) return [];
 
-	if (!prev || vectorScore > prev.vectorScore) {
-		const next = {
-			vectorScore,
-			bestResumeId: resume.resumeId,
-			bestResumeTechStack: resume.techStack || '',
-			bestConcreteResumeId: prev?.bestConcreteResumeId ?? null,
-			bestConcreteTechStack: prev?.bestConcreteTechStack ?? '',
-		};
-		if (isConcrete) {
-			if (!prev?.bestConcreteResumeId || vectorScore > (prev.bestConcreteVectorScore ?? 0)) {
-				next.bestConcreteResumeId = resume.resumeId;
-				next.bestConcreteTechStack = resume.techStack || '';
-				next.bestConcreteVectorScore = vectorScore;
-			} else {
-				next.bestConcreteResumeId = prev.bestConcreteResumeId;
-				next.bestConcreteTechStack = prev.bestConcreteTechStack;
-				next.bestConcreteVectorScore = prev.bestConcreteVectorScore;
-			}
-		} else if (prev?.bestConcreteResumeId) {
-			next.bestConcreteResumeId = prev.bestConcreteResumeId;
-			next.bestConcreteTechStack = prev.bestConcreteTechStack;
-			next.bestConcreteVectorScore = prev.bestConcreteVectorScore;
-		}
-		merged.set(jobId, next);
-		return;
-	}
-
-	if (isConcrete && vectorScore > (prev.bestConcreteVectorScore ?? 0)) {
-		merged.set(jobId, {
-			...prev,
-			bestConcreteResumeId: resume.resumeId,
-			bestConcreteTechStack: resume.techStack || '',
-			bestConcreteVectorScore: vectorScore,
-		});
-	}
+	return userResumesCollection
+		.find({ ownerName: name, analyzed: true })
+		.project({ _id: 1, techStack: 1, fileName: 1 })
+		.toArray();
 }
 
 /**
- * Multi-vector retrieval: search jobs for each resume vector, merge with MAX (no averaging).
- * @param {Array<{ resumeId: string, techStack?: string, vector?: number[] }>} resumeVectors
- * @param {object} [searchOpts] — passed to searchJobVectors (limit, offset, filter)
- * @returns {Map<string, { vectorScore: number, bestResumeId: string, bestResumeTechStack: string, bestConcreteResumeId: string|null, bestConcreteTechStack: string }>}
+ * Load concrete resume vectors for an applier (excludes aggregated profile vector).
  */
-export async function retrieveJobCandidates(resumeVectors = [], searchOpts = {}) {
-	const topK = searchOpts.limit ?? getVectorTopK();
-	const merged = new Map();
+export async function loadResumeVectorEntries(applierName) {
+	if (!isQdrantReady()) return [];
 
-	for (const resume of resumeVectors) {
-		let vector = resume.vector;
+	const docs = await loadAnalyzedResumeDocs(applierName);
+	const entries = [];
+
+	for (const doc of docs) {
+		const resumeId = String(doc._id);
+		let vector = (await getResumeVector(resumeId))?.vector;
+
 		if (!vector?.length) {
-			const stored = await getResumeVector(resume.resumeId);
-			vector = stored?.vector;
+			const result = await upsertResumeEmbedding(resumeId, applierName, { applierName });
+			if (result.ok) {
+				vector = (await getResumeVector(resumeId))?.vector;
+			}
 		}
+
 		if (!vector?.length) continue;
 
-		const hits = await searchJobVectors(vector, { ...searchOpts, limit: topK });
-		for (const hit of hits) {
-			const jobId = hit.jobId;
-			if (!jobId) continue;
-			const vectorScore = Math.round(Math.max(0, Math.min(1, hit.score ?? 0)) * 100);
-			upsertJobMeta(merged, jobId, vectorScore, resume);
+		entries.push({
+			resumeId,
+			techStack: String(doc.techStack || doc.fileName || 'Resume').trim() || 'Resume',
+			vector,
+		});
+	}
+
+	return entries;
+}
+
+/**
+ * Rank profile resumes against one job vector (JD view).
+ * Compares the stored job embedding to each resume embedding — O(resumes), not O(jobs).
+ */
+export async function rankResumesForJob(jobId, applierName) {
+	if (!isQdrantReady()) return null;
+
+	let jobVector = (await getJobVector(jobId))?.vector;
+	if (!jobVector?.length) {
+		const result = await upsertJobEmbedding(jobId, { applierName });
+		if (result.ok) {
+			jobVector = (await getJobVector(jobId))?.vector;
+		}
+	}
+	if (!jobVector?.length) return null;
+
+	const resumeEntries = await loadResumeVectorEntries(applierName);
+	if (!resumeEntries.length) return null;
+
+	let best = null;
+	for (const resume of resumeEntries) {
+		const score = cosineSimilarity(jobVector, resume.vector);
+		if (!best || score > best.score) {
+			best = {
+				resumeId: resume.resumeId,
+				techStack: resume.techStack,
+				score,
+			};
 		}
 	}
 
-	return merged;
-}
-
-/**
- * Attach per-job best resume metadata using multi-vector retrieval.
- */
-export async function attachPerJobResumeMetadata(pageRows, resumeVectors) {
-	if (!pageRows.length || !resumeVectors.length) return pageRows;
-
-	const merged = await retrieveJobCandidates(resumeVectors, {
-		limit: Math.max(getVectorTopK(), 500),
-	});
-
-	return pageRows.map((row) => {
-		const jobId = String(row.job._id);
-		const meta = merged.get(jobId);
-		if (!meta) return row;
-
-		return {
-			...row,
-			vectorScore: Math.max(row.vectorScore ?? 0, meta.vectorScore),
-			bestResumeId: meta.bestResumeId,
-			bestResumeTechStack: meta.bestResumeTechStack,
-			bestConcreteResumeId: meta.bestConcreteResumeId,
-			bestConcreteTechStack: meta.bestConcreteTechStack,
-		};
-	});
-}
-
-/**
- * Attach bestResume metadata from primary query vector row (fallback when multi-vector scan skipped).
- */
-export function mergeMultiVectorScores(pageRows, resumeVectors) {
-	const primary = resumeVectors[0];
-	return pageRows.map((row) => ({
-		...row,
-		bestResumeId: primary?.resumeId || null,
-		bestResumeTechStack: primary?.techStack || '',
-	}));
+	return best;
 }
 
 export { PROFILE_GRAPH_ID };

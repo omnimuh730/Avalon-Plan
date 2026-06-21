@@ -222,6 +222,23 @@ export async function getResumeVector(resumeId) {
 	return { vector: point.vector, payload: point.payload || {} };
 }
 
+export async function getJobVector(jobId) {
+	if (!isQdrantReady()) return null;
+
+	const data = await qdrantFetch(`/collections/${encodeURIComponent(JOB_VECTORS_COLLECTION)}/points`, {
+		method: 'POST',
+		body: {
+			ids: [toPointId(jobId)],
+			with_vector: true,
+			with_payload: true,
+		},
+	});
+
+	const point = data?.result?.[0];
+	if (!point?.vector) return null;
+	return { vector: point.vector, payload: point.payload || {} };
+}
+
 export function profilePointId(ownerName) {
 	return toPointId(`profile:${String(ownerName || '').trim()}`);
 }

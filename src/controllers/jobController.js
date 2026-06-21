@@ -19,6 +19,11 @@ import { enqueueSkills } from '../services/skillEnrichment/queue.js';
 import { recordCooccurrenceForJob } from '../services/skillCooccurrence/index.js';
 import { recommendJobsForApplier } from '../services/recommendation/recommendationService.js';
 import { upsertJobEmbeddingAsync } from '../services/embeddings/embeddingIngest.js';
+import {
+	getJobEmbeddingStatus,
+	startJobEmbeddingSession,
+	stopJobEmbeddingSession,
+} from '../services/embeddings/jobEmbeddingWorker.js';
 import { buildJobSkillRadar } from '../services/jobSkillRadarService.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
@@ -582,6 +587,7 @@ export async function getJobSkillRadar(req, res) {
 		const recommendedTechStack = req.query.recommendedTechStack
 			? String(req.query.recommendedTechStack)
 			: undefined;
+		const rankOnly = req.query.rankOnly === 'true' || req.query.rankOnly === '1';
 
 		if (!applierName) {
 			return res.status(400).json({ success: false, error: 'applierName query required' });
@@ -593,6 +599,7 @@ export async function getJobSkillRadar(req, res) {
 			resumeId,
 			recommendedResumeId,
 			recommendedTechStack,
+			rankOnly,
 		});
 		return res.json({ success: true, ...data });
 	} catch (err) {
@@ -603,6 +610,44 @@ export async function getJobSkillRadar(req, res) {
 				: 500;
 		console.error(`GET /api/jobs/${req.params.id}/skill-radar error`, err);
 		return res.status(status).json({ success: false, error: err.message });
+	}
+}
+
+/** Count jobs missing embeddings + optional active backfill session. */
+export async function getJobEmbeddingsStatus(req, res) {
+	try {
+		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
+		const status = await getJobEmbeddingStatus();
+		return res.json({ success: true, ...status });
+	} catch (err) {
+		console.error('GET /api/jobs/embeddings/status error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+/** Embed all jobs that are not yet indexed in Qdrant. */
+export async function startJobEmbeddings(req, res) {
+	try {
+		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
+		const limit = req.body?.limit;
+		const result = await startJobEmbeddingSession({ limit });
+		const statusCode = result.started ? 202 : 200;
+		return res.status(statusCode).json({ success: true, ...result });
+	} catch (err) {
+		const status = err.message.includes('already running') ? 409 : 503;
+		console.error('POST /api/jobs/embeddings/start error', err);
+		return res.status(status).json({ success: false, error: err.message });
+	}
+}
+
+/** Stop an in-progress job embedding session. */
+export async function stopJobEmbeddings(req, res) {
+	try {
+		const result = stopJobEmbeddingSession();
+		return res.json({ success: true, ...result });
+	} catch (err) {
+		console.error('POST /api/jobs/embeddings/stop error', err);
+		return res.status(500).json({ success: false, error: err.message });
 	}
 }
 
