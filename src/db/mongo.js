@@ -36,6 +36,9 @@ async function ensureSkillCollectionsIndexes() {
 		await personalInfoCollection.createIndex({ name: 1 }, { unique: true });
 		await personalInfoCollection.createIndex({ canonicalId: 1 });
 	}
+	if (jobsCollection) {
+		await jobsCollection.createIndex({ 'skillAnalysis.status': 1, 'skillAnalysis.queuedAt': 1 });
+	}
 }
 
 async function initMongo() {

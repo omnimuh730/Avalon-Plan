@@ -1,5 +1,5 @@
 import { chatCompletion } from '../llm/llmService.js';
-import { getEnrichmentApiKey, getEnrichmentModel } from './config.js';
+import { getEnrichmentModel } from './config.js';
 
 const SYSTEM = `You enrich a software skill knowledge graph. Given a raw skill name and candidate nodes already in the graph, decide how to integrate it.
 
@@ -26,21 +26,23 @@ export async function enrichAgainstCandidates({
 	normalizedKey,
 	candidates = [],
 	cooccurringSkills = [],
+	llmConfig = null,
 }) {
-	const apiKey = getEnrichmentApiKey();
 	const candidateIds = new Set(candidates.map(c => c.id));
 
-	if (!apiKey) {
+	if (!llmConfig?.apiKey) {
 		return buildHeuristicResult(rawSkill, normalizedKey, candidates);
 	}
 
-	const model = getEnrichmentModel('enrich');
 	const useEscalated = candidates.length === 0;
+	const model = useEscalated
+		? getEnrichmentModel('enrich_escalated', llmConfig)
+		: getEnrichmentModel('enrich', llmConfig);
 
 	const { content, usage } = await chatCompletion({
-		provider: 'openai',
-		apiKey,
-		model: useEscalated ? getEnrichmentModel('enrich_escalated') : model,
+		provider: llmConfig.provider,
+		apiKey: llmConfig.apiKey,
+		model,
 		messages: [
 			{ role: 'system', content: SYSTEM },
 			{

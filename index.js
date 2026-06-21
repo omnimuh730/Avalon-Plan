@@ -8,7 +8,7 @@ import cors from 'cors';
 import { initMongo } from "./src/db/mongo.js";
 import { initNeo4j } from "./src/db/neo4j.js";
 import { initSocket } from "./src/socketHub.js";
-import { startEnrichmentWorker } from "./src/services/skillEnrichment/worker.js";
+import { startJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
@@ -40,7 +40,7 @@ async function bootstrap() {
 	await initMongo();
 	try {
 		await initNeo4j();
-		startEnrichmentWorker();
+		startJobAnalysisWorker();
 	} catch (err) {
 		console.error('Neo4j connection failed — skill graph enrichment disabled until fixed:', err.message);
 		if (process.env.NEO4J_REQUIRED === 'true') {

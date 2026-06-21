@@ -8,10 +8,10 @@ import {
 } from "../db/mongo.js";
 import { JobSourceTitles } from '../../../configs/pub.js';
 import { isJobBlocked, buildMongoQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
-import { computeSkillScoreValue, refreshSkillScoresForSkills, SKILL_SCORE_VERSION } from '../services/skillScoreService.js';
-import { ingestJobSkills } from '../services/skillEnrichment/worker.js';
+import { SKILL_SCORE_VERSION } from '../services/skillScoreService.js';
 import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
 import { attachStaticScoreFields, needsScorePipeline, runJobListAggregation } from '../services/jobListPipeline.js';
+import { queueJobAnalysis, getJobAnalysisStatus } from '../services/jobAnalysis/index.js';
 
 const SCORE_DIMENSIONS = {
 	overall: 'overallScore',
@@ -138,25 +138,24 @@ export async function createJob(req, res) {
 				}));
 				await companyCategoryCollection.bulkWrite(ops, { ordered: false });
 			}
-
-			if (skills.length) {
-				await ingestJobSkills(skills);
-			}
 		} catch (e) {
-			console.warn('Failed to ingest job skills into graph pipeline', e);
+			console.warn('Failed to upsert company categories', e);
 		}
 
-		job.skillScore = await computeSkillScoreValue(skills);
+		// MongoDB only on ingest — Neo4j + LLM run when user clicks Analyze.
+		job.skillAnalysis = { status: 'pending' };
+		job.skillScore = 0;
 		job.skillScoreVersion = SKILL_SCORE_VERSION;
 		Object.assign(job, attachStaticScoreFields({ ...job, skills }));
 
 		const result = jobsCollection ? await jobsCollection.insertOne(job) : null;
 
-		if (skills.length) {
-			refreshSkillScoresForSkills(skills).catch(err => console.error('Failed to refresh skill scores', err));
-		}
-
-		return res.status(201).json({ success: true, created: true, insertedId: result ? result.insertedId : null });
+		return res.status(201).json({
+			success: true,
+			created: true,
+			insertedId: result ? result.insertedId : null,
+			skillAnalysis: job.skillAnalysis,
+		});
 	} catch (err) {
 		console.error('POST /api/jobs error', err);
 		return res.status(500).json({ success: false, error: err.message });
@@ -595,5 +594,35 @@ export async function unapplyFromJob(req, res) {
 	} catch (err) {
 		console.error('POST /api/jobs/:id/unapply error', err);
 		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+/** Queue skill graph + LLM analysis for a job (Neo4j writes happen in background worker). */
+export async function analyzeJob(req, res) {
+	try {
+		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
+		const { id } = req.params;
+		const provider = req.body?.provider || 'auto';
+
+		const result = await queueJobAnalysis(id, provider);
+		const statusCode = result.alreadyAnalyzed ? 200 : 202;
+		return res.status(statusCode).json({ success: true, ...result });
+	} catch (err) {
+		const status = err.message === 'Job not found' ? 404 : err.message === 'Invalid job id' ? 400 : 500;
+		console.error('POST /api/jobs/:id/analyze error', err);
+		return res.status(status).json({ success: false, error: err.message });
+	}
+}
+
+/** Poll skill analysis status for a job. */
+export async function getJobSkillAnalysis(req, res) {
+	try {
+		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
+		const { id } = req.params;
+		const result = await getJobAnalysisStatus(id);
+		return res.json({ success: true, ...result });
+	} catch (err) {
+		const status = err.message === 'Job not found' ? 404 : err.message === 'Invalid job id' ? 400 : 500;
+		return res.status(status).json({ success: false, error: err.message });
 	}
 }

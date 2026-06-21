@@ -1,5 +1,6 @@
 import { resolveSkillToCanonical, listGraphSkills } from '../services/skillGraph/resolve.js';
 import { fetchSubgraph } from '../services/skillGraph/search.js';
+import { runJobAnalysisBatch } from '../services/jobAnalysis/index.js';
 import { runEnrichmentBatch } from '../services/skillEnrichment/worker.js';
 import { isNeo4jReady } from '../db/neo4j.js';
 import { syncCooccurrenceToGraph } from '../services/skillCooccurrence/index.js';
@@ -44,9 +45,11 @@ export async function getSubgraphHandler(req, res) {
 export async function runEnrichmentHandler(req, res) {
 	try {
 		const batchSize = Number(req.body?.batchSize) || 5;
-		const enrichment = await runEnrichmentBatch(batchSize);
+		const provider = req.body?.provider || 'auto';
+		const jobs = await runJobAnalysisBatch(Number(req.body?.jobBatchSize) || 2);
+		const enrichment = await runEnrichmentBatch(batchSize, provider);
 		const cooc = await syncCooccurrenceToGraph(50);
-		return res.json({ success: true, enrichment, cooccurrenceSynced: cooc });
+		return res.json({ success: true, jobs, enrichment, cooccurrenceSynced: cooc });
 	} catch (err) {
 		console.error('POST /api/skills/enrichment/run error', err);
 		return res.status(500).json({ success: false, error: err.message });
