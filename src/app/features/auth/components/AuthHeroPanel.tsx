@@ -1,4 +1,5 @@
-import { Sparkles, Target, TrendingUp, Zap } from "lucide-react";
+import { Sparkles, Target, TrendingUp } from "lucide-react";
+import { AppLogo } from "../../../components/shared/AppLogo";
 import { display } from "../../../lib/utils";
 
 const FEATURES = [
@@ -21,7 +22,7 @@ const FEATURES = [
 
 export function AuthHeroPanel() {
   return (
-    <div className="relative hidden lg:flex lg:w-2/3 h-full overflow-hidden bg-[#0d0b18] text-white">
+    <div className="relative hidden lg:flex lg:w-2/3 min-h-0 self-stretch overflow-hidden bg-[#0d0b18] text-white">
       <div
         className="absolute inset-0 opacity-90"
         style={{
@@ -58,10 +59,10 @@ export function AuthHeroPanel() {
         </g>
       </svg>
 
-      <div className="relative z-10 flex flex-col justify-between p-12 xl:p-16 w-full max-w-3xl">
+      <div className="relative z-10 flex min-h-full flex-col justify-between p-12 xl:p-16 w-full max-w-3xl overflow-y-auto">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-white/10 border border-white/10 px-3 py-1.5 text-xs font-semibold mb-8">
-            <Zap className="w-3.5 h-3.5 text-violet-300" />
+            <AppLogo size={20} className="rounded-md" />
             AthenAI · Career command center
           </div>
           <h1 className="text-4xl xl:text-5xl font-bold leading-[1.1] tracking-tight mb-4" style={display}>
@@ -87,7 +88,7 @@ export function AuthHeroPanel() {
           ))}
         </ul>
 
-        <p className="text-xs text-white/35 mt-12">Your DeepSeek key is loaded from account_info after sign-in.</p>
+        <p className="text-xs text-white/35 mt-12">Your AI API key is loaded from account_info after sign-in.</p>
       </div>
     </div>
   );

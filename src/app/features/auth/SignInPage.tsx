@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
-import { Loader2, Zap } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { AppLogo } from "../../components/shared/AppLogo";
 import { toast } from "sonner";
 import { useAuth } from "@/context/auth-context";
 import { Button } from "../../components/ui/button";
@@ -42,9 +43,7 @@ export function SignInPage() {
   return (
     <AuthSplitLayout>
       <div className="flex items-center gap-3 mb-8 lg:hidden">
-        <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-md shadow-violet-500/25">
-          <Zap className="w-5 h-5 text-white" />
-        </div>
+        <AppLogo size={40} />
         <div>
           <p className="font-bold text-foreground" style={display}>
             AthenAI
@@ -54,9 +53,7 @@ export function SignInPage() {
       </div>
 
       <div className="hidden lg:flex items-center gap-3 mb-8">
-        <div className="w-11 h-11 rounded-xl bg-primary flex items-center justify-center shadow-md shadow-violet-500/25">
-          <Zap className="w-5 h-5 text-white" />
-        </div>
+        <AppLogo size={44} />
         <div>
           <h2 className="text-2xl font-bold text-foreground" style={display}>
             Sign in

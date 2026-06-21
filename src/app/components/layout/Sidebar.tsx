@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from "react-router";
-import { LogOut, Plus, Zap } from "lucide-react";
+import { LogOut, Plus } from "lucide-react";
+import { AppLogo } from "../shared/AppLogo";
 import { useAuth } from "@/context/auth-context";
 import { cn, display } from "../../lib/utils";
 import { pathForView, PATHS } from "../../config/routes";
@@ -30,9 +31,7 @@ export function Sidebar() {
     >
       <div className="px-5 py-4 border-b border-border">
         <NavLink to="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary shadow-md shadow-violet-500/25 flex items-center justify-center flex-shrink-0">
-            <Zap className="w-5 h-5 text-white" />
-          </div>
+          <AppLogo size={40} />
           <div className="flex-1 min-w-0">
             <span className="text-base font-bold text-foreground block" style={display}>
               AthenAI
