@@ -157,12 +157,6 @@ export function JobCard({
           </div>
         )}
 
-        {job.bestResumeTechStack ? (
-          <p className="text-xs text-muted-foreground">
-            Best fit: <span className="font-medium text-foreground">{job.bestResumeTechStack}</span> resume
-          </p>
-        ) : null}
-
         <div className="flex flex-wrap gap-1.5">
           {job.industries.map((industry) => (
             <Badge key={industry} v="blue">

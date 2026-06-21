@@ -23,6 +23,7 @@ export type JobSkillRadarData = {
   summary: { direct: number; graph: number; missing: number };
   availableResumes: AvailableResume[];
   recommendedResumeId: string | null;
+  recommendedResumeTechStack?: string | null;
   neo4jReady: boolean;
 };
 
@@ -62,9 +63,60 @@ export function resolveRecommendedResumeId(
 }
 
 type UseJobSkillRadarOptions = {
+  /** Pre-computed vector rank from useJobResumeRank (JD open). */
   recommendedResumeId?: string;
   recommendedTechStack?: string;
 };
+
+export type JobResumeRankData = {
+  recommendedResumeId: string | null;
+  recommendedResumeTechStack: string | null;
+  availableResumes: AvailableResume[];
+};
+
+/** Fast vector-only resume pick when opening a JD. */
+export function useJobResumeRank(jobId: string | undefined, enabled: boolean) {
+  const { get } = useApi(API_BASE);
+  const { applier } = useApplier();
+  const [data, setData] = useState<JobResumeRankData | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || !jobId || !applier?.name) {
+      setData(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+
+    (async () => {
+      try {
+        const params = new URLSearchParams({
+          applierName: applier.name,
+          rankOnly: "true",
+        });
+        const res = (await get(`/jobs/${jobId}/skill-radar?${params}`)) as RadarResponse;
+        if (cancelled || !res?.success) return;
+        setData({
+          recommendedResumeId: res.recommendedResumeId ?? null,
+          recommendedResumeTechStack: res.recommendedResumeTechStack ?? null,
+          availableResumes: res.availableResumes ?? [],
+        });
+      } catch {
+        if (!cancelled) setData(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, jobId, applier?.name, get]);
+
+  return { data, loading };
+}
 
 export function useJobSkillRadar(
   jobId: string | undefined,
@@ -115,6 +167,7 @@ export function useJobSkillRadar(
             summary: res.summary ?? { direct: 0, graph: 0, missing: 0 },
             availableResumes: available,
             recommendedResumeId: recommended,
+            recommendedResumeTechStack: res.recommendedResumeTechStack ?? null,
             neo4jReady: Boolean(res.neo4jReady),
           });
 

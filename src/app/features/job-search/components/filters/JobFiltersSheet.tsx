@@ -9,14 +9,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "../../../../components/ui/sheet";
-import { AthensSelect, DatePicker } from "../../../../components/forms";
+import { AthensSelect, AthensMultiSelect, DatePicker } from "../../../../components/forms";
 import {
   JOB_INDUSTRIES,
   JOB_LOCATIONS,
   JOB_SENIORITIES,
-  JOB_SOURCES,
   JOB_WORK_MODES,
 } from "../../../../data/jobs";
+import { JobSourceTitles } from "../../../../data/jobs/pub";
 import type { JobSearchFilterState } from "../../../../hooks/useJobSearchFilters";
 import { clearAttributeFilters } from "../../../../hooks/useJobSearchFilters";
 
@@ -55,14 +55,13 @@ export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFi
 
         <div className="px-4 space-y-6 pb-4">
           <Section title="Source">
-            <AthensSelect
+            <AthensMultiSelect
               label="Job source"
-              value={filters.source}
+              values={filters.source}
               onChange={(source) => patch({ source })}
-              options={JOB_SOURCES.map((s) => ({
-                value: s,
-                label: s === "all" ? "All sources" : s,
-              }))}
+              placeholder="All sources"
+              options={JobSourceTitles.map((s) => ({ value: s, label: s }))}
+              maxHeightClassName="max-h-56"
             />
           </Section>
 
@@ -108,13 +107,14 @@ export function JobFiltersSheet({ open, onOpenChange, filters, onChange }: JobFi
 
           <Section title="Role attributes">
             <div className="grid grid-cols-1 gap-3">
-              <AthensSelect
+              <AthensMultiSelect
                 label="Seniority"
-                value={filters.seniority}
+                values={filters.seniority}
                 onChange={(seniority) => patch({ seniority })}
-                options={JOB_SENIORITIES.map((s) => ({
+                placeholder="All levels"
+                options={JOB_SENIORITIES.filter((s) => s !== "all").map((s) => ({
                   value: s,
-                  label: s === "all" ? "All levels" : s,
+                  label: s,
                 }))}
               />
               <AthensSelect

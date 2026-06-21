@@ -26,10 +26,12 @@ export type JobSearchFilterState = {
   statusTab: JobStatusTab;
   jobQuery: string;
   companyQuery: string;
-  source: string;
+  /** Empty = all sources */
+  source: string[];
   location: string;
   workMode: string;
-  seniority: string;
+  /** Empty = all seniority levels */
+  seniority: string[];
   industry: string;
   postedFrom: string;
   postedTo: string;
@@ -43,10 +45,10 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
   statusTab: "all",
   jobQuery: "",
   companyQuery: "",
-  source: "all",
+  source: [],
   location: "all",
   workMode: "all",
-  seniority: "all",
+  seniority: [],
   industry: "all",
   postedFrom: "",
   postedTo: "",
@@ -71,10 +73,15 @@ function inScoreRange(value: number, range: ScoreRange) {
 
 function matchesBaseFilters(job: Job, filters: JobSearchFilterState, includeStatus: boolean) {
   if (includeStatus && filters.statusTab !== "all" && job.status !== filters.statusTab) return false;
-  if (filters.source !== "all" && job.source !== filters.source) return false;
+  if (filters.source.length && !filters.source.includes(job.source)) return false;
   if (filters.location !== "all" && job.location !== filters.location) return false;
   if (filters.workMode !== "all" && job.workMode !== filters.workMode) return false;
-  if (filters.seniority !== "all" && job.seniority !== filters.seniority) return false;
+  if (
+    filters.seniority.length &&
+    !filters.seniority.some((s) => job.seniority.toLowerCase().includes(s.toLowerCase()))
+  ) {
+    return false;
+  }
   if (filters.industry !== "all" && !job.industries.includes(filters.industry)) return false;
 
   if (filters.jobQuery.trim()) {
@@ -156,10 +163,10 @@ export function countActiveFilters(filters: JobSearchFilterState): number {
 
 export function countAttributeFilters(filters: JobSearchFilterState): number {
   let n = 0;
-  if (filters.source !== "all") n++;
+  if (filters.source.length) n++;
   if (filters.location !== "all") n++;
   if (filters.workMode !== "all") n++;
-  if (filters.seniority !== "all") n++;
+  if (filters.seniority.length) n++;
   if (filters.industry !== "all") n++;
   if (filters.postedFrom || filters.postedTo) n++;
   return n;
@@ -177,10 +184,10 @@ export function countScoreFilters(filters: JobSearchFilterState): number {
 export function clearAttributeFilters(filters: JobSearchFilterState): JobSearchFilterState {
   return {
     ...filters,
-    source: "all",
+    source: [],
     location: "all",
     workMode: "all",
-    seniority: "all",
+    seniority: [],
     industry: "all",
     postedFrom: "",
     postedTo: "",
@@ -227,11 +234,11 @@ export function getActiveFilterChips(filters: JobSearchFilterState): ActiveFilte
       apply: (f) => ({ ...f, companyQuery: "" }),
     });
   }
-  if (filters.source !== "all") {
+  for (const src of filters.source) {
     chips.push({
-      id: "source",
-      label: `Source: ${filters.source}`,
-      apply: (f) => ({ ...f, source: "all" }),
+      id: `source-${src}`,
+      label: `Source: ${src}`,
+      apply: (f) => ({ ...f, source: f.source.filter((s) => s !== src) }),
     });
   }
   if (filters.location !== "all") {
@@ -248,11 +255,11 @@ export function getActiveFilterChips(filters: JobSearchFilterState): ActiveFilte
       apply: (f) => ({ ...f, workMode: "all" }),
     });
   }
-  if (filters.seniority !== "all") {
+  for (const level of filters.seniority) {
     chips.push({
-      id: "seniority",
-      label: filters.seniority,
-      apply: (f) => ({ ...f, seniority: "all" }),
+      id: `seniority-${level}`,
+      label: level,
+      apply: (f) => ({ ...f, seniority: f.seniority.filter((s) => s !== level) }),
     });
   }
   if (filters.industry !== "all") {
@@ -319,7 +326,7 @@ export function useJobSearchFilters(
     jobQuery: search,
     companyQuery: "",
     statusTab: status === "all" ? "all" : (status as JobStatusTab),
-    source,
+    source: source ? [source] : [],
     location,
     sort: sort === "posted" ? "newest" : sort,
   };

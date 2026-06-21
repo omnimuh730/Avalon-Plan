@@ -24,7 +24,7 @@ import { cn } from "../../../lib/utils";
 import { bodyAsListItems, parseJobDescription } from "../../../lib/parseJobDescription";
 import type { Job, WorkMode } from "../../../types";
 import { useJobDetail } from "../hooks/useJobDetail";
-import { useJobSkillRadar } from "../hooks/useJobSkillRadar";
+import { useJobResumeRank, useJobSkillRadar } from "../hooks/useJobSkillRadar";
 import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
 
 const WORK_MODE_LABELS: Record<WorkMode, string> = {
@@ -135,6 +135,7 @@ export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescription
   const [skillMatchOpen, setSkillMatchOpen] = useState(false);
 
   const jobId = j.backendId || j.id;
+  const { data: resumeRank, loading: resumeRankLoading } = useJobResumeRank(jobId, open);
   const {
     data: radarData,
     loading: radarLoading,
@@ -142,8 +143,8 @@ export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescription
     selectedResumeId,
     changeResume,
   } = useJobSkillRadar(jobId, open && skillMatchOpen, {
-    recommendedResumeId: j.bestResumeId,
-    recommendedTechStack: j.bestResumeTechStack,
+    recommendedResumeId: resumeRank?.recommendedResumeId ?? undefined,
+    recommendedTechStack: resumeRank?.recommendedResumeTechStack ?? undefined,
   });
 
   useEffect(() => {
@@ -198,11 +199,16 @@ export function JobDescriptionDialog({ job, open, onOpenChange }: JobDescription
             ) : null}
           </div>
 
-          {j.bestResumeTechStack ? (
+          {resumeRank?.recommendedResumeTechStack ? (
             <p className="mt-3 text-xs text-muted-foreground">
               Best fit:{" "}
-              <span className="font-semibold text-foreground">{j.bestResumeTechStack}</span> resume
+              <span className="font-semibold text-foreground">
+                {resumeRank.recommendedResumeTechStack}
+              </span>{" "}
+              resume
             </p>
+          ) : resumeRankLoading ? (
+            <p className="mt-3 text-xs text-muted-foreground">Finding best resume match…</p>
           ) : null}
         </div>
 

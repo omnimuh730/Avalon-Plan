@@ -99,7 +99,9 @@ export function buildJobsListBody(
     sort: SORT_TO_API[filters.sort] || "postedAt_desc",
     page: opts.page,
     limit: opts.limit,
-    jobSources: filters.source === "all" ? JobSourceTitles.join(",") : filters.source,
+    jobSources: filters.source.length
+      ? filters.source.join(",")
+      : JobSourceTitles.join(","),
   };
 
   if (opts.applierName) body.applierName = opts.applierName;
@@ -108,7 +110,7 @@ export function buildJobsListBody(
   if (filters.location !== "all") body["details.position"] = filters.location;
   const remote = workModeToRemote(filters.workMode);
   if (remote) body["details.remote"] = remote;
-  if (filters.seniority !== "all") body["details.seniority"] = filters.seniority;
+  if (filters.seniority.length) body["details.seniority"] = filters.seniority.join(",");
   if (filters.industry !== "all") body["company.tags"] = filters.industry;
   if (filters.postedFrom) body.postedAtFrom = filters.postedFrom;
   if (filters.postedTo) body.postedAtTo = filters.postedTo;
