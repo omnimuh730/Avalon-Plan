@@ -3,7 +3,7 @@ import { createContext, useContext } from "react";
 export type OpenEditorOptions = {
   jd?: string;
   resumeId?: string;
-  tab?: "library" | "editor" | "history" | "analysis" | "setup";
+  tab?: "library" | "editor" | "history" | "analysis";
 };
 
 export type ResumeNavigationContextValue = {

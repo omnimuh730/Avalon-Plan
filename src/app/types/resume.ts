@@ -6,6 +6,23 @@ export interface ResumeIdentity {
   linkedin: string;
 }
 
+export interface GeneratorCareer {
+  company: string;
+  title: string;
+  period: string;
+}
+
+export interface GeneratorEducation {
+  school: string;
+  degree: string;
+  period: string;
+}
+
+export interface GeneratorIdentity extends ResumeIdentity {
+  careers: GeneratorCareer[];
+  education: GeneratorEducation[];
+}
+
 export interface ResumeExperience {
   id: string;
   company: string;
@@ -92,13 +109,34 @@ export interface SectionLayoutConfig {
 
 export type ResumeStackCatalog = Record<string, Record<string, number>>;
 
+export type StepPurpose = "summary" | "skills" | "experience" | "education";
+export type StepKind = "fine-tune" | "final";
+
 export interface RefinementStep {
   id: string;
-  title: string;
-  section: string;
-  mode: "fine-tune" | "final";
+  purpose: StepPurpose;
+  kind: StepKind;
+  name: string;
   prompt: string;
-  outputSchema?: string;
+  schema?: string;
+}
+
+export interface UserResumeSummary {
+  id: string;
+  ownerId: string | null;
+  ownerName: string;
+  techStack: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  extractedText?: string;
+  isPrimary: boolean;
+  uploadedAt: string;
+  updatedAt?: string;
+}
+
+export interface UserResumeDetail extends UserResumeSummary {
+  contentBase64: string | null;
 }
 
 export interface RefinementPipeline {
@@ -133,9 +171,32 @@ export interface EditorDraft {
   provider: string;
   model: string;
   reasoningEffort: string;
+  systemInstruction: string;
   jobDescription: string;
   refinementSteps: RefinementStep[];
+  generatorIdentity?: GeneratorIdentity;
   baseResumeId?: string;
+}
+
+export interface HistoryRunSummary {
+  id: string;
+  status: GenerationRunStatus;
+  createdAt: string;
+  jobTitle?: string;
+  jobDescription: string;
+  model: string;
+  provider: string;
+  templateId?: string;
+  tokens: number;
+  costUsd: number;
+}
+
+export interface HistoryRunDetail extends HistoryRunSummary {
+  sections?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  identity?: GeneratorIdentity;
+  perStep?: unknown[];
+  usage?: { totalTokens?: number; cost?: number };
 }
 
 export interface GenerateInput {

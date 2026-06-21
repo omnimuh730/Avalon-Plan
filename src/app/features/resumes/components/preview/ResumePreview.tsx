@@ -151,7 +151,7 @@ export const ResumePreview = forwardRef<HTMLDivElement, ResumePreviewProps>(
     return (
       <div
         ref={ref}
-        className={cn("bg-white text-left shadow-lg mx-auto", className)}
+        className={cn("resume-page bg-white text-left shadow-lg mx-auto", className)}
         style={{
           ...paperStyle,
           width: theme.paperSize === "letter" ? "8.5in" : "210mm",

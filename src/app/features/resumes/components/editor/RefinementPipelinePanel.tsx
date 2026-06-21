@@ -1,26 +1,28 @@
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 import { AthensInput, AthensSelect, AthensTextarea, FormField } from "../../../../components/forms";
 import { cn } from "../../../../lib/utils";
-import type { RefinementStep } from "../../../../types/resume";
+import type { RefinementStep, StepKind, StepPurpose } from "../../../../types/resume";
+import { defaultPromptFor, defaultSchemaFor, uid } from "../../lib/generatorDefaults";
 
 type RefinementPipelinePanelProps = {
   steps: RefinementStep[];
   onChange: (steps: RefinementStep[]) => void;
 };
 
-const SECTION_OPTIONS = ["experience", "summary", "skills", "education"].map((s) => ({
-  value: s,
-  label: s,
-}));
+const PURPOSE_OPTIONS: { value: StepPurpose; label: string }[] = [
+  { value: "summary", label: "Summary" },
+  { value: "skills", label: "Skills" },
+  { value: "experience", label: "Experience" },
+];
 
 export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelinePanelProps) {
   const addStep = () => {
     const step: RefinementStep = {
-      id: `step-${Date.now()}`,
-      title: `Step ${steps.length + 1}`,
-      section: "experience",
-      mode: "fine-tune",
-      prompt: "",
+      id: uid(),
+      purpose: "experience",
+      kind: "fine-tune",
+      name: `Step ${steps.length + 1}`,
+      prompt: defaultPromptFor("experience", "fine-tune"),
     };
     onChange([...steps, step]);
   };
@@ -29,7 +31,11 @@ export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelineP
     onChange(steps.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   };
 
-  const remove = (id: string) => onChange(steps.filter((s) => s.id !== id));
+  const remove = (id: string) => {
+    const target = steps.find((s) => s.id === id);
+    if (target?.kind === "final") return;
+    onChange(steps.filter((s) => s.id !== id));
+  };
 
   const move = (id: string, dir: -1 | 1) => {
     const idx = steps.findIndex((s) => s.id === id);
@@ -54,8 +60,8 @@ export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelineP
           <div key={step.id} className="border border-border rounded-xl p-4 bg-secondary/30">
             <div className="flex items-start gap-2 mb-3">
               <AthensInput
-                value={step.title}
-                onChange={(e) => update(step.id, { title: e.target.value })}
+                value={step.name}
+                onChange={(e) => update(step.id, { name: e.target.value })}
                 className="flex-1 font-bold"
               />
               <div className="flex gap-1">
@@ -65,32 +71,45 @@ export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelineP
                 <button type="button" disabled={idx === steps.length - 1} onClick={() => move(step.id, 1)} className="icon-btn w-8 h-8 disabled:opacity-30">
                   <ChevronDown className="w-4 h-4" />
                 </button>
-                <button type="button" onClick={() => remove(step.id)} className="icon-btn w-8 h-8 text-destructive">
+                <button type="button" onClick={() => remove(step.id)} disabled={step.kind === "final"} className="icon-btn w-8 h-8 text-destructive disabled:opacity-30">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3 mb-3">
               <AthensSelect
-                label="Section"
-                value={step.section}
-                onChange={(section) => update(step.id, { section })}
-                options={SECTION_OPTIONS}
+                label="Purpose"
+                value={step.purpose}
+                onChange={(purpose) => {
+                  const p = purpose as StepPurpose;
+                  update(step.id, {
+                    purpose: p,
+                    prompt: defaultPromptFor(p, step.kind),
+                    schema: step.kind === "final" ? defaultSchemaFor(p) : undefined,
+                  });
+                }}
+                options={PURPOSE_OPTIONS}
               />
               <div>
-                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Mode</span>
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Kind</span>
                 <div className="flex gap-1 mt-1.5">
-                  {(["fine-tune", "final"] as const).map((mode) => (
+                  {(["fine-tune", "final"] as StepKind[]).map((kind) => (
                     <button
-                      key={mode}
+                      key={kind}
                       type="button"
-                      onClick={() => update(step.id, { mode })}
+                      onClick={() =>
+                        update(step.id, {
+                          kind,
+                          prompt: defaultPromptFor(step.purpose, kind),
+                          schema: kind === "final" ? defaultSchemaFor(step.purpose) : undefined,
+                        })
+                      }
                       className={cn(
                         "flex-1 py-1.5 rounded-lg text-xs font-bold capitalize border",
-                        step.mode === mode ? "bg-primary text-white border-primary" : "bg-background border-border text-muted-foreground",
+                        step.kind === kind ? "bg-primary text-white border-primary" : "bg-background border-border text-muted-foreground",
                       )}
                     >
-                      {mode}
+                      {kind}
                     </button>
                   ))}
                 </div>
@@ -103,11 +122,11 @@ export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelineP
               rows={3}
               className="mb-2"
             />
-            {step.mode === "final" && (
+            {step.kind === "final" && (
               <FormField label="Output schema (JSON)">
                 <AthensTextarea
-                  value={step.outputSchema ?? ""}
-                  onChange={(e) => update(step.id, { outputSchema: e.target.value })}
+                  value={step.schema ?? ""}
+                  onChange={(e) => update(step.id, { schema: e.target.value })}
                   rows={4}
                   className="font-mono text-xs"
                 />

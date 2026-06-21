@@ -1,16 +1,62 @@
 import { formatDistanceToNow } from "date-fns";
-import { CheckCircle, Clock, Coins, Hash } from "lucide-react";
+import { CheckCircle, Clock, Coins, Hash, Wand2, Loader2 } from "lucide-react";
 import { KPI, Pill, Badge } from "../../../components/ui";
 import { AthensSelect } from "../../../components/forms";
 import { SearchField } from "../../../components/shared/SearchField";
 import { cn } from "../../../lib/utils";
 import { useResumeHistory } from "../hooks/useResumeHistory";
 import { ResumePreview } from "./preview/ResumePreview";
-import { BUILTIN_TEMPLATES } from "../../../data/resumes/seedDocument";
+import { BUILTIN_TEMPLATES, DEFAULT_SECTIONS, DEFAULT_THEME } from "../../../data/resumes/seedDocument";
+import type { EditorDraft } from "../../../types/resume";
 
-export function ResumeHistoryTab() {
+type ResumeHistoryTabProps = {
+  onLoadIntoEditor?: (payload: { config: Partial<EditorDraft>; sections?: Record<string, unknown> }) => void;
+};
+
+export function ResumeHistoryTab({ onLoadIntoEditor }: ResumeHistoryTabProps) {
   const history = useResumeHistory();
-  const { stats, filtered, selected, filters, setFilters, setSelectedId, models, providers, templates } = history;
+  const {
+    loading,
+    stats,
+    filtered,
+    selected,
+    selectedDetail,
+    detailDocument,
+    filters,
+    setFilters,
+    setSelectedId,
+    models,
+    providers,
+    templates,
+  } = history;
+
+  const templateId = selected?.templateId ?? (selectedDetail?.config as { templateId?: string } | undefined)?.templateId;
+  const activeTemplate = BUILTIN_TEMPLATES.find((t) => t.id === templateId) ?? BUILTIN_TEMPLATES[0];
+
+  const handleLoad = () => {
+    if (!selectedDetail || !onLoadIntoEditor) return;
+    const cfg = (selectedDetail.config ?? {}) as Partial<EditorDraft>;
+    onLoadIntoEditor({
+      config: {
+        ...cfg,
+        jobDescription: selectedDetail.jobDescription,
+        provider: selectedDetail.provider,
+        model: selectedDetail.model,
+        templateId: selectedDetail.templateId,
+        generatorIdentity: selectedDetail.identity,
+      },
+      sections: selectedDetail.sections,
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64 text-muted-foreground gap-2">
+        <Loader2 className="w-5 h-5 animate-spin" />
+        Loading history…
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -25,16 +71,10 @@ export function ResumeHistoryTab() {
         <SearchField
           value={filters.search}
           onChange={(search) => setFilters({ ...filters, search })}
-          placeholder="Search job descriptions and resume content…"
+          placeholder="Search job descriptions…"
           className="max-w-xl"
         />
         <div className="flex flex-wrap gap-2 items-center">
-          {(["all", "jd", "resume"] as const).map((t) => (
-            <Pill key={t} active={filters.searchTarget === t} onClick={() => setFilters({ ...filters, searchTarget: t })}>
-              {t === "all" ? "All" : t.toUpperCase()}
-            </Pill>
-          ))}
-          <div className="w-px h-6 bg-border mx-1" />
           {(["all", "completed", "failed"] as const).map((st) => (
             <Pill key={st} active={filters.status === st} onClick={() => setFilters({ ...filters, status: st })}>
               {st === "all" ? "All runs" : st.charAt(0).toUpperCase() + st.slice(1)}
@@ -71,17 +111,15 @@ export function ResumeHistoryTab() {
                   onClick={() => setSelectedId(run.id)}
                   className={cn(
                     "w-full text-left p-4 border-b border-border hover:bg-secondary/50 transition-colors",
-                    selected?.id === run.id && "bg-primary/5 border-l-2 border-l-primary"
+                    selected?.id === run.id && "bg-primary/5 border-l-2 border-l-primary",
                   )}
                 >
-                  <p className="text-sm font-bold text-foreground truncate">
-                    {run.jobTitle ?? "Untitled role"}
-                  </p>
+                  <p className="text-sm font-bold text-foreground truncate">{run.jobTitle ?? "Untitled role"}</p>
                   <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{run.jobDescription}</p>
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     <Badge v="subtle">{run.model}</Badge>
                     <Badge v="subtle">{run.provider}</Badge>
-                    <Badge v="blue">{BUILTIN_TEMPLATES.find((t) => t.id === run.templateId)?.name ?? run.templateId}</Badge>
+                    {run.templateId && <Badge v="blue">{BUILTIN_TEMPLATES.find((t) => t.id === run.templateId)?.name ?? run.templateId}</Badge>}
                   </div>
                   <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                     <span>{formatDistanceToNow(new Date(run.createdAt), { addSuffix: true })}</span>
@@ -99,7 +137,19 @@ export function ResumeHistoryTab() {
           {selected ? (
             <>
               <div className="p-4 border-b border-border space-y-2 flex-shrink-0">
-                <h3 className="text-base font-bold text-foreground">{selected.jobTitle ?? "Generation run"}</h3>
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-base font-bold text-foreground">{selected.jobTitle ?? "Generation run"}</h3>
+                  {onLoadIntoEditor && selectedDetail && selected.status === "completed" && (
+                    <button
+                      type="button"
+                      onClick={handleLoad}
+                      className="flex items-center gap-1.5 text-xs font-bold text-primary hover:underline shrink-0"
+                    >
+                      <Wand2 className="w-3.5 h-3.5" />
+                      Load into editor
+                    </button>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground line-clamp-3">{selected.jobDescription}</p>
                 <div className="flex gap-4 text-xs text-muted-foreground">
                   <span>{selected.tokens.toLocaleString()} tokens</span>
@@ -108,33 +158,23 @@ export function ResumeHistoryTab() {
                 </div>
               </div>
               <div className="flex-1 overflow-auto p-4 subtle-scroll flex justify-center bg-secondary/20">
-                <div className="origin-top scale-[0.55] sm:scale-[0.65]">
-                  <ResumePreview
-                    document={selected.document}
-                    template={BUILTIN_TEMPLATES.find((t) => t.id === selected.templateId) ?? BUILTIN_TEMPLATES[0]}
-                    theme={{
-                      font: "Source Sans 3",
-                      bodySizePt: 10.5,
-                      nameSizePt: 24,
-                      accentColor: "#1f3a5f",
-                      textColor: "#0f172a",
-                      headerAlign: "center",
-                      paperSize: "letter",
-                      marginIn: 0.65,
-                    }}
-                    sections={[
-                      { id: "summary", titleSizePt: 12, bodySizePt: 10.5, color: "#0f172a", order: 0 },
-                      { id: "experience", titleSizePt: 12, bodySizePt: 10.5, color: "#0f172a", order: 1 },
-                      { id: "skills", titleSizePt: 12, bodySizePt: 10.5, color: "#0f172a", order: 2 },
-                      { id: "education", titleSizePt: 12, bodySizePt: 10.5, color: "#0f172a", order: 3 },
-                    ]}
-                  />
-                </div>
+                {detailDocument ? (
+                  <div className="origin-top scale-[0.55] sm:scale-[0.65]">
+                    <ResumePreview
+                      document={detailDocument}
+                      template={activeTemplate}
+                      theme={DEFAULT_THEME}
+                      sections={DEFAULT_SECTIONS}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground self-center">Preview unavailable for this run.</p>
+                )}
               </div>
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center p-8 text-center text-muted-foreground">
-              <p className="text-sm">Select a run from the list to preview the resume, JD, and usage.</p>
+              <p className="text-sm">Select a run from the list to preview the resume.</p>
             </div>
           )}
         </div>
@@ -142,4 +182,3 @@ export function ResumeHistoryTab() {
     </div>
   );
 }
-

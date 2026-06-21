@@ -1,9 +1,12 @@
 import { RefreshCw } from "lucide-react";
 import { AthensInput, AthensSelect, FormField } from "../../../../components/forms";
 import type { EditorDraft } from "../../../../types/resume";
+import { FALLBACK_MODELS } from "../../lib/generatorDefaults";
 
 type ProviderIdentityPanelProps = {
   draft: EditorDraft;
+  models: string[];
+  loadingProfile?: boolean;
   onReloadProfile: () => void;
   onIdentityChange: (field: keyof EditorDraft["document"]["identity"], value: string) => void;
   onProviderChange: (provider: string) => void;
@@ -13,18 +16,21 @@ type ProviderIdentityPanelProps = {
 
 const PROVIDERS = [
   { id: "openai", label: "OpenAI" },
-  { id: "anthropic", label: "Anthropic" },
-  { id: "google", label: "Google" },
+  { id: "deepseek", label: "DeepSeek" },
 ];
 
-const MODELS: Record<string, string[]> = {
-  openai: ["gpt-4o-mini", "gpt-4o", "gpt-4-nano"],
-  anthropic: ["claude-sonnet-4", "claude-haiku-4"],
-  google: ["gemini-2-flash", "gemini-pro"],
-};
+const REASONING = [
+  { value: "default", label: "Default" },
+  { value: "none", label: "None" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
 
 export function ProviderIdentityPanel({
   draft,
+  models,
+  loadingProfile,
   onReloadProfile,
   onIdentityChange,
   onProviderChange,
@@ -32,7 +38,7 @@ export function ProviderIdentityPanel({
   onReasoningChange,
 }: ProviderIdentityPanelProps) {
   const { identity } = draft.document;
-  const models = MODELS[draft.provider] ?? MODELS.openai;
+  const modelList = models.length ? models : FALLBACK_MODELS[draft.provider] ?? FALLBACK_MODELS.openai;
 
   return (
     <div className="bg-card border border-border rounded-xl p-5 shadow-sm space-y-4">
@@ -41,43 +47,35 @@ export function ProviderIdentityPanel({
         <button
           type="button"
           onClick={onReloadProfile}
-          className="flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+          disabled={loadingProfile}
+          className="flex items-center gap-1 text-xs font-bold text-primary hover:underline"
         >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Reload profile
+          <RefreshCw className={`w-3.5 h-3.5 ${loadingProfile ? "animate-spin" : ""}`} />
+          Reload from Settings
         </button>
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <p className="text-xs text-muted-foreground">Identity loads from your MongoDB profile (Settings → Profile).</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <AthensSelect label="Provider" value={draft.provider} onChange={onProviderChange} options={PROVIDERS.map((p) => ({ value: p.id, label: p.label }))} />
-        <AthensSelect label="Model" value={draft.model} onChange={onModelChange} options={models.map((m) => ({ value: m, label: m }))} />
-        <AthensSelect
-          label="Reasoning effort"
-          value={draft.reasoningEffort}
-          onChange={onReasoningChange}
-          options={[
-            { value: "default", label: "Default" },
-            { value: "low", label: "Low" },
-            { value: "high", label: "High" },
-          ]}
-        />
+        <AthensSelect label="Model" value={draft.model} onChange={onModelChange} options={modelList.map((m) => ({ value: m, label: m }))} />
+        <AthensSelect label="Reasoning" value={draft.reasoningEffort} onChange={onReasoningChange} options={REASONING} />
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {(
-          [
-            ["fullName", "Full Name"],
-            ["location", "Location"],
-            ["email", "Email"],
-            ["phone", "Phone"],
-            ["linkedin", "LinkedIn"],
-          ] as const
-        ).map(([field, label]) => (
-          <FormField key={field} label={label} className={field === "linkedin" ? "sm:col-span-2" : ""}>
-            <AthensInput
-              value={identity[field]}
-              onChange={(e) => onIdentityChange(field, e.target.value)}
-            />
-          </FormField>
-        ))}
+        <FormField label="Full name">
+          <AthensInput value={identity.fullName} onChange={(e) => onIdentityChange("fullName", e.target.value)} />
+        </FormField>
+        <FormField label="Location">
+          <AthensInput value={identity.location} onChange={(e) => onIdentityChange("location", e.target.value)} />
+        </FormField>
+        <FormField label="Email">
+          <AthensInput value={identity.email} onChange={(e) => onIdentityChange("email", e.target.value)} />
+        </FormField>
+        <FormField label="Phone">
+          <AthensInput value={identity.phone} onChange={(e) => onIdentityChange("phone", e.target.value)} />
+        </FormField>
+        <FormField label="LinkedIn" className="sm:col-span-2">
+          <AthensInput value={identity.linkedin} onChange={(e) => onIdentityChange("linkedin", e.target.value)} />
+        </FormField>
       </div>
     </div>
   );

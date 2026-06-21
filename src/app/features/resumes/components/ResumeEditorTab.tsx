@@ -1,6 +1,7 @@
 import React, { useEffect, useCallback, useRef, useState } from "react";
 import { Wand2, Loader2 } from "lucide-react";
-import { resumeCatalog } from "../../../services/resumeCatalog";
+import { BUILTIN_TEMPLATES } from "../../../data/resumes/seedDocument";
+import { listTemplates, saveTemplate } from "../../../services/resumeStorage";
 import type { EditorDraft, ResumeTemplateRef } from "../../../types/resume";
 import { useResumeEditor } from "../hooks/useResumeEditor";
 import { ProviderIdentityPanel } from "./editor/ProviderIdentityPanel";
@@ -11,72 +12,92 @@ import { ResumePreview } from "./preview/ResumePreview";
 import { TemplatePickerModal } from "./modals/TemplatePickerModal";
 import { ThemeModal } from "./modals/ThemeModal";
 import { SectionLayoutModal } from "./modals/SectionLayoutModal";
-import { exportPreviewToPdf } from "../lib/exportPdf";
-import { exportDocumentToDocx } from "../lib/exportDocx";
 
 type ResumeEditorTabProps = {
   initialJd?: string;
-  initialResumeId?: string;
   onGenerated?: () => void;
   onSwitchToHistory?: () => void;
+  loadFromHistory?: { config: Partial<EditorDraft>; sections?: Record<string, unknown> } | null;
+  onHistoryLoaded?: () => void;
 };
 
 export function ResumeEditorTab({
   initialJd,
-  initialResumeId,
   onGenerated,
   onSwitchToHistory,
+  loadFromHistory,
+  onHistoryLoaded,
 }: ResumeEditorTabProps) {
   const editor = useResumeEditor();
   const previewRef = useRef<HTMLDivElement>(null);
-  const [templates, setTemplates] = useState<ResumeTemplateRef[]>([]);
+  const [templates, setTemplates] = useState<ResumeTemplateRef[]>(BUILTIN_TEMPLATES);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
 
-  useEffect(() => {
-    resumeCatalog.listTemplates().then(setTemplates);
+  const refreshTemplates = useCallback(async () => {
+    const stored = await listTemplates();
+    setTemplates(stored.length ? stored : BUILTIN_TEMPLATES);
   }, []);
 
   useEffect(() => {
+    void refreshTemplates();
+  }, [refreshTemplates]);
+
+  useEffect(() => {
     if (initialized || editor.loading) return;
-    (async () => {
-      if (initialResumeId) await editor.loadFromResume(initialResumeId);
-      if (initialJd) editor.updateDraft({ jobDescription: initialJd });
-      setInitialized(true);
-    })();
-  }, [initialized, editor.loading, initialJd, initialResumeId, editor]);
+    if (initialJd) editor.updateDraft({ jobDescription: initialJd });
+    setInitialized(true);
+  }, [initialized, editor.loading, initialJd, editor]);
+
+  useEffect(() => {
+    if (!loadFromHistory || editor.loading) return;
+    void editor.loadFromHistory(loadFromHistory.config, loadFromHistory.sections).then(() => {
+      onHistoryLoaded?.();
+    });
+  }, [loadFromHistory, editor, onHistoryLoaded]);
 
   const draft = editor.draft;
   const activeTemplate = templates.find((t) => t.id === draft?.templateId) ?? templates[0];
 
   const handleGenerate = async () => {
-    const run = await editor.generate();
+    setGenError(null);
+    const result = await editor.generate();
     onGenerated?.();
-    if (run?.status === "completed") onSwitchToHistory?.();
+    if (result.ok) onSwitchToHistory?.();
+    else if (result.error) setGenError(result.error);
   };
 
   const handlePdf = useCallback(async () => {
-    if (!previewRef.current || !draft) return;
+    if (!previewRef.current) return;
     setExporting(true);
     try {
-      await exportPreviewToPdf(previewRef.current, `${draft.document.identity.fullName}-resume.pdf`);
+      await editor.exportResume("pdf", previewRef.current);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : "PDF export failed");
     } finally {
       setExporting(false);
     }
-  }, [draft]);
+  }, [editor]);
 
   const handleWord = useCallback(async () => {
-    if (!draft) return;
     setExporting(true);
     try {
-      await exportDocumentToDocx(draft.document, `${draft.document.identity.fullName}-resume.docx`);
+      await editor.exportResume("docx", previewRef.current);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : "Word export failed");
     } finally {
       setExporting(false);
     }
-  }, [draft]);
+  }, [editor]);
+
+  const handleImportTemplate = async (template: ResumeTemplateRef) => {
+    await saveTemplate(template);
+    await refreshTemplates();
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -102,9 +123,17 @@ export function ResumeEditorTab({
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card flex-shrink-0">
-        <p className="text-sm text-muted-foreground">
-          {editor.generating ? editor.generateStep : "Edit identity & job description, then generate"}
-        </p>
+        <div>
+          <p className="text-sm text-muted-foreground">
+            {editor.generating ? editor.generateStep : "Edit identity & job description, then generate"}
+          </p>
+          {genError && <p className="text-xs text-destructive mt-0.5">{genError}</p>}
+          {editor.usage && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {editor.usage.totalTokens?.toLocaleString() ?? 0} tokens · ${(editor.usage.cost ?? 0).toFixed(4)}
+            </p>
+          )}
+        </div>
         <button
           type="button"
           onClick={handleGenerate}
@@ -128,9 +157,8 @@ export function ResumeEditorTab({
             exporting={exporting}
           />
           <div className="flex-1 overflow-auto p-6 subtle-scroll flex justify-center items-start">
-            <div className="origin-top scale-[0.85] sm:scale-90 lg:scale-100">
+            <div ref={previewRef} className="origin-top scale-[0.85] sm:scale-90 lg:scale-100">
               <ResumePreview
-                ref={previewRef}
                 document={draft.document}
                 template={activeTemplate}
                 theme={draft.theme}
@@ -143,9 +171,11 @@ export function ResumeEditorTab({
         <div className="flex-[45] overflow-y-auto p-4 space-y-4 subtle-scroll">
           <ProviderIdentityPanel
             draft={draft}
+            models={editor.models}
+            loadingProfile={editor.loadingProfile}
             onReloadProfile={editor.reloadProfile}
             onIdentityChange={editor.updateIdentity}
-            onProviderChange={(provider) => editor.updateDraft({ provider, model: provider === "openai" ? "gpt-4o-mini" : draft.model })}
+            onProviderChange={(provider) => editor.updateDraft({ provider, model: editor.models[0] ?? draft.model })}
             onModelChange={(model) => editor.updateDraft({ model })}
             onReasoningChange={(reasoningEffort) => editor.updateDraft({ reasoningEffort })}
           />
@@ -163,6 +193,7 @@ export function ResumeEditorTab({
         templates={templates}
         selectedId={draft.templateId}
         onSelect={(templateId) => editor.updateDraft({ templateId })}
+        onImport={handleImportTemplate}
       />
       <ThemeModal
         open={themeOpen}

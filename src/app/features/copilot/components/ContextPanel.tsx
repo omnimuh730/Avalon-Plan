@@ -54,10 +54,10 @@ export function ContextPanel({ onQuickAction, workflows, onToggleWorkflow }: Con
         </button>
         <button
           type="button"
-          onClick={() => resumeNav?.openEditor({ tab: "setup" })}
+          onClick={() => resumeNav?.openEditor({ tab: "analysis" })}
           className="w-full mt-2 text-xs font-semibold text-primary hover:underline text-left px-1"
         >
-          Resume setup →
+          Resume analysis →
         </button>
       </div>
 

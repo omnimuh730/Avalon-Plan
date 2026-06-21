@@ -7,13 +7,13 @@ import { TabTransition } from "../../components/overlays";
 import { DEFAULT_TABS, normalizeTab, PATHS, type ResumesTab } from "../../config/routes";
 import { useResumeNavigationOptional } from "../../context/ResumeNavigationContext";
 import { initResumeStorage } from "../../services/resumeStorage";
+import type { EditorDraft } from "../../types/resume";
 import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
 import { ResumeEditorTab } from "./components/ResumeEditorTab";
 import { ResumeHistoryTab } from "./components/ResumeHistoryTab";
-import { ResumeSetupTab } from "./components/ResumeSetupTab";
 import { ResumeAnalysisTab } from "./components/ResumeAnalysisTab";
 
-const TABS = ["library", "editor", "history", "analysis", "setup"] as const satisfies readonly ResumesTab[];
+const TABS = ["library", "editor", "history", "analysis"] as const satisfies readonly ResumesTab[];
 
 export function ResumesPage() {
   const { tab: tabParam } = useParams<{ tab?: string }>();
@@ -26,10 +26,9 @@ export function ResumesPage() {
   );
 
   const [editorJd, setEditorJd] = useState<string | undefined>();
-  const [editorResumeId, setEditorResumeId] = useState<string | undefined>();
-  const [analysisResumeId, setAnalysisResumeId] = useState<string | undefined>();
   const [ready, setReady] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
+  const [historyLoad, setHistoryLoad] = useState<{ config: Partial<EditorDraft>; sections?: Record<string, unknown> } | null>(null);
 
   useEffect(() => {
     initResumeStorage().then(() => setReady(true));
@@ -40,27 +39,23 @@ export function ResumesPage() {
     if (!pending || !ready) return;
     const nextTab = pending.tab ?? "editor";
     if (pending.jd) setEditorJd(pending.jd);
-    if (pending.resumeId) {
-      if (nextTab === "analysis") setAnalysisResumeId(pending.resumeId);
-      else setEditorResumeId(pending.resumeId);
-    }
     navigate(`${PATHS.resumes}/${nextTab}`);
     nav.clearPendingEditorOpen();
   }, [nav?.pendingEditorOpen, ready, nav, navigate]);
 
   const openEditor = useCallback(
-    (opts?: { resumeId?: string; jd?: string }) => {
-      setEditorResumeId(opts?.resumeId);
-      setEditorJd(opts?.jd);
+    (opts?: { jd?: string }) => {
+      if (opts?.jd) setEditorJd(opts.jd);
       navigate(`${PATHS.resumes}/editor`);
     },
     [navigate],
   );
 
-  const openAnalysis = useCallback(
-    (opts?: { resumeId?: string }) => {
-      setAnalysisResumeId(opts?.resumeId);
-      navigate(`${PATHS.resumes}/analysis`);
+  const handleLoadFromHistory = useCallback(
+    (payload: { config: Partial<EditorDraft>; sections?: Record<string, unknown> }) => {
+      setHistoryLoad(payload);
+      setEditorJd(payload.config.jobDescription);
+      navigate(`${PATHS.resumes}/editor`);
     },
     [navigate],
   );
@@ -100,10 +95,11 @@ export function ResumesPage() {
         )}
 
         <TabTransition tabKey={tab}>
-          {tab === "library" && <ResumeLibraryTab onOpenEditor={openEditor} onOpenAnalysis={openAnalysis} />}
-          {tab === "analysis" && <ResumeAnalysisTab initialResumeId={analysisResumeId} />}
-          {tab === "setup" && <ResumeSetupTab />}
-          {tab === "history" && <ResumeHistoryTab key={historyKey} />}
+          {tab === "library" && <ResumeLibraryTab onOpenAnalysis={() => setTab("analysis")} />}
+          {tab === "analysis" && <ResumeAnalysisTab />}
+          {tab === "history" && (
+            <ResumeHistoryTab key={historyKey} onLoadIntoEditor={handleLoadFromHistory} />
+          )}
         </TabTransition>
         {tab === "editor" && (
           <div className="flex-1 min-h-0 flex flex-col">
@@ -117,7 +113,8 @@ export function ResumesPage() {
             <div className="flex-1 min-h-0">
               <ResumeEditorTab
                 initialJd={editorJd}
-                initialResumeId={editorResumeId}
+                loadFromHistory={historyLoad}
+                onHistoryLoaded={() => setHistoryLoad(null)}
                 onGenerated={() => setHistoryKey((k) => k + 1)}
                 onSwitchToHistory={() => setTab("history")}
               />

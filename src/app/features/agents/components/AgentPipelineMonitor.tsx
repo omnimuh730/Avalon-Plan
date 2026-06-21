@@ -135,7 +135,7 @@ export function AgentPipelineMonitor({
         </div>
 
         {pipeline.mode === "monitor" ? (
-          <AgentMetricsPanel agent={agent} onOpenResumeSetup={() => resumeNav?.openEditor({ tab: "setup" })} />
+          <AgentMetricsPanel agent={agent} onOpenResumeSetup={() => resumeNav?.openEditor({ tab: "analysis" })} />
         ) : null}
       </div>
 

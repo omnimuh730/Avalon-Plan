@@ -1,4 +1,5 @@
-import { LayoutTemplate } from "lucide-react";
+import { useRef } from "react";
+import { LayoutTemplate, Upload } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -7,8 +8,13 @@ import {
 } from "../../../../components/ui/dialog";
 import { Badge } from "../../../../components/ui";
 import { cn } from "../../../../lib/utils";
-import type { ResumeTemplateRef } from "../../../../types/resume";
+import type { ResumeTemplateRef, TemplateLayout } from "../../../../types/resume";
 import { TemplatePreviewThumb } from "./TemplatePreviewThumb";
+import { uid } from "../../lib/generatorDefaults";
+
+const VALID_LAYOUTS: TemplateLayout[] = [
+  "standard", "two-column", "classic", "centered", "minimal", "compact", "modern", "bold",
+];
 
 type TemplatePickerModalProps = {
   open: boolean;
@@ -16,6 +22,7 @@ type TemplatePickerModalProps = {
   templates: ResumeTemplateRef[];
   selectedId: string;
   onSelect: (id: string) => void;
+  onImport?: (template: ResumeTemplateRef) => void | Promise<void>;
 };
 
 export function TemplatePickerModal({
@@ -24,7 +31,40 @@ export function TemplatePickerModal({
   templates,
   selectedId,
   onSelect,
+  onImport,
 }: TemplatePickerModalProps) {
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleImportFile = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file || !onImport) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as Partial<ResumeTemplateRef>;
+      if (!parsed.name || !parsed.layout) {
+        alert("Template JSON must include name and layout.");
+        return;
+      }
+      if (!VALID_LAYOUTS.includes(parsed.layout)) {
+        alert(`Invalid layout. Use one of: ${VALID_LAYOUTS.join(", ")}`);
+        return;
+      }
+      const template: ResumeTemplateRef = {
+        id: parsed.id || `uploaded-${uid()}`,
+        name: parsed.name,
+        layout: parsed.layout,
+        description: parsed.description || "Imported template",
+        source: "uploaded",
+      };
+      await onImport(template);
+      onSelect(template.id);
+      onOpenChange(false);
+    } catch {
+      alert("Could not parse template JSON file.");
+    }
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
@@ -34,9 +74,22 @@ export function TemplatePickerModal({
             Template
           </DialogTitle>
           <p className="text-sm text-muted-foreground">
-            The <strong>template</strong> sets the layout (columns, header & heading alignment). Use <strong>Theme</strong> to restyle it.
+            The <strong>template</strong> sets the layout. Use <strong>Theme</strong> to restyle it.
           </p>
         </DialogHeader>
+        {onImport && (
+          <div className="flex justify-end">
+            <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void handleImportFile(e.target.files)} />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="flex items-center gap-2 text-sm font-bold text-primary hover:underline"
+            >
+              <Upload className="w-4 h-4" />
+              Import template JSON
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
           {templates.map((tpl) => (
             <button
@@ -48,7 +101,7 @@ export function TemplatePickerModal({
               }}
               className={cn(
                 "text-left rounded-xl p-3 border transition-all hover:shadow-md",
-                selectedId === tpl.id ? "border-primary bg-primary/5" : "border-border bg-card"
+                selectedId === tpl.id ? "border-primary bg-primary/5" : "border-border bg-card",
               )}
             >
               <TemplatePreviewThumb layout={tpl.layout} selected={selectedId === tpl.id} />

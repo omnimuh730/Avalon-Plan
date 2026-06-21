@@ -54,9 +54,9 @@ export function AgentList({
             <Pause className="w-4 h-4" />
             Pause all
           </button>
-          <button type="button" onClick={() => resumeNav?.openEditor({ tab: "setup" })} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 min-h-9">
+          <button type="button" onClick={() => resumeNav?.openEditor({ tab: "analysis" })} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 min-h-9">
             <Zap className="w-4 h-4" />
-            Resume setup
+            Resume analysis
           </button>
         </div>
       </div>

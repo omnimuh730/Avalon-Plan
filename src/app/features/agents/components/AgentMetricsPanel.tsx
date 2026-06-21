@@ -81,7 +81,7 @@ export function AgentMetricsPanel({ agent, onOpenResumeSetup }: AgentMetricsPane
 
             {onOpenResumeSetup && (
               <button type="button" onClick={onOpenResumeSetup} className="w-full text-sm font-semibold text-primary hover:underline text-left">
-                Open resume setup →
+                Open resume analysis →
               </button>
             )}
           </>

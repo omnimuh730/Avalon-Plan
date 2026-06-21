@@ -9,6 +9,7 @@ import type {
   ResumeTheme,
   SectionLayoutConfig,
 } from "../../types/resume";
+import { defaultRefinementSteps, DEFAULT_SYSTEM_INSTRUCTION } from "../../features/resumes/lib/generatorDefaults";
 
 export const DEFAULT_IDENTITY = {
   fullName: "Jordan Doe",
@@ -47,43 +48,7 @@ export const BUILTIN_TEMPLATES: ResumeTemplateRef[] = [
   { id: "tpl-bold", name: "Bold", layout: "bold", description: "Strong headings, visual hierarchy", source: "builtin" },
 ];
 
-export const DEFAULT_REFINEMENT_STEPS: RefinementStep[] = [
-  {
-    id: "step-1",
-    title: "Experience — fine-tune 1",
-    section: "experience",
-    mode: "fine-tune",
-    prompt:
-      "Rewrite each experience bullet: starts with a past-tense action verb (not bolded), no first person, 24–28 words. Describes one IC engineer's real work: specific feature logic, system behavior.",
-  },
-  {
-    id: "step-2",
-    title: "Experience — final",
-    section: "experience",
-    mode: "final",
-    prompt:
-      "Vary sentence shape. Kill parallel 'Verb X using Y to achieve Z' rhythm — that's the AI tell. No two bullets should lean on the same technology in the same way.",
-    outputSchema: JSON.stringify(
-      {
-        type: "object",
-        properties: {
-          experiences: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                bullets: { type: "array", items: { type: "string" } },
-              },
-            },
-          },
-        },
-      },
-      null,
-      2
-    ),
-  },
-];
+export const DEFAULT_REFINEMENT_STEPS: RefinementStep[] = defaultRefinementSteps();
 
 export const DEFAULT_PIPELINE: RefinementPipeline = {
   id: "pipeline-default",
@@ -234,8 +199,9 @@ export function createDefaultEditorDraft(): EditorDraft {
     provider: "openai",
     model: "gpt-4o-mini",
     reasoningEffort: "default",
+    systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
     jobDescription: "",
-    refinementSteps: DEFAULT_REFINEMENT_STEPS.map((s) => ({ ...s, id: `${s.id}-${Date.now()}` })),
+    refinementSteps: defaultRefinementSteps(),
   };
 }
 
@@ -248,8 +214,9 @@ export function createDefaultEditorDraftFromSummary(summary: ResumeSummary, docu
     provider: "openai",
     model: "gpt-4o-mini",
     reasoningEffort: "default",
+    systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
     jobDescription: "",
-    refinementSteps: DEFAULT_REFINEMENT_STEPS.map((s) => ({ ...s, id: `${s.id}-${Date.now()}` })),
+    refinementSteps: defaultRefinementSteps(),
     baseResumeId: summary.id,
   };
 }

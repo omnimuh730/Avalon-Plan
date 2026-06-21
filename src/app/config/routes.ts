@@ -29,7 +29,7 @@ export const DEFAULT_TABS = {
   settings: "profile",
 } as const;
 
-export type ResumesTab = "library" | "editor" | "history" | "analysis" | "setup";
+export type ResumesTab = "library" | "editor" | "history" | "analysis";
 export type CalendarTab = "month" | "week" | "pipeline";
 export type ReportsTab = "overview" | "sources" | "funnel" | "velocity" | "insights";
 export type SettingsTab = "profile" | "notifications" | "integrations" | "security";

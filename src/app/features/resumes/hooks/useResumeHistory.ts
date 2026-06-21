@@ -1,116 +1,124 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { listGenerationRuns } from "../../../services/resumeStorage";
-import type { GenerationRun } from "../../../types/resume";
+import { useApplier } from "@/context/applier-context";
+import { fetchGenerationDetail, fetchGenerationHistory, type HistoryQuery } from "../../../services/resumeApi";
+import type { HistoryRunDetail, HistoryRunSummary } from "../../../types/resume";
+import { sectionsToDocument } from "../lib/sectionsToDocument";
+import type { GeneratorIdentity } from "../../../types/resume";
 
 export type HistoryFilters = {
   search: string;
-  searchTarget: "all" | "jd" | "resume";
-  status: "all" | "completed" | "failed";
+  status: string;
   model: string;
   provider: string;
   templateId: string;
-  dateFrom: string;
-  dateTo: string;
   sort: "newest" | "oldest";
 };
 
 const DEFAULT_FILTERS: HistoryFilters = {
   search: "",
-  searchTarget: "all",
-  status: "all",
+  status: "completed",
   model: "all",
   provider: "all",
   templateId: "all",
-  dateFrom: "",
-  dateTo: "",
   sort: "newest",
 };
 
 export function useResumeHistory() {
-  const [runs, setRuns] = useState<GenerationRun[]>([]);
+  const { applier, applierReady } = useApplier();
+  const [runs, setRuns] = useState<HistoryRunSummary[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState<HistoryFilters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<HistoryRunDetail | null>(null);
+  const [filters, setFilters] = useState<HistoryFilters>(DEFAULT_FILTERS);
+  const [facets, setFacets] = useState<{ models?: string[]; providers?: string[]; templates?: string[] }>({});
 
   const refresh = useCallback(async () => {
+    if (!applier?.name) {
+      setRuns([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    const data = await listGenerationRuns();
-    setRuns(data);
-    setLoading(false);
-    if (data.length && !selectedId) setSelectedId(data[0].id);
-  }, [selectedId]);
+    try {
+      const query: HistoryQuery = {
+        applierName: applier.name,
+        limit: 100,
+        offset: 0,
+        sort: filters.sort === "oldest" ? "oldest" : "newest",
+      };
+      if (filters.search) query.search = filters.search;
+      if (filters.status !== "all") query.status = filters.status;
+      if (filters.model !== "all") query.model = filters.model;
+      if (filters.provider !== "all") query.provider = filters.provider;
+      if (filters.templateId !== "all") query.templateId = filters.templateId;
+
+      const data = await fetchGenerationHistory(query);
+      setRuns(data.runs);
+      setTotal(data.total);
+      setFacets(data.facets ?? {});
+      if (!selectedId && data.runs.length) setSelectedId(data.runs[0].id);
+    } catch {
+      setRuns([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [applier?.name, filters, selectedId]);
 
   useEffect(() => {
+    if (!applierReady) return;
     void refresh();
-  }, [refresh]);
+  }, [applierReady, refresh]);
 
-  const filtered = useMemo(() => {
-    let list = [...runs];
-
-    if (filters.status !== "all") {
-      list = list.filter((r) => r.status === filters.status);
+  useEffect(() => {
+    if (!selectedId || !applier?.name) {
+      setSelectedDetail(null);
+      return;
     }
-    if (filters.model !== "all") {
-      list = list.filter((r) => r.model === filters.model);
-    }
-    if (filters.provider !== "all") {
-      list = list.filter((r) => r.provider === filters.provider);
-    }
-    if (filters.templateId !== "all") {
-      list = list.filter((r) => r.templateId === filters.templateId);
-    }
-    if (filters.dateFrom) {
-      list = list.filter((r) => r.createdAt >= filters.dateFrom);
-    }
-    if (filters.dateTo) {
-      list = list.filter((r) => r.createdAt <= filters.dateTo + "T23:59:59");
-    }
-    if (filters.search.trim()) {
-      const q = filters.search.toLowerCase();
-      list = list.filter((r) => {
-        const inJd = r.jobDescription.toLowerCase().includes(q);
-        const inResume =
-          r.document.summary.toLowerCase().includes(q) ||
-          r.document.identity.fullName.toLowerCase().includes(q) ||
-          r.jobTitle?.toLowerCase().includes(q);
-        if (filters.searchTarget === "jd") return inJd;
-        if (filters.searchTarget === "resume") return inResume;
-        return inJd || inResume || inResume;
+    let cancelled = false;
+    void fetchGenerationDetail(selectedId, applier.name)
+      .then((detail) => {
+        if (!cancelled) setSelectedDetail(detail);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedDetail(null);
       });
-    }
-
-    list.sort((a, b) => {
-      const cmp = a.createdAt.localeCompare(b.createdAt);
-      return filters.sort === "newest" ? -cmp : cmp;
-    });
-
-    return list;
-  }, [runs, filters]);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, applier?.name]);
 
   const stats = useMemo(() => {
-    const completed = runs.filter((r) => r.status === "completed");
-    return {
-      completed: completed.length,
-      totalTokens: completed.reduce((s, r) => s + r.tokens, 0),
-      totalSpend: completed.reduce((s, r) => s + r.costUsd, 0),
-      inView: filtered.length,
-    };
-  }, [runs, filtered]);
+    const completed = runs.filter((r) => r.status === "completed").length;
+    const totalTokens = runs.reduce((s, r) => s + (r.tokens ?? 0), 0);
+    const totalSpend = runs.reduce((s, r) => s + (r.costUsd ?? 0), 0);
+    return { completed, totalTokens, totalSpend, inView: runs.length };
+  }, [runs]);
 
-  const selected = filtered.find((r) => r.id === selectedId) ?? filtered[0] ?? null;
+  const selected = selectedDetail ?? runs.find((r) => r.id === selectedId) ?? null;
 
-  const models = useMemo(() => [...new Set(runs.map((r) => r.model))], [runs]);
-  const providers = useMemo(() => [...new Set(runs.map((r) => r.provider))], [runs]);
-  const templates = useMemo(() => [...new Set(runs.map((r) => r.templateId))], [runs]);
+  const models = facets.models ?? [...new Set(runs.map((r) => r.model))];
+  const providers = facets.providers ?? [...new Set(runs.map((r) => r.provider))];
+  const templates = facets.templates ?? [...new Set(runs.map((r) => r.templateId).filter(Boolean) as string[])];
+
+  const detailDocument = useMemo(() => {
+    if (!selectedDetail?.sections || !selectedDetail.identity) return null;
+    return sectionsToDocument(
+      selectedDetail.sections as Parameters<typeof sectionsToDocument>[0],
+      selectedDetail.identity as GeneratorIdentity,
+    );
+  }, [selectedDetail]);
 
   return {
-    runs,
-    filtered,
     loading,
+    runs,
+    total,
+    filtered: runs,
+    selected,
+    selectedDetail,
+    detailDocument,
     filters,
     setFilters,
-    selected,
-    selectedId,
     setSelectedId,
     stats,
     models,
