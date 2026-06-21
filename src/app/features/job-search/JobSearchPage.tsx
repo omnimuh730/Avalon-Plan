@@ -13,7 +13,7 @@ import { JobBulkActionsBar } from "./components/JobBulkActionsBar";
 import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { useJobSelection } from "./hooks/useJobSelection";
-import { useJobsList } from "./hooks/useJobsList";
+import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { cn } from "../../lib/utils";
 
 export function JobSearchPage() {
@@ -31,7 +31,7 @@ export function JobSearchPage() {
 
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
-  const { jobs, total, loading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback } =
+  const { jobs, total, loading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason } =
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
 
@@ -96,8 +96,7 @@ export function JobSearchPage() {
 
       {recommendationFallback && filters.sort === "matchScore" && (
         <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-900 dark:text-amber-100">
-          Personalized ranking is unavailable. Analyze at least one resume and ensure Qdrant + Ollama
-          (`mxbai-embed-large`) are running.
+          {recommendationFallbackMessage(recommendationReason)}
         </div>
       )}
 

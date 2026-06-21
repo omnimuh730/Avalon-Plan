@@ -10,7 +10,7 @@ import { SkillGraphCanvas } from "./SkillGraphCanvas";
 import { GraphToolbar } from "./GraphToolbar";
 import { SkillInspectorPanel } from "./SkillInspectorPanel";
 import { SkillStrengthPanel } from "./SkillStrengthPanel";
-import { filterGraphToResumeSeeds, appendLocalSkillNodes, type GraphRenderData } from "../lib/graphAdapter";
+import { filterGraphToResumeSeeds, appendLocalSkillNodes, buildDirectSkillGraphData, type GraphRenderData } from "../lib/graphAdapter";
 
 const ALL_RELATIONS: SkillRelationType[] = [
   "PREREQUISITE_OF",

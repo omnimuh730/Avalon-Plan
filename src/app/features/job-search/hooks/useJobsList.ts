@@ -16,6 +16,7 @@ type ListResponse = {
   success?: boolean;
   data?: Record<string, unknown>[];
   recommendationFallback?: boolean;
+  recommendationReason?: string | null;
   pagination?: { total: number; page: number; limit: number; totalPages: number };
 };
 
@@ -97,6 +98,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   const [loading, setLoading] = useState(false);
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
   const [recommendationFallback, setRecommendationFallback] = useState(false);
+  const [recommendationReason, setRecommendationReason] = useState<string | null>(null);
 
   const jobs = useMemo(
     () => rawJobs.filter((job) => !excludeIds.has(job.id)),
@@ -135,10 +137,12 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
           setRawJobs(res.data.map((doc) => mapDocToJob(doc, applier)));
           setTotal(res.pagination?.total ?? res.data.length);
           setRecommendationFallback(Boolean(res.recommendationFallback));
+          setRecommendationReason(res.recommendationReason ?? null);
         } else {
           setRawJobs([]);
           setTotal(0);
           setRecommendationFallback(false);
+          setRecommendationReason(null);
         }
       } catch (e) {
         console.error(e);
@@ -200,5 +204,23 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     statusCounts,
     applierReady,
     recommendationFallback,
+    recommendationReason,
   };
 }
+
+function recommendationFallbackMessage(reason: string | null): string {
+  switch (reason) {
+    case "no_candidates":
+      return "Job embeddings are not indexed yet. Run `npm run backfill-job-embeddings` in Athens-server (one-time for existing jobs). New jobs embed automatically.";
+    case "embedding_failed":
+      return "Could not build resume/profile embeddings. Re-analyze a resume and ensure Ollama (`mxbai-embed-large`) is running.";
+    case "no_analyzed_resumes":
+      return "Analyze at least one resume in My Resumes → Library before using Best match.";
+    case "qdrant_not_ready":
+      return "Qdrant is not reachable. Start it with `npm run qdrant:start` in Athens-server.";
+    default:
+      return "Personalized ranking is unavailable. Analyze at least one resume and ensure Qdrant + Ollama (`mxbai-embed-large`) are running.";
+  }
+}
+
+export { recommendationFallbackMessage };

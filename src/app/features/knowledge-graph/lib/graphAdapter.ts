@@ -115,6 +115,48 @@ export function buildGraphData(
   return { nodes, links };
 }
 
+/** Render only analyzed resume/profile skills (not the full world graph). */
+export function buildDirectSkillGraphData(
+  skills: { id: string; label: string; strength: number }[],
+  worldGraph: SkillGraph | null,
+  edges: { fromId: string; toId: string; type: string; weight: number }[] = [],
+): GraphRenderData {
+  const worldById = new Map((worldGraph?.nodes ?? []).map((n) => [n.id, n]));
+  const skillIds = new Set(skills.map((s) => s.id));
+
+  const nodes: GraphRenderNode[] = skills.map((s) => {
+    const world = worldById.get(s.id);
+    const activation = Math.max(0.25, Math.min(1, s.strength / 10));
+    return {
+      id: s.id,
+      label: world?.label ?? s.label,
+      category: world?.category ?? "concept",
+      blurb: world?.blurb,
+      activation,
+      evidence: activation,
+      isSeed: true,
+      strength: s.strength,
+    };
+  });
+
+  const links: GraphRenderLink[] = [];
+  for (const e of edges) {
+    if (!skillIds.has(e.fromId) || !skillIds.has(e.toId)) continue;
+    const energy =
+      ((nodes.find((n) => n.id === e.fromId)?.activation ?? 0)
+        + (nodes.find((n) => n.id === e.toId)?.activation ?? 0)) / 2;
+    links.push({
+      source: e.fromId,
+      target: e.toId,
+      type: e.type,
+      weight: e.weight,
+      energy,
+    });
+  }
+
+  return { nodes, links };
+}
+
 /** Keep only resume seed skills and edges between them (no world-graph propagation). */
 export function filterGraphToResumeSeeds(data: GraphRenderData): GraphRenderData {
   const seedIds = new Set(data.nodes.filter((n) => n.isSeed).map((n) => n.id));

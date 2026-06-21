@@ -15,12 +15,13 @@ export function KnowledgeGraphSettingsTab() {
     <div className="h-[calc(100vh-14rem)] min-h-[520px] rounded-xl border border-border overflow-hidden">
       <KnowledgeGraphView
         title="Profile knowledge graph"
-        description="Aggregated from all analyzed resumes. Analyze pending skills to expand the world graph and link new skills in Neo4j."
+        description="Aggregated from all analyzed resumes (max strength per skill). React from one resume and Angular from another both appear here after analyze."
         graph={graph}
         enrichment={enrichment}
         showEnrichment
         showProfileToggle={false}
         showStrengthPanel
+        resumeSeedFocus
         applierName={applier?.name}
       />
     </div>
