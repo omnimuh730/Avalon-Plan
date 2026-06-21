@@ -219,7 +219,8 @@ Athens-server/
 | `docker.sock: connect: no such file` | Docker Desktop is not running. Use `npm run qdrant:start` from **Athens-server/** instead of Docker. |
 | `no configuration file provided: not found` | Run `docker compose` from **Athens-server/** (where `docker-compose.yml` lives), not the repo root. |
 | `[embeddings] Ollama not ready` | Start Ollama app or run `ollama serve`; then `npm run ollama-pull-embed`. |
-| `[qdrant] QDRANT_URL not set` | Set `QDRANT_URL` and start Qdrant (`docker compose up -d qdrant`). |
+| `[qdrant] QDRANT_URL not set` | Set `QDRANT_URL` and start Qdrant (`npm run qdrant:start` or Docker). |
+| `[qdrant] init failed: fetch failed` (but curl works) | Restart the server after updating — Qdrant uses native `fetch` (Node 22+ compatible). Confirm with `npm run qdrant:start`. |
 | Job Search shows fallback banner | Analyze at least one resume; run both backfill scripts; confirm Qdrant + Ollama. |
 | Wrong vector dimension errors | Model/dimension changed — reset Qdrant data and re-run backfills. |
 | Neo4j errors | Check `NEO4J_*` in `.env`; skill enrichment disabled until Neo4j is up unless `NEO4J_REQUIRED=true`. |

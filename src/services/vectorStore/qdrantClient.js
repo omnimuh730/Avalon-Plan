@@ -1,28 +1,40 @@
 import crypto from 'crypto';
-import { QdrantClient } from '@qdrant/js-client-rest';
 import {
 	JOB_VECTORS_COLLECTION,
 	RESUME_VECTORS_COLLECTION,
 	getVectorDimensions,
 } from './collections.js';
 
-let client = null;
 let collectionsReady = false;
 
 export function isQdrantConfigured() {
 	return Boolean(process.env.QDRANT_URL);
 }
 
-function getClient() {
-	if (!isQdrantConfigured()) return null;
-	if (!client) {
-		client = new QdrantClient({
-			url: process.env.QDRANT_URL,
-			apiKey: process.env.QDRANT_API_KEY || undefined,
-			checkCompatibility: false,
-		});
+function baseUrl() {
+	return (process.env.QDRANT_URL || '').replace(/\/$/, '');
+}
+
+async function qdrantFetch(path, { method = 'GET', body } = {}) {
+	const url = `${baseUrl()}${path}`;
+	const headers = { 'Content-Type': 'application/json' };
+	if (process.env.QDRANT_API_KEY) {
+		headers['api-key'] = process.env.QDRANT_API_KEY;
 	}
-	return client;
+
+	const res = await fetch(url, {
+		method,
+		headers,
+		body: body !== undefined ? JSON.stringify(body) : undefined,
+	});
+
+	if (!res.ok) {
+		const errText = await res.text().catch(() => '');
+		throw new Error(`Qdrant ${method} ${path} → ${res.status}: ${errText.slice(0, 300)}`);
+	}
+
+	if (res.status === 204) return null;
+	return res.json();
 }
 
 /** Deterministic UUID from Mongo id string for Qdrant point ids. */
@@ -32,15 +44,17 @@ export function toPointId(mongoId) {
 }
 
 async function ensureCollection(name) {
-	const qdrant = getClient();
-	if (!qdrant) return false;
+	if (!isQdrantConfigured()) return false;
 
 	const dim = getVectorDimensions();
-	const collections = await qdrant.getCollections();
-	const exists = collections.collections?.some((c) => c.name === name);
+	const list = await qdrantFetch('/collections');
+	const exists = list?.result?.collections?.some((c) => c.name === name);
 	if (!exists) {
-		await qdrant.createCollection(name, {
-			vectors: { size: dim, distance: 'Cosine' },
+		await qdrantFetch(`/collections/${encodeURIComponent(name)}`, {
+			method: 'PUT',
+			body: {
+				vectors: { size: dim, distance: 'Cosine' },
+			},
 		});
 	}
 	return true;
@@ -73,42 +87,43 @@ export function isQdrantReady() {
 }
 
 export async function upsertJobVector(jobId, vector, payload = {}) {
-	const qdrant = getClient();
-	if (!qdrant || !collectionsReady) return false;
+	if (!isQdrantReady()) return false;
 
-	await qdrant.upsert(JOB_VECTORS_COLLECTION, {
-		wait: true,
-		points: [{
-			id: toPointId(jobId),
-			vector,
-			payload: { jobId: String(jobId), ...payload },
-		}],
+	await qdrantFetch(`/collections/${encodeURIComponent(JOB_VECTORS_COLLECTION)}/points?wait=true`, {
+		method: 'PUT',
+		body: {
+			points: [{
+				id: toPointId(jobId),
+				vector,
+				payload: { jobId: String(jobId), ...payload },
+			}],
+		},
 	});
 	return true;
 }
 
 export async function upsertResumeVector(resumeId, vector, payload = {}) {
-	const qdrant = getClient();
-	if (!qdrant || !collectionsReady) return false;
+	if (!isQdrantReady()) return false;
 
-	await qdrant.upsert(RESUME_VECTORS_COLLECTION, {
-		wait: true,
-		points: [{
-			id: toPointId(resumeId),
-			vector,
-			payload: { resumeId: String(resumeId), ...payload },
-		}],
+	await qdrantFetch(`/collections/${encodeURIComponent(RESUME_VECTORS_COLLECTION)}/points?wait=true`, {
+		method: 'PUT',
+		body: {
+			points: [{
+				id: toPointId(resumeId),
+				vector,
+				payload: { resumeId: String(resumeId), ...payload },
+			}],
+		},
 	});
 	return true;
 }
 
 export async function deleteResumeVector(resumeId) {
-	const qdrant = getClient();
-	if (!qdrant || !collectionsReady) return false;
+	if (!isQdrantReady()) return false;
 	try {
-		await qdrant.delete(RESUME_VECTORS_COLLECTION, {
-			wait: true,
-			points: [toPointId(resumeId)],
+		await qdrantFetch(`/collections/${encodeURIComponent(RESUME_VECTORS_COLLECTION)}/points/delete?wait=true`, {
+			method: 'POST',
+			body: { points: [toPointId(resumeId)] },
 		});
 	} catch {
 		// Point may not exist
@@ -117,12 +132,11 @@ export async function deleteResumeVector(resumeId) {
 }
 
 export async function deleteJobVector(jobId) {
-	const qdrant = getClient();
-	if (!qdrant || !collectionsReady) return false;
+	if (!isQdrantReady()) return false;
 	try {
-		await qdrant.delete(JOB_VECTORS_COLLECTION, {
-			wait: true,
-			points: [toPointId(jobId)],
+		await qdrantFetch(`/collections/${encodeURIComponent(JOB_VECTORS_COLLECTION)}/points/delete?wait=true`, {
+			method: 'POST',
+			body: { points: [toPointId(jobId)] },
 		});
 	} catch {
 		// Point may not exist
@@ -131,15 +145,18 @@ export async function deleteJobVector(jobId) {
 }
 
 export async function searchJobVectors(queryVector, limit = 200) {
-	const qdrant = getClient();
-	if (!qdrant || !collectionsReady) return [];
+	if (!isQdrantReady()) return [];
 
-	const result = await qdrant.search(JOB_VECTORS_COLLECTION, {
-		vector: queryVector,
-		limit,
-		with_payload: true,
+	const data = await qdrantFetch(`/collections/${encodeURIComponent(JOB_VECTORS_COLLECTION)}/points/search`, {
+		method: 'POST',
+		body: {
+			vector: queryVector,
+			limit,
+			with_payload: true,
+		},
 	});
-	return (result || []).map((hit) => ({
+
+	return (data?.result || []).map((hit) => ({
 		jobId: hit.payload?.jobId || null,
 		score: hit.score ?? 0,
 		payload: hit.payload || {},
@@ -147,15 +164,18 @@ export async function searchJobVectors(queryVector, limit = 200) {
 }
 
 export async function getResumeVector(resumeId) {
-	const qdrant = getClient();
-	if (!qdrant || !collectionsReady) return null;
+	if (!isQdrantReady()) return null;
 
-	const result = await qdrant.retrieve(RESUME_VECTORS_COLLECTION, {
-		ids: [toPointId(resumeId)],
-		with_vector: true,
-		with_payload: true,
+	const data = await qdrantFetch(`/collections/${encodeURIComponent(RESUME_VECTORS_COLLECTION)}/points`, {
+		method: 'POST',
+		body: {
+			ids: [toPointId(resumeId)],
+			with_vector: true,
+			with_payload: true,
+		},
 	});
-	const point = result?.[0];
+
+	const point = data?.result?.[0];
 	if (!point?.vector) return null;
 	return { vector: point.vector, payload: point.payload || {} };
 }
