@@ -7,6 +7,7 @@ import {
   mergeSkillsIntoPersonalInfo,
   rebuildProfileGraph,
 } from "./userKnowledgeGraph/index.js";
+import { mergeSkillProfiles } from "./resumeSkillMerge.js";
 
 async function findAccount(applierNameRaw) {
   const name = String(applierNameRaw ?? "").trim();
@@ -53,7 +54,7 @@ function parseSkillProfileJson(content) {
   }
 
   if (!out.length) throw new Error("LLM returned no usable skills");
-  return out.slice(0, 50);
+  return out;
 }
 
 async function extractSkillsWithLlm(extractedText, profile) {
@@ -88,7 +89,7 @@ async function extractSkillsWithLlm(extractedText, profile) {
   });
 
   return {
-    skillProfile: parseSkillProfileJson(result?.content),
+    skillProfile: mergeSkillProfiles(parseSkillProfileJson(result?.content), text),
     usage: result?.usage || null,
     provider: providerId,
     model,
