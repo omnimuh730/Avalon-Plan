@@ -42,7 +42,7 @@ type JobDescriptionDialogProps = {
   onApply?: () => void;
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
-  onMarkApplied?: () => void;
+  onCancel?: () => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -143,7 +143,7 @@ export function JobDescriptionDialog({
   onApply,
   onMarkScheduled,
   onMarkDeclined,
-  onMarkApplied,
+  onCancel,
 }: JobDescriptionDialogProps) {
   const { displayJob, loading, error } = useJobDetail(job, open);
   const j = displayJob ?? job;
@@ -333,7 +333,7 @@ export function JobDescriptionDialog({
                 onApply={onApply}
                 onMarkScheduled={() => onMarkScheduled?.()}
                 onMarkDeclined={() => onMarkDeclined?.()}
-                onMarkApplied={() => onMarkApplied?.()}
+                onCancel={() => onCancel?.()}
                 size="default"
                 showExternalLinkOnApply={false}
               />

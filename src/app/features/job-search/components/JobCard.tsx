@@ -49,7 +49,7 @@ type JobCardProps = {
   onApply?: () => void;
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
-  onMarkApplied?: () => void;
+  onCancel?: () => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -94,7 +94,7 @@ export function JobCard({
   onApply,
   onMarkScheduled,
   onMarkDeclined,
-  onMarkApplied,
+  onCancel,
 }: JobCardProps) {
   const [jdOpen, setJdOpen] = useState(false);
 
@@ -226,7 +226,7 @@ export function JobCard({
               onApply={() => onApply?.()}
               onMarkScheduled={() => onMarkScheduled?.()}
               onMarkDeclined={() => onMarkDeclined?.()}
-              onMarkApplied={() => onMarkApplied?.()}
+              onCancel={() => onCancel?.()}
             />
           </div>
         </div>
@@ -240,7 +240,7 @@ export function JobCard({
         onApply={() => onApply?.()}
         onMarkScheduled={() => onMarkScheduled?.()}
         onMarkDeclined={() => onMarkDeclined?.()}
-        onMarkApplied={() => onMarkApplied?.()}
+        onCancel={() => onCancel?.()}
       />
     </>
   );

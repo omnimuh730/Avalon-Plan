@@ -95,9 +95,49 @@ export function useJobApplicationActions(
     [applier, onJobUpdated, post, refreshStatusCounts, setPending],
   );
 
+  const cancelJobStatus = useCallback(
+    async (job: Job) => {
+      const jobId = job.backendId || job.id;
+      if (!applier?.name) {
+        toast.error("Select a profile before updating status");
+        return;
+      }
+
+      setPending(jobId, true);
+      try {
+        let res: JobMutationResponse;
+
+        if (job.status === "applied") {
+          res = (await post(`/jobs/${jobId}/unapply`, {
+            applierName: applier.name,
+          })) as JobMutationResponse;
+        } else if (job.status === "scheduled" || job.status === "declined") {
+          res = (await post(`/jobs/${jobId}/status`, {
+            applierName: applier.name,
+            status: JOB_STATUS_TO_API.applied,
+          })) as JobMutationResponse;
+        } else {
+          return;
+        }
+
+        if (res?.success && res.data) {
+          onJobUpdated(mapDocToJob(res.data, applier));
+          await refreshStatusCounts();
+          toast.success(job.status === "applied" ? "Application removed" : "Moved back to Applied");
+        }
+      } catch {
+        toast.error("Failed to cancel status");
+      } finally {
+        setPending(jobId, false);
+      }
+    },
+    [applier, onJobUpdated, post, refreshStatusCounts, setPending],
+  );
+
   return {
     applyToJob,
     updateJobStatus,
+    cancelJobStatus,
     isPending,
   };
 }

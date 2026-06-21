@@ -45,3 +45,12 @@ export async function updateJobStatus(
   });
   return parseJson(res);
 }
+
+export async function unapplyFromJob(jobId: string, applierName: string): Promise<JobMutationResponse> {
+  const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/unapply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applierName }),
+  });
+  return parseJson(res);
+}

@@ -36,7 +36,7 @@ export function JobSearchPage() {
   const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, patchJob, refreshStatusCounts } =
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
-  const { applyToJob, updateJobStatus, isPending } = useJobApplicationActions(patchJob, refreshStatusCounts);
+  const { applyToJob, updateJobStatus, cancelJobStatus, isPending } = useJobApplicationActions(patchJob, refreshStatusCounts);
   const {
     session: embeddingSession,
     missing: missingEmbeddings,
@@ -191,7 +191,7 @@ export function JobSearchPage() {
               onApply={(job) => void applyToJob(job)}
               onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
               onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
-              onMarkApplied={(job) => void updateJobStatus(job, "applied")}
+              onCancel={(job) => void cancelJobStatus(job)}
             />
           </TabTransition>
         </div>

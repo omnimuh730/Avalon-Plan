@@ -1,6 +1,7 @@
 import React from "react";
-import { CalendarCheck, ExternalLink, Loader2, XCircle } from "lucide-react";
+import { CalendarCheck, ExternalLink, Loader2, X, XCircle } from "lucide-react";
 import { Button } from "../../../components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip";
 import type { Job } from "../../../types";
 
 type JobStatusActionsProps = {
@@ -9,10 +10,49 @@ type JobStatusActionsProps = {
   onApply: () => void;
   onMarkScheduled: () => void;
   onMarkDeclined: () => void;
-  onMarkApplied: () => void;
+  onCancel: () => void;
   size?: "sm" | "default";
   showExternalLinkOnApply?: boolean;
 };
+
+function cancelTooltip(job: Job): string {
+  if (job.status === "applied") {
+    return "Cancel application — moves back to Posted";
+  }
+  if (job.status === "scheduled" || job.status === "declined") {
+    return "Cancel — moves back to Applied";
+  }
+  return "Cancel";
+}
+
+function StatusCancelButton({
+  job,
+  pending,
+  onCancel,
+}: {
+  job: Job;
+  pending: boolean;
+  onCancel: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
+          disabled={pending}
+          aria-label={cancelTooltip(job)}
+          onClick={onCancel}
+        >
+          {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent sideOffset={6}>{cancelTooltip(job)}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 export function JobStatusActions({
   job,
@@ -20,7 +60,7 @@ export function JobStatusActions({
   onApply,
   onMarkScheduled,
   onMarkDeclined,
-  onMarkApplied,
+  onCancel,
   size = "sm",
   showExternalLinkOnApply = true,
 }: JobStatusActionsProps) {
@@ -51,40 +91,13 @@ export function JobStatusActions({
           {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
           Declined
         </Button>
+        <StatusCancelButton job={job} pending={pending} onCancel={onCancel} />
       </>
     );
   }
 
-  if (job.status === "scheduled") {
-    return (
-      <>
-        <Button size={size} variant="outline" disabled={pending} onClick={onMarkApplied}>
-          Applied
-        </Button>
-        <Button
-          size={size}
-          variant="outline"
-          className="text-rose-600 hover:text-rose-700"
-          disabled={pending}
-          onClick={onMarkDeclined}
-        >
-          Declined
-        </Button>
-      </>
-    );
-  }
-
-  if (job.status === "declined") {
-    return (
-      <>
-        <Button size={size} variant="outline" disabled={pending} onClick={onMarkApplied}>
-          Applied
-        </Button>
-        <Button size={size} variant="outline" disabled={pending} onClick={onMarkScheduled}>
-          Scheduled
-        </Button>
-      </>
-    );
+  if (job.status === "scheduled" || job.status === "declined") {
+    return <StatusCancelButton job={job} pending={pending} onCancel={onCancel} />;
   }
 
   return null;
