@@ -1,9 +1,16 @@
 import React, { useState } from "react";
-import { Inbox, Send, FileEdit, Trash2, AlertOctagon, Plus, Tag } from "lucide-react";
+import { Inbox, Send, FileEdit, Trash2, AlertOctagon, Plus, Tag, MoreVertical } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { LABEL_DOT_CLASS, type MailFolderId } from "../../../data/mail";
 import { buildLabelTree } from "../hooks/useMailLabels";
 import { MailCreateLabelDialog } from "./MailCreateLabelDialog";
+import { MailRemoveLabelDialog } from "./MailRemoveLabelDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/dropdown-menu";
 import type { MailLabel } from "../../../types";
 import type { FolderCounts } from "@/api/mail";
 
@@ -31,6 +38,7 @@ type MailSidebarProps = {
   onFolderChange: (f: MailFolderId) => void;
   onLabelChange: (label: string | null) => void;
   onCreateLabel: (name: string, parentId?: string) => void;
+  onRemoveLabel: (labelId: string) => Promise<boolean>;
   onCompose?: () => void;
 };
 
@@ -42,10 +50,24 @@ export function MailSidebar({
   onFolderChange,
   onLabelChange,
   onCreateLabel,
+  onRemoveLabel,
   onCompose,
 }: MailSidebarProps) {
   const [createOpen, setCreateOpen] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<MailLabel | null>(null);
+  const [removing, setRemoving] = useState(false);
   const tree = buildLabelTree(labels);
+
+  const handleRemoveConfirm = async () => {
+    if (!removeTarget) return;
+    setRemoving(true);
+    const ok = await onRemoveLabel(removeTarget.id);
+    setRemoving(false);
+    if (ok) {
+      if (labelFilter === removeTarget.name) onLabelChange(null);
+      setRemoveTarget(null);
+    }
+  };
 
   return (
     <>
@@ -95,26 +117,50 @@ export function MailSidebar({
           </p>
           <div className="space-y-0.5">
             {tree.map(({ label: l, depth }) => (
-              <button
+              <div
                 key={l.id}
-                type="button"
-                onClick={() => onLabelChange(labelFilter === l.name ? null : l.name)}
-                className={cn(
-                  "w-full flex items-center gap-2 py-1.5 rounded-lg text-sm transition-colors",
-                  labelFilter === l.name
-                    ? "bg-primary/10 text-primary font-semibold"
-                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
-                )}
-                style={{ paddingLeft: `${12 + depth * 14}px`, paddingRight: "12px" }}
+                className="group/label relative flex items-center min-w-0"
+                style={{ paddingLeft: `${12 + depth * 14}px` }}
               >
-                <span
+                <button
+                  type="button"
+                  onClick={() => onLabelChange(labelFilter === l.name ? null : l.name)}
                   className={cn(
-                    "w-2 h-2 rounded-full flex-shrink-0",
-                    LABEL_DOT_CLASS[l.color],
+                    "flex-1 flex items-center gap-2 py-1.5 pr-8 rounded-lg text-sm transition-colors min-w-0",
+                    labelFilter === l.name
+                      ? "bg-primary/10 text-primary font-semibold"
+                      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
                   )}
-                />
-                <span className="truncate">{l.name}</span>
-              </button>
+                >
+                  <span
+                    className={cn(
+                      "w-2 h-2 rounded-full flex-shrink-0",
+                      LABEL_DOT_CLASS[l.color],
+                    )}
+                  />
+                  <span className="truncate">{l.name}</span>
+                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="absolute right-0 top-1/2 -translate-y-1/2 p-1 rounded-md opacity-0 group-hover/label:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground"
+                      aria-label={`Label options for ${l.name}`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <MoreVertical className="w-3.5 h-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => setRemoveTarget(l)}
+                    >
+                      Remove label
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             ))}
             <button
               type="button"
@@ -133,6 +179,14 @@ export function MailSidebar({
         onOpenChange={setCreateOpen}
         labels={labels}
         onCreate={onCreateLabel}
+      />
+
+      <MailRemoveLabelDialog
+        label={removeTarget}
+        open={Boolean(removeTarget)}
+        onOpenChange={(open) => !open && setRemoveTarget(null)}
+        onConfirm={() => void handleRemoveConfirm()}
+        removing={removing}
       />
     </>
   );

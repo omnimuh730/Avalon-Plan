@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchMailLabels, createMailLabel } from "@/api/mail";
+import { fetchMailLabels, createMailLabel, deleteMailLabel } from "@/api/mail";
 import type { BadgeVariant, MailLabel } from "../../../types";
 
 const LABEL_COLORS: BadgeVariant[] = ["violet", "blue", "success", "amber", "pink", "subtle"];
@@ -56,7 +56,22 @@ export function useMailLabels(applierName: string | undefined) {
     [applierName, reload],
   );
 
-  return { labels, createLabel, ready, loading, reload };
+  const removeLabel = useCallback(
+    async (labelId: string) => {
+      if (!applierName) return false;
+      try {
+        await deleteMailLabel(applierName, labelId);
+        await reload();
+        return true;
+      } catch (e) {
+        console.error("delete mail label failed", e);
+        return false;
+      }
+    },
+    [applierName, reload],
+  );
+
+  return { labels, createLabel, removeLabel, ready, loading, reload };
 }
 
 /** Build a nested tree for sidebar rendering. */

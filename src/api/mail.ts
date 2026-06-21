@@ -33,6 +33,7 @@ export type MailThreadsResult = {
   total: number;
   page: number;
   pageSize: number;
+  fromCache?: boolean;
 };
 
 export async function fetchMailThreads(
@@ -43,15 +44,25 @@ export async function fetchMailThreads(
     search?: string;
     page?: number;
     pageSize?: number;
+    cacheOnly?: boolean;
   } = {},
 ): Promise<MailThreadsResult> {
-  const query = qs({ applierName, ...opts });
+  const query = qs({
+    applierName,
+    folder: opts.folder,
+    label: opts.label,
+    search: opts.search,
+    page: opts.page,
+    pageSize: opts.pageSize,
+    cacheOnly: opts.cacheOnly ? "true" : undefined,
+  });
   const data = await mailFetch<MailThreadsResult>(`mail/threads${query}`);
   return {
     threads: data.threads,
     total: data.total,
     page: data.page,
     pageSize: data.pageSize,
+    fromCache: data.fromCache,
   };
 }
 
@@ -131,6 +142,13 @@ export async function createMailLabel(applierName: string, name: string, parentI
     body: JSON.stringify({ applierName, name, parentId }),
   });
   return data.label;
+}
+
+export async function deleteMailLabel(applierName: string, labelId: string) {
+  return mailFetch<{ deleted: string }>(
+    `mail/labels/${encodeURIComponent(labelId)}${qs({ applierName })}`,
+    { method: "DELETE", body: JSON.stringify({ applierName }) },
+  );
 }
 
 export async function checkMailCredentials(applierName: string) {

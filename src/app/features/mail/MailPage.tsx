@@ -29,7 +29,7 @@ export function MailPage() {
   const [folderCounts, setFolderCounts] = useState<FolderCounts | undefined>();
 
   const mail = useMailThreads(applierName);
-  const { labels, createLabel, reload: reloadLabels } = useMailLabels(applierName);
+  const { labels, createLabel, removeLabel, reload: reloadLabels } = useMailLabels(applierName);
   const { loadThreads, fetchThreadBody, page, pageSize, setPage, setPageSize, total } = mail;
 
   const loadCurrentPage = useCallback(() => {
@@ -143,6 +143,7 @@ export function MailPage() {
         onFolderChange={handleFolderChange}
         onLabelChange={handleLabelChange}
         onCreateLabel={(name, parentId) => createLabel(name, parentId)}
+        onRemoveLabel={removeLabel}
         onCompose={() => mail.openCompose()}
       />
 
@@ -155,7 +156,12 @@ export function MailPage() {
               placeholder="Search mail..."
               className="flex-1 max-w-xl"
             />
-            {mail.loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+            {mail.syncing && !mail.loading && (
+              <span className="text-xs text-muted-foreground whitespace-nowrap">Syncing…</span>
+            )}
+            {mail.loading && mail.threads.length === 0 && (
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            )}
             <button
               type="button"
               onClick={reload}

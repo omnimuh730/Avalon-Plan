@@ -34,6 +34,7 @@ export function useMailThreads(applierName: string | undefined) {
     page: 1,
     pageSize: 25,
   });
+  const loadGen = useRef(0);
 
   const loadThreads = useCallback(
     async (opts: Partial<LoadOpts> & { folder: MailFolderId; labelFilter: string | null; search: string }) => {
@@ -49,22 +50,50 @@ export function useMailThreads(applierName: string | undefined) {
       setCurrentFolder(merged.folder);
       setPage(merged.page);
       setPageSize(merged.pageSize);
-      setLoading(true);
+
+      const gen = ++loadGen.current;
       setError(null);
+      setSyncing(true);
+
+      const queryOpts = {
+        folder: merged.folder,
+        label: merged.labelFilter ?? undefined,
+        search: merged.search || undefined,
+        page: merged.page,
+        pageSize: merged.pageSize,
+      };
+
+      let showedCache = false;
       try {
-        const data = await fetchMailThreads(applierName, {
-          folder: merged.folder,
-          label: merged.labelFilter ?? undefined,
-          search: merged.search || undefined,
-          page: merged.page,
-          pageSize: merged.pageSize,
-        });
-        setThreads(data.threads);
-        setTotal(data.total);
+        const cached = await fetchMailThreads(applierName, { ...queryOpts, cacheOnly: true });
+        if (gen !== loadGen.current) return;
+        if (cached.threads.length > 0) {
+          setThreads(cached.threads);
+          setTotal(cached.total);
+          setLoading(false);
+          showedCache = true;
+        } else {
+          setLoading(true);
+        }
+      } catch {
+        setLoading(true);
+      }
+
+      try {
+        const fresh = await fetchMailThreads(applierName, queryOpts);
+        if (gen !== loadGen.current) return;
+        setThreads(fresh.threads);
+        setTotal(fresh.total);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load mail");
+        if (gen !== loadGen.current) return;
+        if (!showedCache) {
+          setError(e instanceof Error ? e.message : "Failed to load mail");
+        }
       } finally {
-        setLoading(false);
+        if (gen === loadGen.current) {
+          setLoading(false);
+          setSyncing(false);
+        }
       }
     },
     [applierName],
