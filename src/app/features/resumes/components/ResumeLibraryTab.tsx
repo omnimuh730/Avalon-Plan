@@ -3,7 +3,7 @@ import { formatDistanceToNow } from "date-fns";
 import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2, Sparkles, Eye } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { SearchField } from "../../../components/shared/SearchField";
-import { Badge } from "../../../components/ui";
+import { Badge, Pill } from "../../../components/ui";
 import {
   bulkUploadUserResumes,
   deleteUserResume,
@@ -25,15 +25,21 @@ import {
 import { AthensInput, FormField } from "../../../components/forms";
 import { downloadBlob } from "../lib/buildResumeModel";
 import { ResumePreviewDialog } from "./ResumePreviewDialog";
+import { GeneratedResumesSection } from "./GeneratedResumesSection";
+import type { EditorDraft } from "../../../types/resume";
 
 type ResumeLibraryTabProps = {
   onOpenAnalysis?: () => void;
+  onLoadIntoEditor?: (payload: { config: Partial<EditorDraft>; sections?: Record<string, unknown> }) => void;
 };
+
+type LibraryView = "uploaded" | "generated";
 
 type PendingFile = { file: File; techStack?: string; relativePath?: string };
 
-export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
+export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLibraryTabProps) {
   const { applier, applierReady } = useApplier();
+  const [libraryView, setLibraryView] = useState<LibraryView>("uploaded");
   const [q, setQ] = useState("");
   const [stackFilter, setStackFilter] = useState<string>("all");
   const [resumes, setResumes] = useState<UserResumeSummary[]>([]);
@@ -59,7 +65,7 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
     }
     setLoading(true);
     try {
-      setResumes(await fetchUserResumes(ownerName));
+      setResumes(await fetchUserResumes(ownerName, "uploaded"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load resumes");
     } finally {
@@ -178,6 +184,10 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
 
   const handleAnalyze = async (resume: UserResumeSummary) => {
     if (!ownerName) return;
+    if (resume.source === "generated") {
+      setError("Generated resumes already have skills extracted from the generation pipeline.");
+      return;
+    }
     if (resume.analyzed) {
       const reanalyze = confirm(
         `"${resume.fileName}" is already analyzed. Re-analyze with AI? This will replace skill scores.`,
@@ -224,6 +234,19 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
 
   return (
     <>
+      <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 mb-6 w-fit scroll-row">
+        <Pill active={libraryView === "uploaded"} onClick={() => setLibraryView("uploaded")}>
+          Uploaded
+        </Pill>
+        <Pill active={libraryView === "generated"} onClick={() => setLibraryView("generated")}>
+          Generated
+        </Pill>
+      </div>
+
+      {libraryView === "generated" ? (
+        <GeneratedResumesSection onLoadIntoEditor={onLoadIntoEditor} />
+      ) : (
+        <>
       <div className="flex items-center gap-3 mb-6 flex-wrap">
         <SearchField value={q} onChange={setQ} placeholder="Search resumes or tech stacks..." className="flex-1 max-w-md" />
         <select
@@ -284,7 +307,9 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
                   {r.isPrimary && <Badge v="violet">Primary</Badge>}
-                  {r.analyzed ? (
+                  {r.source === "generated" ? (
+                    <Badge v="violet">Generated</Badge>
+                  ) : r.analyzed ? (
                     <Badge v="success">Analyzed</Badge>
                   ) : (
                     <Badge v="subtle">Not analyzed</Badge>
@@ -300,7 +325,7 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
               <div className="flex items-center justify-between gap-2">
                 <button
                   type="button"
-                  disabled={analyzingId === r.id}
+                  disabled={analyzingId === r.id || r.source === "generated"}
                   onClick={() => void handleAnalyze(r)}
                   className="flex items-center gap-1.5 text-xs font-bold text-primary hover:underline disabled:opacity-50"
                 >
@@ -309,7 +334,7 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
                   ) : (
                     <Sparkles className="w-3.5 h-3.5" />
                   )}
-                  {r.analyzed ? "Re-analyze" : "Analyze"}
+                  {r.source === "generated" ? "Auto-analyzed" : r.analyzed ? "Re-analyze" : "Analyze"}
                 </button>
                 <div className="flex items-center gap-1">
                 <button type="button" onClick={() => setPreviewResume(r)} className="icon-btn w-9 h-9 text-muted-foreground hover:text-primary" title="Preview">
@@ -390,6 +415,9 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
         open={Boolean(previewResume)}
         onOpenChange={(open) => !open && setPreviewResume(null)}
       />
+
+        </>
+      )}
     </>
   );
 }

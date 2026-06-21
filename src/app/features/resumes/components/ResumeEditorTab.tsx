@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useRef, useState } from "react";
+import React, { useEffect, useCallback, useState } from "react";
 import { Wand2, Loader2 } from "lucide-react";
 import { BUILTIN_TEMPLATES } from "../../../data/resumes/seedDocument";
 import { listTemplates, saveTemplate } from "../../../services/resumeStorage";
@@ -12,6 +12,8 @@ import { ResumePreview } from "./preview/ResumePreview";
 import { TemplatePickerModal } from "./modals/TemplatePickerModal";
 import { ThemeModal } from "./modals/ThemeModal";
 import { SectionLayoutModal } from "./modals/SectionLayoutModal";
+import { applyTemplateSelection, resolveTemplateId, templateById } from "../lib/templates";
+import { PAGE } from "../lib/previewUtils";
 
 type ResumeEditorTabProps = {
   initialJd?: string;
@@ -29,7 +31,6 @@ export function ResumeEditorTab({
   onHistoryLoaded,
 }: ResumeEditorTabProps) {
   const editor = useResumeEditor();
-  const previewRef = useRef<HTMLDivElement>(null);
   const [templates, setTemplates] = useState<ResumeTemplateRef[]>(BUILTIN_TEMPLATES);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
@@ -61,7 +62,8 @@ export function ResumeEditorTab({
   }, [loadFromHistory, editor, onHistoryLoaded]);
 
   const draft = editor.draft;
-  const activeTemplate = templates.find((t) => t.id === draft?.templateId) ?? templates[0];
+  const templateId = resolveTemplateId(draft?.templateId);
+  const activeTemplate = templateById(templateId);
 
   const handleGenerate = async () => {
     setGenError(null);
@@ -72,10 +74,9 @@ export function ResumeEditorTab({
   };
 
   const handlePdf = useCallback(async () => {
-    if (!previewRef.current) return;
     setExporting(true);
     try {
-      await editor.exportResume("pdf", previewRef.current);
+      await editor.exportResume("pdf");
     } catch (err) {
       setGenError(err instanceof Error ? err.message : "PDF export failed");
     } finally {
@@ -86,7 +87,7 @@ export function ResumeEditorTab({
   const handleWord = useCallback(async () => {
     setExporting(true);
     try {
-      await editor.exportResume("docx", previewRef.current);
+      await editor.exportResume("docx");
     } catch (err) {
       setGenError(err instanceof Error ? err.message : "Word export failed");
     } finally {
@@ -97,6 +98,17 @@ export function ResumeEditorTab({
   const handleImportTemplate = async (template: ResumeTemplateRef) => {
     await saveTemplate(template);
     await refreshTemplates();
+  };
+
+  const handleSelectTemplate = (id: string) => {
+    if (!draft) return;
+    const resolved = resolveTemplateId(id);
+    const applied = applyTemplateSelection(resolved, draft.theme, draft.sections);
+    editor.updateDraft({
+      templateId: applied.templateId,
+      theme: applied.theme,
+      sections: applied.sections,
+    });
   };
 
   useEffect(() => {
@@ -110,7 +122,7 @@ export function ResumeEditorTab({
     return () => window.removeEventListener("keydown", onKey);
   }, [editor.draft, editor.persist]);
 
-  if (editor.loading || !draft || !activeTemplate) {
+  if (editor.loading || !draft) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground">
         <Loader2 className="w-6 h-6 animate-spin" />
@@ -118,7 +130,8 @@ export function ResumeEditorTab({
     );
   }
 
-  const paperLabel = draft.theme.paperSize === "letter" ? 'Letter — 8.5" × 11"' : "A4";
+  const paper = draft.theme.paperSize === "a4" ? "a4" : "letter";
+  const paperLabel = PAGE[paper].label;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -149,6 +162,7 @@ export function ResumeEditorTab({
         <div className="flex-[55] flex flex-col min-w-0 border-r border-border bg-secondary/30">
           <PreviewToolbar
             paperLabel={paperLabel}
+            templateLabel={activeTemplate.name}
             onTemplate={() => setTemplateOpen(true)}
             onTheme={() => setThemeOpen(true)}
             onLayout={() => setLayoutOpen(true)}
@@ -156,15 +170,17 @@ export function ResumeEditorTab({
             onWord={handleWord}
             exporting={exporting}
           />
-          <div className="flex-1 overflow-auto p-6 subtle-scroll flex justify-center items-start">
-            <div ref={previewRef} className="origin-top scale-[0.85] sm:scale-90 lg:scale-100">
-              <ResumePreview
-                document={draft.document}
-                template={activeTemplate}
-                theme={draft.theme}
-                sections={draft.sections}
-              />
-            </div>
+          <div className="flex-1 overflow-auto p-4 subtle-scroll min-h-0">
+            <ResumePreview
+              document={draft.document}
+              templateId={templateId}
+              theme={draft.theme}
+              sections={draft.sections}
+              generatorIdentity={draft.generatorIdentity ?? editor.generatorIdentity}
+              generating={editor.generating}
+              generatedSections={editor.generatedSections}
+              fitToColumn
+            />
           </div>
         </div>
 
@@ -191,8 +207,8 @@ export function ResumeEditorTab({
         open={templateOpen}
         onOpenChange={setTemplateOpen}
         templates={templates}
-        selectedId={draft.templateId}
-        onSelect={(templateId) => editor.updateDraft({ templateId })}
+        selectedId={templateId}
+        onSelect={handleSelectTemplate}
         onImport={handleImportTemplate}
       />
       <ThemeModal

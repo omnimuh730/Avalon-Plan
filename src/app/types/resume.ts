@@ -136,6 +136,9 @@ export interface UserResumeSummary {
   sizeBytes: number;
   extractedText?: string;
   isPrimary: boolean;
+  source?: "uploaded" | "generated";
+  generationId?: string;
+  templateId?: string;
   analyzed?: boolean;
   analyzedAt?: string | null;
   skillCount?: number;

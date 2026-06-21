@@ -8,6 +8,7 @@ import { useResumeHistory } from "../hooks/useResumeHistory";
 import { ResumePreview } from "./preview/ResumePreview";
 import { BUILTIN_TEMPLATES, DEFAULT_SECTIONS, DEFAULT_THEME } from "../../../data/resumes/seedDocument";
 import type { EditorDraft } from "../../../types/resume";
+import { resolveTemplateId } from "../lib/templates";
 
 type ResumeHistoryTabProps = {
   onLoadIntoEditor?: (payload: { config: Partial<EditorDraft>; sections?: Record<string, unknown> }) => void;
@@ -30,8 +31,10 @@ export function ResumeHistoryTab({ onLoadIntoEditor }: ResumeHistoryTabProps) {
     templates,
   } = history;
 
-  const templateId = selected?.templateId ?? (selectedDetail?.config as { templateId?: string } | undefined)?.templateId;
-  const activeTemplate = BUILTIN_TEMPLATES.find((t) => t.id === templateId) ?? BUILTIN_TEMPLATES[0];
+  const templateId = resolveTemplateId(
+    selected?.templateId ?? (selectedDetail?.config as { templateId?: string } | undefined)?.templateId,
+  );
+  const previewTheme = (selectedDetail?.config as { theme?: typeof DEFAULT_THEME })?.theme ?? DEFAULT_THEME;
 
   const handleLoad = () => {
     if (!selectedDetail || !onLoadIntoEditor) return;
@@ -42,7 +45,7 @@ export function ResumeHistoryTab({ onLoadIntoEditor }: ResumeHistoryTabProps) {
         jobDescription: selectedDetail.jobDescription,
         provider: selectedDetail.provider,
         model: selectedDetail.model,
-        templateId: selectedDetail.templateId,
+        templateId: resolveTemplateId(selectedDetail.templateId ?? cfg.templateId),
         generatorIdentity: selectedDetail.identity,
       },
       sections: selectedDetail.sections,
@@ -119,7 +122,11 @@ export function ResumeHistoryTab({ onLoadIntoEditor }: ResumeHistoryTabProps) {
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     <Badge v="subtle">{run.model}</Badge>
                     <Badge v="subtle">{run.provider}</Badge>
-                    {run.templateId && <Badge v="blue">{BUILTIN_TEMPLATES.find((t) => t.id === run.templateId)?.name ?? run.templateId}</Badge>}
+                    {run.templateId && (
+                      <Badge v="blue">
+                        {BUILTIN_TEMPLATES.find((t) => t.id === resolveTemplateId(run.templateId))?.name ?? run.templateId}
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                     <span>{formatDistanceToNow(new Date(run.createdAt), { addSuffix: true })}</span>
@@ -157,16 +164,16 @@ export function ResumeHistoryTab({ onLoadIntoEditor }: ResumeHistoryTabProps) {
                   <span>{selected.model} · {selected.provider}</span>
                 </div>
               </div>
-              <div className="flex-1 overflow-auto p-4 subtle-scroll flex justify-center bg-secondary/20">
+              <div className="flex-1 overflow-auto p-4 subtle-scroll min-h-0">
                 {detailDocument ? (
-                  <div className="origin-top scale-[0.55] sm:scale-[0.65]">
-                    <ResumePreview
-                      document={detailDocument}
-                      template={activeTemplate}
-                      theme={DEFAULT_THEME}
-                      sections={DEFAULT_SECTIONS}
-                    />
-                  </div>
+                  <ResumePreview
+                    document={detailDocument}
+                    templateId={templateId}
+                    theme={previewTheme}
+                    sections={DEFAULT_SECTIONS}
+                    generatorIdentity={selectedDetail?.identity ?? undefined}
+                    fitToColumn
+                  />
                 ) : (
                   <p className="text-sm text-muted-foreground self-center">Preview unavailable for this run.</p>
                 )}

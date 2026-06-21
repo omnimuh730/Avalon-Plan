@@ -8,7 +8,17 @@ export type {
   ActivationResult,
 } from "./knowledgeGraph";
 export type { Application } from "./application";
-export type { Agent, PipelineNode, PipelineEdge, NodeStatus } from "./agent";
+export type {
+  RunSummary,
+  JobRow,
+  ActivityEntry,
+  DashboardData,
+  HealthData,
+  ActiveRun,
+  DeployOptions,
+  JobStatus,
+  JobTabKey,
+} from "./agent";
 export type { Job, SkillAnalysis, SkillAnalysisStatus, SkillAnalysisUsage } from "./job";
 export type { Msg, MailThread, Resume, BadgeVariant } from "./common";
 export type {

@@ -10,6 +10,7 @@ import type {
   SectionLayoutConfig,
 } from "../../types/resume";
 import { defaultRefinementSteps, DEFAULT_SYSTEM_INSTRUCTION } from "../../features/resumes/lib/generatorDefaults";
+import { TEMPLATES } from "../../features/resumes/lib/templates";
 
 export const DEFAULT_IDENTITY = {
   fullName: "Jordan Doe",
@@ -24,10 +25,10 @@ export const DEFAULT_THEME: ResumeTheme = {
   bodySizePt: 10.5,
   nameSizePt: 24,
   accentColor: "#1f3a5f",
-  textColor: "#0f172a",
+  textColor: "#1a1a1a",
   headerAlign: "center",
   paperSize: "letter",
-  marginIn: 0.65,
+  marginIn: 0.6,
 };
 
 export const DEFAULT_SECTIONS: SectionLayoutConfig[] = [
@@ -37,16 +38,13 @@ export const DEFAULT_SECTIONS: SectionLayoutConfig[] = [
   { id: "education", titleSizePt: 12, bodySizePt: 10.5, color: "#0f172a", order: 3 },
 ];
 
-export const BUILTIN_TEMPLATES: ResumeTemplateRef[] = [
-  { id: "tpl-standard", name: "Standard", layout: "standard", description: "Reverse-chronological — ATS default", source: "builtin" },
-  { id: "tpl-two-column", name: "Two-Column", layout: "two-column", description: "Sidebar for skills & education", source: "builtin" },
-  { id: "tpl-classic", name: "Classic", layout: "classic", description: "Single column, left-aligned header", source: "builtin" },
-  { id: "tpl-centered", name: "Centered", layout: "centered", description: "Centered header, clean sections", source: "builtin" },
-  { id: "tpl-minimal", name: "Minimal", layout: "minimal", description: "Whitespace-forward, subtle dividers", source: "builtin" },
-  { id: "tpl-compact", name: "Compact", layout: "compact", description: "High-density for long histories", source: "builtin" },
-  { id: "tpl-modern", name: "Modern", layout: "modern", description: "Accent bar, sans-serif tech look", source: "builtin" },
-  { id: "tpl-bold", name: "Bold", layout: "bold", description: "Strong headings, visual hierarchy", source: "builtin" },
-];
+export const BUILTIN_TEMPLATES: ResumeTemplateRef[] = TEMPLATES.map((t) => ({
+  id: t.id,
+  name: t.name,
+  layout: t.columns === 2 ? "two-column" : (t.id as ResumeTemplateRef["layout"]),
+  description: t.blurb,
+  source: "builtin" as const,
+}));
 
 export const DEFAULT_REFINEMENT_STEPS: RefinementStep[] = defaultRefinementSteps();
 
@@ -193,7 +191,7 @@ export function createDefaultEditorDraft(): EditorDraft {
   const doc = makeDocument("draft-" + Date.now());
   return {
     document: doc,
-    templateId: "tpl-standard",
+    templateId: "classic",
     theme: { ...DEFAULT_THEME },
     sections: DEFAULT_SECTIONS.map((s) => ({ ...s })),
     provider: "openai",
@@ -208,7 +206,7 @@ export function createDefaultEditorDraft(): EditorDraft {
 export function createDefaultEditorDraftFromSummary(summary: ResumeSummary, document: ResumeDocument): EditorDraft {
   return {
     document: structuredClone(document),
-    templateId: "tpl-standard",
+    templateId: "classic",
     theme: { ...DEFAULT_THEME },
     sections: DEFAULT_SECTIONS.map((s) => ({ ...s })),
     provider: "openai",

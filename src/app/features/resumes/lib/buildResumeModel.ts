@@ -1,5 +1,5 @@
 import type { EditorDraft, GeneratorIdentity, ResumeDocument } from "../../../types/resume";
-import { BUILTIN_TEMPLATES } from "../../../data/resumes/seedDocument";
+import { templateById } from "./templates";
 
 const SECTION_TITLES: Record<string, string> = {
   summary: "Professional Summary",
@@ -10,7 +10,7 @@ const SECTION_TITLES: Record<string, string> = {
 
 export function buildResumeModel(draft: EditorDraft, identity: GeneratorIdentity | null) {
   const doc = draft.document;
-  const template = BUILTIN_TEMPLATES.find((t) => t.id === draft.templateId) ?? BUILTIN_TEMPLATES[0];
+  const template = templateById(draft.templateId);
   const sorted = [...draft.sections].sort((a, b) => a.order - b.order);
 
   const sections = sorted.map((s) => {
@@ -20,7 +20,7 @@ export function buildResumeModel(draft: EditorDraft, identity: GeneratorIdentity
       titleSizePt: s.titleSizePt,
       bodySizePt: s.bodySizePt,
       headingColor: s.color,
-      headingStyle: template.layout === "modern" || template.layout === "bold" ? "bar" : "underline",
+      headingStyle: template.heading === "bar" || template.id === "modern" ? "bar" : template.heading === "plain" ? "plain" : "underline",
     };
     if (s.id === "summary") return { ...base, summary: doc.summary };
     if (s.id === "skills") {
@@ -58,7 +58,7 @@ export function buildResumeModel(draft: EditorDraft, identity: GeneratorIdentity
     name: id.fullName || "Your Name",
     contact: [id.location, id.email, id.phone, id.linkedin].map((x) => (x ?? "").trim()).filter(Boolean),
     headerAlign: draft.theme.headerAlign,
-    headingAlign: template.layout === "centered" ? "center" : "left",
+    headingAlign: template.headingAlign,
     nameSizePt: draft.theme.nameSizePt,
     nameColor: draft.theme.accentColor,
     baseSizePt: draft.theme.bodySizePt,

@@ -3,7 +3,7 @@ import { Outlet, useLocation, useNavigate } from "react-router";
 import { Sidebar } from "../components/layout/Sidebar";
 import { TopNav } from "../components/layout/TopNav";
 import { pathForView, viewFromPathname, type NavigateOptions } from "../config/routes";
-import { AgentsProvider } from "../context/AgentsContext";
+import { AgentRunProvider } from "../context/AgentRunContext";
 import { ApplierProvider } from "../../context/applier-context";
 import { AppNavigationContext } from "../context/AppNavigationContext";
 import {
@@ -66,13 +66,13 @@ function AppProviders({ children }: { children: ReactNode }) {
 
   return (
     <ApplierProvider>
-      <AgentsProvider>
+      <AgentRunProvider>
         <AppNavigationContext.Provider value={appNav}>
           <ResumeNavigationContext.Provider value={resumeNav}>
             <JobSearchNavigationContext.Provider value={jobNav}>{children}</JobSearchNavigationContext.Provider>
           </ResumeNavigationContext.Provider>
         </AppNavigationContext.Provider>
-      </AgentsProvider>
+      </AgentRunProvider>
     </ApplierProvider>
   );
 }

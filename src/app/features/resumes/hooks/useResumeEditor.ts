@@ -9,8 +9,9 @@ import {
   saveGeneratorConfig,
 } from "../../../services/resumeApi";
 import { getEditorDraft, saveEditorDraft } from "../../../services/resumeStorage";
-import type { EditorDraft, GeneratorIdentity, RefinementStep } from "../../../types/resume";
+import type { EditorDraft, GeneratorIdentity, RefinementStep, SectionId } from "../../../types/resume";
 import { buildResumeModel, exportResumeServer, fontStack } from "../lib/buildResumeModel";
+import { resolveTemplateId } from "../lib/templates";
 import {
   DEFAULT_SYSTEM_INSTRUCTION,
   ensureSteps,
@@ -31,6 +32,7 @@ export function useResumeEditor() {
   const [generateStep, setGenerateStep] = useState<string | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [usage, setUsage] = useState<{ totalTokens?: number; cost?: number } | null>(null);
+  const [generatedSections, setGeneratedSections] = useState<Partial<Record<SectionId, boolean>>>({});
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const persist = useCallback(async (next: EditorDraft) => {
@@ -42,6 +44,7 @@ export function useResumeEditor() {
     const stored = await getEditorDraft();
     let next: EditorDraft = {
       ...stored,
+      templateId: resolveTemplateId(stored.templateId),
       systemInstruction: stored.systemInstruction || DEFAULT_SYSTEM_INSTRUCTION,
       refinementSteps: ensureSteps(stored.refinementSteps ?? []),
     };
@@ -53,6 +56,7 @@ export function useResumeEditor() {
           next = {
             ...next,
             ...dbConfig,
+            templateId: resolveTemplateId(dbConfig.templateId ?? next.templateId),
             document: next.document,
             refinementSteps: ensureSteps(dbConfig.refinementSteps ?? next.refinementSteps),
             systemInstruction: dbConfig.systemInstruction ?? next.systemInstruction,
@@ -210,13 +214,14 @@ export function useResumeEditor() {
     setGenerating(true);
     setGenerateStep("Starting generation…");
     setUsage(null);
+    setGeneratedSections({});
 
     const payload = {
       applierName: applier.name,
       provider: draft.provider,
       model: draft.model,
       reasoningEffort: draft.reasoningEffort === "default" ? undefined : draft.reasoningEffort,
-      templateId: draft.templateId,
+      templateId: resolveTemplateId(draft.templateId),
       template: { layout: draft.templateId },
       theme: draft.theme,
       layout: draft.sections.map((s) => ({
@@ -237,13 +242,24 @@ export function useResumeEditor() {
         if (event === "step") {
           const phase = data.phase as string;
           const name = data.name as string;
+          const purpose = data.purpose as SectionId | undefined;
           if (phase === "step-start") setGenerateStep(`Running: ${name}…`);
-          if (phase === "step-done" && data.cumulative) {
-            setUsage(data.cumulative as { totalTokens?: number; cost?: number });
+          if (phase === "step-done") {
+            if (data.cumulative) setUsage(data.cumulative as { totalTokens?: number; cost?: number });
+            if (purpose && data.output && (purpose === "summary" || purpose === "skills" || purpose === "experience")) {
+              sections = { ...sections, [purpose]: data.output };
+              setGeneratedSections((prev) => ({ ...prev, [purpose]: true }));
+              const document = sectionsToDocument(
+                sections as Parameters<typeof sectionsToDocument>[0],
+                identity,
+                draft.document,
+              );
+              setDraft((prev) => (prev ? { ...prev, document, generatorIdentity: identity } : prev));
+            }
           }
         }
         if (event === "done") {
-          sections = (data.sections as Record<string, unknown>) ?? {};
+          sections = (data.sections as Record<string, unknown>) ?? sections;
           if (data.usage) setUsage(data.usage as { totalTokens?: number; cost?: number });
         }
         if (event === "error") {
@@ -252,7 +268,7 @@ export function useResumeEditor() {
       });
 
       const document = sectionsToDocument(sections as Parameters<typeof sectionsToDocument>[0], identity, draft.document);
-      await persist({ ...draft, document, generatorIdentity: identity });
+      await persist({ ...draft, document, generatorIdentity: identity, templateId: resolveTemplateId(draft.templateId) });
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "Generation failed" };
@@ -263,13 +279,13 @@ export function useResumeEditor() {
   }, [draft, applier?.name, generatorIdentity, persist]);
 
   const exportResume = useCallback(
-    async (format: "pdf" | "docx", previewEl: HTMLElement | null) => {
+    async (format: "pdf" | "docx") => {
       if (!draft) throw new Error("No draft");
       const identity = draft.generatorIdentity ?? generatorIdentity;
       const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.${format}`;
 
       if (format === "pdf") {
-        const pageEl = previewEl?.querySelector(".resume-page") as HTMLElement | null;
+        const pageEl = document.querySelector("#resume-print-root .resume-page") as HTMLElement | null;
         if (!pageEl) throw new Error("Preview not ready");
         const fontLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
           .map((l) => (l as HTMLLinkElement).href)
@@ -336,6 +352,7 @@ export function useResumeEditor() {
     generateStep,
     models,
     usage,
+    generatedSections,
     generatorIdentity,
     updateDraft,
     reloadProfile,

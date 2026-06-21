@@ -34,9 +34,11 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 // --- User uploaded resumes ---
 
-export async function fetchUserResumes(ownerName: string): Promise<UserResumeSummary[]> {
+export async function fetchUserResumes(ownerName: string, source?: "uploaded" | "generated"): Promise<UserResumeSummary[]> {
+  const params = new URLSearchParams({ ownerName });
+  if (source) params.set("source", source);
   const data = await apiFetch<{ resumes: UserResumeSummary[] }>(
-    `/personal/user-resumes?ownerName=${encodeURIComponent(ownerName)}`,
+    `/personal/user-resumes?${params.toString()}`,
   );
   return data.resumes ?? [];
 }

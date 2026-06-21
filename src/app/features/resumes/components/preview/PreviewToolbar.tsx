@@ -3,6 +3,7 @@ import { cn } from "../../../../lib/utils";
 
 type PreviewToolbarProps = {
   paperLabel: string;
+  templateLabel?: string;
   onTemplate: () => void;
   onTheme: () => void;
   onLayout: () => void;
@@ -14,6 +15,7 @@ type PreviewToolbarProps = {
 
 export function PreviewToolbar({
   paperLabel,
+  templateLabel,
   onTemplate,
   onTheme,
   onLayout,
@@ -26,7 +28,10 @@ export function PreviewToolbar({
     <div className={cn("flex items-center gap-2 flex-wrap px-4 py-3 border-b border-border bg-card/80 backdrop-blur", className)}>
       <div className="mr-auto">
         <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Live preview</p>
-        <p className="text-sm text-foreground">{paperLabel}</p>
+        <p className="text-sm text-foreground">
+          {paperLabel}
+          {templateLabel ? ` · ${templateLabel}` : ""}
+        </p>
       </div>
       <ToolbarBtn icon={LayoutTemplate} label="Template" onClick={onTemplate} />
       <ToolbarBtn icon={Palette} label="Theme" onClick={onTheme} />
