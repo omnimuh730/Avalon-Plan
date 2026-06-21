@@ -211,7 +211,14 @@ export function SkillGraphCanvas({
         ctx.textBaseline = "top";
         ctx.fillStyle = palette.text;
         ctx.globalAlpha = dimmed ? 0.25 : 0.92;
-        ctx.fillText(node.label, x, y + baseR + 2 / globalScale);
+        const labelY = y + baseR + 2 / globalScale;
+        ctx.fillText(node.label, x, labelY);
+        if (node.isSeed && typeof node.strength === "number") {
+          const scoreSize = Math.max(8, fontSize * 0.85);
+          ctx.font = `600 ${scoreSize}px ui-monospace, monospace`;
+          ctx.fillStyle = hue;
+          ctx.fillText(node.strength.toFixed(1), x, labelY + fontSize + 1 / globalScale);
+        }
       }
 
       ctx.globalAlpha = 1;
@@ -267,9 +274,11 @@ export function SkillGraphCanvas({
         enableZoomInteraction
         enablePanInteraction
         enableNodeDrag
-        nodeLabel={(n: GraphRenderNode) =>
-          `${n.label} — ${Math.round(n.activation * 100)}%`
-        }
+        nodeLabel={(n: GraphRenderNode) => {
+          const strength =
+            typeof n.strength === "number" ? ` · ${n.strength.toFixed(1)}/10` : "";
+          return `${n.label} — ${Math.round(n.activation * 100)}%${strength}`;
+        }}
         nodeCanvasObject={drawNode}
         nodePointerAreaPaint={drawPointerArea}
         linkColor={linkColor}

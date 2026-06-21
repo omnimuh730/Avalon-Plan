@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2 } from "lucide-react";
+import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2, Sparkles } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { SearchField } from "../../../components/shared/SearchField";
 import { Badge } from "../../../components/ui";
@@ -12,6 +12,7 @@ import {
   fileToBase64,
   setPrimaryUserResume,
   uploadUserResume,
+  analyzeUserResume,
 } from "../../../services/resumeApi";
 import type { UserResumeSummary } from "../../../types/resume";
 import {
@@ -41,6 +42,7 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
   const [techStackInput, setTechStackInput] = useState("");
   const [bulkPending, setBulkPending] = useState<PendingFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bulkRef = useRef<HTMLInputElement>(null);
 
@@ -172,6 +174,26 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
     await refresh();
   };
 
+  const handleAnalyze = async (resume: UserResumeSummary) => {
+    if (!ownerName) return;
+    if (resume.analyzed) {
+      const reanalyze = confirm(
+        `"${resume.fileName}" is already analyzed. Re-analyze with AI? This will replace skill scores.`,
+      );
+      if (!reanalyze) return;
+    }
+    setAnalyzingId(resume.id);
+    setError(null);
+    try {
+      await analyzeUserResume(ownerName, resume.id, { force: resume.analyzed });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Analysis failed");
+    } finally {
+      setAnalyzingId(null);
+    }
+  };
+
   if (!applierReady || loading) {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground text-sm gap-2">
@@ -258,16 +280,36 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
                 <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
                   <Star className="w-6 h-6 text-primary" />
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
                   {r.isPrimary && <Badge v="violet">Primary</Badge>}
+                  {r.analyzed ? (
+                    <Badge v="success">Analyzed</Badge>
+                  ) : (
+                    <Badge v="subtle">Not analyzed</Badge>
+                  )}
                   <Badge v="blue">{r.techStack}</Badge>
                 </div>
               </div>
               <p className="text-base font-bold text-foreground mb-1 truncate" title={r.fileName}>{r.fileName}</p>
               <p className="text-sm text-muted-foreground mb-4">
                 {(r.sizeBytes / 1024).toFixed(0)} KB · {formatDistanceToNow(new Date(r.uploadedAt), { addSuffix: true })}
+                {r.analyzed && r.skillCount != null ? ` · ${r.skillCount} skills` : ""}
               </p>
-              <div className="flex items-center justify-end gap-1">
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={analyzingId === r.id}
+                  onClick={() => void handleAnalyze(r)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-primary hover:underline disabled:opacity-50"
+                >
+                  {analyzingId === r.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  {r.analyzed ? "Re-analyze" : "Analyze"}
+                </button>
+                <div className="flex items-center gap-1">
                 <button type="button" onClick={() => void handleDownload(r.id, r.fileName)} className="icon-btn w-9 h-9 text-muted-foreground hover:text-foreground" title="Download">
                   <Download className="w-4 h-4" />
                 </button>
@@ -277,6 +319,7 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
                 <button type="button" onClick={() => void handleDelete(r.id)} className="icon-btn w-9 h-9 text-muted-foreground hover:text-destructive" title="Delete">
                   <Trash2 className="w-4 h-4" />
                 </button>
+                </div>
               </div>
             </div>
           ))}

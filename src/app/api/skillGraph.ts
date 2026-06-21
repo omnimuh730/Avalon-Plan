@@ -62,6 +62,7 @@ export interface UserGraphSkill {
   surfaceForm: string;
   normalizedKey: string;
   canonicalId: string | null;
+  strength?: number;
   proficiency?: number;
   sources?: string[];
 }

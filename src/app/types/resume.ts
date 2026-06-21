@@ -121,6 +121,11 @@ export interface RefinementStep {
   schema?: string;
 }
 
+export interface ResumeSkillEntry {
+  name: string;
+  strength: number;
+}
+
 export interface UserResumeSummary {
   id: string;
   ownerId: string | null;
@@ -131,6 +136,9 @@ export interface UserResumeSummary {
   sizeBytes: number;
   extractedText?: string;
   isPrimary: boolean;
+  analyzed?: boolean;
+  analyzedAt?: string | null;
+  skillCount?: number;
   uploadedAt: string;
   updatedAt?: string;
 }

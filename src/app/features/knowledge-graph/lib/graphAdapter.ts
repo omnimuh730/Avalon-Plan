@@ -17,6 +17,8 @@ export interface GraphRenderNode {
   evidence: number;
   /** True if the skill is directly present on an active resume. */
   isSeed: boolean;
+  /** Resume strength score 0–10 when available. */
+  strength?: number;
   /** d3-force populates these. */
   x?: number;
   y?: number;
@@ -84,6 +86,7 @@ export function nodeGlow(category: SkillCategory, activation: number): string {
 export function buildGraphData(
   graph: SkillGraph,
   result: ActivationResult,
+  strengthByNodeId?: Record<string, number>,
 ): GraphRenderData {
   const nodes: GraphRenderNode[] = graph.nodes.map((n) => ({
     id: n.id,
@@ -93,6 +96,7 @@ export function buildGraphData(
     activation: result.activation[n.id] ?? 0,
     evidence: result.evidence[n.id] ?? 0,
     isSeed: (result.evidence[n.id] ?? 0) > 0,
+    strength: strengthByNodeId?.[n.id],
   }));
 
   const links: GraphRenderLink[] = graph.edges.map((e) => {

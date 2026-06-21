@@ -8,8 +8,9 @@ import { ProfileTab } from "./components/ProfileTab";
 import { NotificationsTab } from "./components/NotificationsTab";
 import { SecurityTab } from "./components/SecurityTab";
 import { IntegrationsTab } from "./components/IntegrationsTab";
+import { KnowledgeGraphSettingsTab } from "./components/KnowledgeGraphSettingsTab";
 
-const TABS = ["profile", "notifications", "integrations", "security"] as const satisfies readonly SettingsTab[];
+const TABS = ["profile", "notifications", "integrations", "security", "knowledge-graph"] as const satisfies readonly SettingsTab[];
 
 export function SettingsPage() {
   const { tab: tabParam } = useParams<{ tab?: string }>();
@@ -25,7 +26,7 @@ export function SettingsPage() {
             active={tab === t}
             onClick={() => navigate(`${PATHS.settings}/${t}`)}
           >
-            {t}
+            {t === "knowledge-graph" ? "Knowledge Graph" : t}
           </Pill>
         ))}
       </div>
@@ -34,6 +35,7 @@ export function SettingsPage() {
         {tab === "notifications" && <NotificationsTab />}
         {tab === "integrations" && <IntegrationsTab />}
         {tab === "security" && <SecurityTab />}
+        {tab === "knowledge-graph" && <KnowledgeGraphSettingsTab />}
       </TabTransition>
     </PageShell>
   );

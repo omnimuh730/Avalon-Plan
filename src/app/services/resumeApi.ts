@@ -4,6 +4,7 @@ import type {
   GeneratorIdentity,
   HistoryRunDetail,
   HistoryRunSummary,
+  ResumeSkillEntry,
   ResumeStackCatalog,
   UserResumeDetail,
   UserResumeSummary,
@@ -95,6 +96,32 @@ export async function deleteUserResume(id: string, ownerName: string): Promise<v
   await apiFetch(`/personal/user-resumes/${encodeURIComponent(id)}?ownerName=${encodeURIComponent(ownerName)}`, {
     method: "DELETE",
   });
+}
+
+export type ResumeSkillAnalysisResult = {
+  alreadyAnalyzed?: boolean;
+  skillProfile: ResumeSkillEntry[];
+  graph?: unknown;
+  profileGraph?: unknown;
+  usage?: unknown;
+  provider?: string;
+  model?: string;
+};
+
+export async function analyzeUserResume(
+  ownerName: string,
+  resumeId: string,
+  options?: { force?: boolean },
+): Promise<ResumeSkillAnalysisResult> {
+  const data = await apiFetch<ResumeSkillAnalysisResult>(
+    `/personal/user-resumes/${encodeURIComponent(resumeId)}/analyze`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ownerName, force: Boolean(options?.force) }),
+    },
+  );
+  return data;
 }
 
 export function fileToBase64(file: File): Promise<string> {
@@ -292,4 +319,4 @@ export async function analyzeResumeMatch(
   return data;
 }
 
-export type { GeneratorIdentity };
+export type { GeneratorIdentity, ResumeSkillEntry };

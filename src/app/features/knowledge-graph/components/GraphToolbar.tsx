@@ -41,6 +41,7 @@ type GraphToolbarProps = {
   searchNodes: { id: string; label: string; category: SkillCategory }[];
   pendingSkills: PendingSkill[];
   matchScoreHint?: boolean;
+  showProfiles?: boolean;
 };
 
 export function GraphToolbar({
@@ -58,6 +59,7 @@ export function GraphToolbar({
   searchNodes,
   pendingSkills,
   matchScoreHint,
+  showProfiles = true,
 }: GraphToolbarProps) {
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -99,6 +101,8 @@ export function GraphToolbar({
       )}
 
       <div className="space-y-2">
+        {showProfiles ? (
+          <>
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
             Active resumes
@@ -151,6 +155,8 @@ export function GraphToolbar({
             })}
           </div>
         )}
+          </>
+        ) : null}
       </div>
 
       <div className="space-y-1.5">

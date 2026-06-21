@@ -96,7 +96,7 @@ export function ResumesPage() {
 
         <TabTransition tabKey={tab}>
           {tab === "library" && <ResumeLibraryTab onOpenAnalysis={() => setTab("analysis")} />}
-          {tab === "analysis" && <ResumeAnalysisTab />}
+          {tab === "analysis" && <ResumeAnalysisTab onGoToLibrary={() => setTab("library")} />}
           {tab === "history" && (
             <ResumeHistoryTab key={historyKey} onLoadIntoEditor={handleLoadFromHistory} />
           )}
