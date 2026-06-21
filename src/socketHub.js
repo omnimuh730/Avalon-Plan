@@ -1,5 +1,5 @@
 import { Server } from 'socket.io';
-import { SOCKET_PROTOCOL } from '../../configs/socket_protocol.js';
+import { SOCKET_PROTOCOL } from './config/socketProtocol.js';
 
 let io = null;
 

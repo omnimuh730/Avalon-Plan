@@ -1,5 +1,6 @@
 import { runWrite } from '../../db/neo4j.js';
 import { normalizeSkillKey, normalizeSurfaceForm, slugifySkillId } from './normalize.js';
+import { traceNeo4j } from '../skillEnrichment/trace.js';
 
 const VALID_RELATIONS = new Set([
 	'PREREQUISITE_OF',
@@ -33,6 +34,7 @@ export async function linkAlias({ surfaceForm, normalizedKey, skillId, confidenc
 		{ key, form, skillId, confidence, source, now: nowIso() },
 	);
 
+	traceNeo4j('link_alias', { normalizedKey: key, surfaceForm: form, skillId, confidence, source });
 	return { skillId, normalizedKey: key };
 }
 
@@ -82,6 +84,16 @@ export async function createSkillWithAlias({
 		},
 	);
 
+	traceNeo4j('create_skill_with_alias', {
+		skillId: id,
+		label: label || form,
+		normalizedKey: key,
+		category,
+		skillType,
+		source,
+		modelVersion,
+	});
+
 	return { skillId: id, normalizedKey: key };
 }
 
@@ -97,6 +109,7 @@ const REL_CYPHER = {
 
 /** Upsert typed relationships between skills. */
 export async function upsertRelationships(fromId, relationships = [], { source = 'llm', modelVersion = 'enrichment-v1' } = {}) {
+	let applied = 0;
 	for (const rel of relationships) {
 		const type = rel.type || rel.relation;
 		if (!VALID_RELATIONS.has(type)) continue;
@@ -122,7 +135,10 @@ export async function upsertRelationships(fromId, relationships = [], { source =
 			`,
 			{ fromId, toId, weight, confidence, source, modelVersion, now: nowIso() },
 		);
+		applied += 1;
+		traceNeo4j('upsert_relationship', { fromId, toId, type, weight, confidence, source });
 	}
+	return applied;
 }
 
 /** Apply enrichment LLM output to the graph. */
@@ -143,10 +159,10 @@ export async function applyEnrichmentResult({
 			confidence,
 			source: 'llm',
 		});
-		if (result.relationships?.length) {
-			await upsertRelationships(result.targetId, result.relationships, { source: 'llm', modelVersion });
-		}
-		return { skillId: result.targetId, action: 'alias' };
+		const relationshipCount = result.relationships?.length
+			? await upsertRelationships(result.targetId, result.relationships, { source: 'llm', modelVersion })
+			: 0;
+		return { skillId: result.targetId, action: 'alias', relationshipCount };
 	}
 
 	if (action === 'extend_existing' && result.targetId) {
@@ -157,8 +173,8 @@ export async function applyEnrichmentResult({
 			confidence,
 			source: 'llm',
 		});
-		await upsertRelationships(result.targetId, result.relationships || [], { source: 'llm', modelVersion });
-		return { skillId: result.targetId, action: 'extend_existing' };
+		const relationshipCount = await upsertRelationships(result.targetId, result.relationships || [], { source: 'llm', modelVersion });
+		return { skillId: result.targetId, action: 'extend_existing', relationshipCount };
 	}
 
 	const newNode = result.newNode || {};
@@ -173,11 +189,11 @@ export async function applyEnrichmentResult({
 	});
 
 	const rels = result.relationships || [];
-	if (rels.length) {
-		await upsertRelationships(created.skillId, rels, { source: 'llm', modelVersion });
-	}
+	const relationshipCount = rels.length
+		? await upsertRelationships(created.skillId, rels, { source: 'llm', modelVersion })
+		: 0;
 
-	return { skillId: created.skillId, action: 'new_node' };
+	return { skillId: created.skillId, action: 'new_node', relationshipCount };
 }
 
 /** Strengthen or create USED_WITH edge from co-occurrence. */
@@ -199,4 +215,5 @@ export async function upsertUsedWith(fromId, toId, weight, source = 'cooccurrenc
 		`,
 		{ fromId, toId, weight, source, now: nowIso() },
 	);
+	traceNeo4j('upsert_used_with', { fromId, toId, weight, source });
 }

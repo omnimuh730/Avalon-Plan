@@ -1,5 +1,6 @@
 import { chatCompletion } from '../llm/llmService.js';
 import { getEnrichmentModel } from './config.js';
+import { traceLlm, clip } from './trace.js';
 
 const SYSTEM = `You enrich a software skill knowledge graph. Given a raw skill name and candidate nodes already in the graph, decide how to integrate it.
 
@@ -31,13 +32,31 @@ export async function enrichAgainstCandidates({
 	const candidateIds = new Set(candidates.map(c => c.id));
 
 	if (!llmConfig?.apiKey) {
+		traceLlm('enrich_heuristic_no_key', { rawSkill, normalizedKey, candidateCount: candidates.length });
 		return buildHeuristicResult(rawSkill, normalizedKey, candidates);
 	}
 
-	const useEscalated = candidates.length === 0;
-	const model = useEscalated
-		? getEnrichmentModel('enrich_escalated', llmConfig)
-		: getEnrichmentModel('enrich', llmConfig);
+	const model = getEnrichmentModel('enrich', llmConfig);
+	const userPayload = {
+		rawSkill,
+		normalizedKey,
+		candidates: candidates.map(c => ({
+			id: c.id,
+			label: c.label,
+			category: c.category,
+			skillType: c.skillType,
+			score: c.score,
+		})),
+		cooccurringSkills: cooccurringSkills.slice(0, 10),
+	};
+
+	traceLlm('enrich_request', {
+		rawSkill,
+		normalizedKey,
+		model,
+		candidateCount: candidates.length,
+		cooccurringSkills: userPayload.cooccurringSkills,
+	});
 
 	const { content, usage } = await chatCompletion({
 		provider: llmConfig.provider,
@@ -45,21 +64,7 @@ export async function enrichAgainstCandidates({
 		model,
 		messages: [
 			{ role: 'system', content: SYSTEM },
-			{
-				role: 'user',
-				content: JSON.stringify({
-					rawSkill,
-					normalizedKey,
-					candidates: candidates.map(c => ({
-						id: c.id,
-						label: c.label,
-						category: c.category,
-						skillType: c.skillType,
-						score: c.score,
-					})),
-					cooccurringSkills: cooccurringSkills.slice(0, 10),
-				}),
-			},
+			{ role: 'user', content: JSON.stringify(userPayload) },
 		],
 		jsonMode: true,
 		cacheKey: 'skill-graph-enrich-v1',
@@ -70,13 +75,17 @@ export async function enrichAgainstCandidates({
 	try {
 		parsed = JSON.parse(content);
 	} catch {
+		traceLlm('enrich_parse_failed', { rawSkill, normalizedKey, contentSnippet: clip(content) });
 		return buildHeuristicResult(rawSkill, normalizedKey, candidates);
 	}
 
 	if (parsed.targetId && !candidateIds.has(parsed.targetId) && parsed.action !== 'new_node') {
+		traceLlm('enrich_invalid_target', { rawSkill, normalizedKey, targetId: parsed.targetId, action: parsed.action });
 		parsed.action = 'new_node';
 		parsed.targetId = null;
 	}
+
+	traceLlm('enrich_response', { rawSkill, normalizedKey, result: parsed, usage });
 
 	return { result: parsed, usage };
 }

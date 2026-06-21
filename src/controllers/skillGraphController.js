@@ -45,9 +45,8 @@ export async function getSubgraphHandler(req, res) {
 export async function runEnrichmentHandler(req, res) {
 	try {
 		const batchSize = Number(req.body?.batchSize) || 5;
-		const provider = req.body?.provider || 'auto';
 		const jobs = await runJobAnalysisBatch(Number(req.body?.jobBatchSize) || 2);
-		const enrichment = await runEnrichmentBatch(batchSize, provider);
+		const enrichment = await runEnrichmentBatch(batchSize);
 		const cooc = await syncCooccurrenceToGraph(50);
 		return res.json({ success: true, jobs, enrichment, cooccurrenceSynced: cooc });
 	} catch (err) {

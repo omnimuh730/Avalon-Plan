@@ -3,16 +3,29 @@ import { normalizeSkillKey } from '../skillGraph/normalize.js';
 import { resolveRawSkills } from '../skillGraph/search.js';
 import { upsertUsedWith } from '../skillGraph/apply.js';
 import { isNeo4jReady } from '../../db/neo4j.js';
+import { traceCooccurrence } from '../skillEnrichment/trace.js';
 
 const COOC_THRESHOLD = Number(process.env.SKILL_COOC_THRESHOLD) || 3;
 const COOC_WEIGHT_CAP = 0.85;
 
 /** Increment pair counts for raw skills on the same job. */
-export async function recordCooccurrenceForJob(rawSkills = []) {
-	if (!skillCooccurrenceCollection || rawSkills.length < 2) return;
+export async function recordCooccurrenceForJob(rawSkills = [], ctx = {}) {
+	if (!skillCooccurrenceCollection || rawSkills.length < 2) {
+		return { pairsUpdated: 0, usedWithCreated: 0, threshold: COOC_THRESHOLD };
+	}
 
 	const keys = [...new Set(rawSkills.map(normalizeSkillKey).filter(Boolean))];
 	const now = new Date().toISOString();
+	let pairsUpdated = 0;
+	let usedWithCreated = 0;
+
+	traceCooccurrence('job_pairs_start', {
+		jobId: ctx.jobId,
+		keys,
+		pairCount: (keys.length * (keys.length - 1)) / 2,
+		threshold: COOC_THRESHOLD,
+		note: `USED_WITH edges in Neo4j are created when the same pair co-occurs on ≥${COOC_THRESHOLD} jobs`,
+	});
 
 	for (let i = 0; i < keys.length; i++) {
 		for (let j = i + 1; j < keys.length; j++) {
@@ -30,21 +43,43 @@ export async function recordCooccurrenceForJob(rawSkills = []) {
 				{ upsert: true, returnDocument: 'after' },
 			);
 
-			if (updated?.count >= COOC_THRESHOLD && isNeo4jReady()) {
-				await promoteCooccurrenceToGraph(a, b, updated.count);
+			pairsUpdated += 1;
+			const count = updated?.count ?? 1;
+
+			traceCooccurrence('pair_incremented', {
+				jobId: ctx.jobId,
+				pairKey,
+				keyA: a,
+				keyB: b,
+				count,
+				threshold: COOC_THRESHOLD,
+				promoted: count >= COOC_THRESHOLD,
+			});
+
+			if (count >= COOC_THRESHOLD && isNeo4jReady()) {
+				const promoted = await promoteCooccurrenceToGraph(a, b, count);
+				if (promoted) usedWithCreated += 1;
 			}
 		}
 	}
+
+	traceCooccurrence('job_pairs_done', { jobId: ctx.jobId, pairsUpdated, usedWithCreated, threshold: COOC_THRESHOLD });
+	return { pairsUpdated, usedWithCreated, threshold: COOC_THRESHOLD };
 }
 
 async function promoteCooccurrenceToGraph(keyA, keyB, count) {
 	const resolved = await resolveRawSkills([keyA, keyB]);
 	const idA = resolved.get(keyA)?.id;
 	const idB = resolved.get(keyB)?.id;
-	if (!idA || !idB || idA === idB) return;
+	if (!idA || !idB || idA === idB) {
+		traceCooccurrence('promote_skipped_unresolved', { keyA, keyB, idA, idB, count });
+		return false;
+	}
 
 	const weight = Math.min(COOC_WEIGHT_CAP, 0.3 + Math.log1p(count) * 0.15);
 	await upsertUsedWith(idA, idB, weight, 'cooccurrence');
+	traceCooccurrence('promoted_used_with', { keyA, keyB, idA, idB, count, weight });
+	return true;
 }
 
 /** Process pending co-occurrence pairs that crossed threshold (maintenance). */

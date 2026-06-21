@@ -1,6 +1,6 @@
 
 import { MongoClient } from "mongodb";
-import { ensureJobMarketIndexes, backfillMissingJobScoreFields } from "../services/jobMarketIndexes.js";
+import { ensureJobMarketIndexes, backfillMissingJobSourceFields } from "../services/jobMarketIndexes.js";
 
 let mongoClient;
 let mongoCloudClient;
@@ -63,8 +63,8 @@ async function initMongo() {
 	resumeGenerationsCollection = db.collection('resume_generations');
 	await ensureJobMarketIndexes(jobsCollection);
 	await ensureSkillCollectionsIndexes();
-	void backfillMissingJobScoreFields(jobsCollection).catch((err) => {
-		console.warn('[job_market] score field backfill failed', err.message);
+	void backfillMissingJobSourceFields(jobsCollection).catch((err) => {
+		console.warn('[job_market] source field backfill failed', err.message);
 	});
 	console.log('Connected to MongoDB', mongoUrl, 'DB:', mongoDbName);
 

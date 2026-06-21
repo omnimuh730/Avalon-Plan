@@ -2,7 +2,7 @@ import { ObjectId } from 'mongodb';
 import { jobsCollection } from '../../db/mongo.js';
 import { isNeo4jReady } from '../../db/neo4j.js';
 import { normalizeSkillKey, normalizeSurfaceForm } from '../skillGraph/normalize.js';
-import { enrichSkillList } from '../skillEnrichment/processSkill.js';
+import { enrichSkillList, getGraphCounts } from '../skillEnrichment/processSkill.js';
 import { recordCooccurrenceForJob } from '../skillCooccurrence/index.js';
 import { computeSkillScoreValue, SKILL_SCORE_VERSION } from '../skillScoreService.js';
 import { attachStaticScoreFields } from '../jobListPipeline.js';
@@ -12,10 +12,12 @@ import {
 	getWorkerIntervalMs,
 	getJobAnalysisBatchSize,
 } from '../skillEnrichment/config.js';
+import { summarizeEnrichmentResults, traceJobAnalysis } from '../skillEnrichment/trace.js';
+import { formatCostUsd, formatUsageSummary } from '../llm/llmService.js';
 
 const TERMINAL = new Set(['analyzed']);
 
-export async function queueJobAnalysis(jobId, provider = 'auto') {
+export async function queueJobAnalysis(jobId, applierName) {
 	if (!jobsCollection) throw new Error('Database not ready');
 
 	let objectId;
@@ -44,7 +46,7 @@ export async function queueJobAnalysis(jobId, provider = 'auto') {
 				skillAnalysis: {
 					status: 'queued',
 					queuedAt: now,
-					provider: provider || 'auto',
+					applierName: applierName?.trim() || null,
 					error: null,
 				},
 			},
@@ -102,25 +104,59 @@ async function claimQueuedJobs(limit = 2) {
 
 async function runJobAnalysis(job) {
 	const skills = Array.isArray(job.skills) ? job.skills.map(s => String(s).trim()).filter(Boolean) : [];
-	const provider = job.skillAnalysis?.provider || 'auto';
-	const llmConfig = await resolveLlmConfig(provider);
+	const applierName = job.skillAnalysis?.applierName || null;
+	const jobId = String(job._id);
+
+	traceJobAnalysis('start', {
+		jobId,
+		title: job.title,
+		applierName,
+		skillCount: skills.length,
+		skills,
+		note: 'Enrichment uses job.skills[] only — description is not sent to LLM',
+	});
+
+	const llmConfig = await resolveLlmConfig(applierName);
 
 	if (!isNeo4jReady()) {
 		throw new Error('Neo4j is not connected');
 	}
 
 	if (!llmConfig?.apiKey && isEnrichmentEnabled()) {
-		throw new Error('No LLM API key configured (OpenAI or DeepSeek in profile or env)');
+		throw new Error('No DeepSeek API key in account_info.autoBidProfile.deepseekApiKey');
 	}
 
+	let enrichmentResults = [];
+	let llmUsage = null;
+	let coocStats = { pairsUpdated: 0, usedWithCreated: 0 };
+
 	if (skills.length) {
-		await enrichSkillList(skills, llmConfig);
-		await recordCooccurrenceForJob(skills);
+		const enriched = await enrichSkillList(skills, llmConfig, { jobId });
+		enrichmentResults = enriched.results;
+		llmUsage = enriched.usage;
+		coocStats = await recordCooccurrenceForJob(skills, { jobId });
 	}
 
 	const skillScore = await computeSkillScoreValue(skills);
 	const staticScores = attachStaticScoreFields({ ...job, skills });
+	const graphCounts = await getGraphCounts();
 	const now = new Date().toISOString();
+
+	summarizeEnrichmentResults(jobId, job.title, skills, enrichmentResults, coocStats, llmUsage);
+	traceJobAnalysis('graph_snapshot', { jobId, graphCounts });
+	if (llmUsage) {
+		traceJobAnalysis('llm_cost', {
+			jobId,
+			model: llmUsage.model,
+			inputTokens: llmUsage.inputTokens,
+			outputTokens: llmUsage.outputTokens,
+			totalTokens: llmUsage.totalTokens,
+			costUsd: llmUsage.cost,
+			costFormatted: formatCostUsd(llmUsage.cost),
+			summary: formatUsageSummary(llmUsage),
+			pricingNote: 'deepseek-v4-flash: $0.09/1M input · $0.18/1M output',
+		});
+	}
 
 	await jobsCollection.updateOne(
 		{ _id: job._id },
@@ -131,18 +167,54 @@ async function runJobAnalysis(job) {
 				...staticScores,
 				skillAnalysis: {
 					status: 'analyzed',
-					provider: llmConfig?.provider || provider,
+					provider: 'deepseek',
+					model: llmConfig?.model || 'deepseek-v4-flash',
+					applierName: applierName || null,
 					queuedAt: job.skillAnalysis?.queuedAt || now,
 					startedAt: job.skillAnalysis?.startedAt || now,
 					analyzedAt: now,
-					skillsProcessed: skills.length,
+					skillsProcessed: enrichmentResults.length,
+					enrichmentResults: enrichmentResults.map(r => ({
+						surfaceForm: r.surfaceForm,
+						normalizedKey: r.normalizedKey,
+						skillId: r.skillId,
+						path: r.path,
+						action: r.action,
+						relationshipCount: r.relationshipCount ?? 0,
+					})),
+					graphSnapshot: graphCounts,
+					usage: llmUsage
+						? {
+							model: llmUsage.model,
+							inputTokens: llmUsage.inputTokens,
+							cachedTokens: llmUsage.cachedTokens,
+							outputTokens: llmUsage.outputTokens,
+							totalTokens: llmUsage.totalTokens,
+							cost: llmUsage.cost,
+							savings: llmUsage.savings,
+						}
+						: null,
 					error: null,
 				},
 			},
 		},
 	);
 
-	return { skillScore, skillsProcessed: skills.length, provider: llmConfig?.provider };
+	traceJobAnalysis('complete', {
+		jobId,
+		skillsEnriched: enrichmentResults.length,
+		skillScore,
+		llmCost: formatCostUsd(llmUsage?.cost),
+	});
+
+	return {
+		skillScore,
+		skillsProcessed: enrichmentResults.length,
+		enrichmentResults,
+		usage: llmUsage,
+		provider: 'deepseek',
+		model: llmConfig?.model,
+	};
 }
 
 async function markJobAnalysisFailed(jobId, error) {
@@ -165,11 +237,15 @@ export async function runJobAnalysisBatch(batchSize = 2) {
 	const batch = await claimQueuedJobs(batchSize);
 	let processed = 0;
 
-	for (const job of batch) {
+		for (const job of batch) {
 		try {
-			await runJobAnalysis(job);
+			const result = await runJobAnalysis(job);
 			processed += 1;
-			console.log(`[job-analysis] analyzed job ${job._id} (${job.title || 'untitled'})`);
+			console.log(
+				`[job-analysis] analyzed job ${job._id} (${job.title || 'untitled'}) — `
+				+ `${result.skillsProcessed} skill(s) enriched, skillScore=${result.skillScore}`
+				+ (result.usage?.cost != null ? `, AI cost=${formatCostUsd(result.usage.cost)} (${formatUsageSummary(result.usage)})` : ''),
+			);
 		} catch (err) {
 			console.error(`[job-analysis] failed job ${job._id}`, err.message);
 			await markJobAnalysisFailed(job._id, err);

@@ -70,8 +70,8 @@ export const PRICING_PER_MILLION = {
   "o3-pro": { input: 20, cached: 20, output: 80 },
   "o3": { input: 2, cached: 0.5, output: 8 },
   "o4-mini": { input: 1.1, cached: 0.275, output: 4.4 },
-  // DeepSeek — published list prices per 1M tokens (cache-hit = discounted input).
-  "deepseek-v4-flash": { input: 0.27, cached: 0.07, output: 1.1 },
+  // DeepSeek — deepseek-v4-flash list prices (USD per 1M tokens).
+  "deepseek-v4-flash": { input: 0.09, cached: 0.09, output: 0.18 },
   "deepseek-v4-pro": { input: 0.55, cached: 0.14, output: 2.19 },
 };
 
@@ -139,6 +139,27 @@ export function addUsage(a, b) {
 }
 
 export { EMPTY_USAGE };
+
+/** Human-readable USD for logs/UI (4 decimal places for sub-cent costs). */
+export function formatCostUsd(cost) {
+  if (cost == null || !Number.isFinite(cost)) return null;
+  if (cost === 0) return '$0.0000';
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  return `$${cost.toFixed(4)}`;
+}
+
+/** One-line token + cost summary for skill analysis logs. */
+export function formatUsageSummary(usage) {
+  if (!usage) return '';
+  const cost = formatCostUsd(usage.cost);
+  const parts = [
+    `${usage.inputTokens?.toLocaleString() ?? 0} in`,
+    `${usage.outputTokens?.toLocaleString() ?? 0} out`,
+  ];
+  if (usage.cachedTokens > 0) parts.push(`${usage.cachedTokens.toLocaleString()} cached`);
+  if (cost) parts.push(cost);
+  return parts.join(' · ');
+}
 
 // ---------------------------------------------------------------------------
 // Chat + model listing

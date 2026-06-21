@@ -6,7 +6,7 @@ import {
 	accountInfoCollection,
 	rulesCollection
 } from "../db/mongo.js";
-import { JobSourceTitles } from '../../../configs/pub.js';
+import { JobSourceTitles } from '../config/jobSources.js';
 import { isJobBlocked, buildMongoQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
 import { SKILL_SCORE_VERSION } from '../services/skillScoreService.js';
 import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
@@ -602,9 +602,9 @@ export async function analyzeJob(req, res) {
 	try {
 		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
 		const { id } = req.params;
-		const provider = req.body?.provider || 'auto';
+		const applierName = req.body?.applierName || null;
 
-		const result = await queueJobAnalysis(id, provider);
+		const result = await queueJobAnalysis(id, applierName);
 		const statusCode = result.alreadyAnalyzed ? 200 : 202;
 		return res.status(statusCode).json({ success: true, ...result });
 	} catch (err) {

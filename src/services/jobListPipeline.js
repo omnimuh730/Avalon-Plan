@@ -1,5 +1,12 @@
-import { calculateJobScores, SCORE_WEIGHTS, JOB_SCORE_MODEL_VERSION } from '../../../configs/jobScore.js';
-import { inferJobSource, SOURCE_MAP_VERSION } from '../../../configs/pub.js';
+import { inferJobSource, SOURCE_MAP_VERSION } from '../config/jobSources.js';
+
+/** Weights for list sort/filter aggregation (skill comes from stored `skillScore`). */
+export const SCORE_WEIGHTS = {
+	skill: 0.45,
+	applicant: 0.2,
+	freshness: 0.2,
+	salary: 0.15,
+};
 
 /** Map API / filter keys to aggregation field names on each job doc. */
 export const SCORE_FIELD_MAP = {
@@ -10,15 +17,41 @@ export const SCORE_FIELD_MAP = {
 	postedDateScore: 'scoreFreshness',
 };
 
+function clampScore(value) {
+	const n = Number(value);
+	if (!Number.isFinite(n)) return 0;
+	return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function applicantScoreFromJob(job) {
+	const count = job?.applicants?.count ?? job?.applicantCount ?? job?.estimateApplicantNumber;
+	let n = typeof count === 'number' ? count : NaN;
+	if (!Number.isFinite(n)) {
+		const text = String(job?.applicants?.text ?? job?.applicants ?? '');
+		const match = text.match(/(\d+)/);
+		n = match ? Number(match[1]) : 50;
+	}
+	return clampScore(100 - (Math.min(n, 200) / 200) * 100);
+}
+
+function salaryScoreFromJob(job) {
+	const salary = String(job?.details?.money ?? job?.salary ?? '');
+	const matches = salary.match(/(\d+(?:\.\d+)?)\s*K/gi);
+	if (!matches?.length) return null;
+	const high = Math.max(...matches.map((m) => Number(m.match(/\d+(?:\.\d+)?/)?.[0] ?? 0)));
+	if (!Number.isFinite(high) || high <= 0) return null;
+	if (high >= 200) return 100;
+	if (high >= 95) return clampScore(91 + ((high - 95) / 105) * 9);
+	return clampScore(91 * Math.pow(high / 95, 3));
+}
+
+/** Denormalized fields stored on ingest for list filtering/sorting. */
 export function attachStaticScoreFields(job) {
-	const scores = calculateJobScores(job, []);
 	return {
-		// null marks "salary undetermined" so it can be excluded from the overall average.
-		scoreSalary: scores.salaryScore,
-		scoreApplicant: scores.applicantScore,
+		scoreSalary: salaryScoreFromJob(job),
+		scoreApplicant: applicantScoreFromJob(job),
 		source: inferJobSource(job.applyLink),
 		sourceVersion: SOURCE_MAP_VERSION,
-		scoreVersion: JOB_SCORE_MODEL_VERSION,
 	};
 }
 
@@ -103,7 +136,6 @@ export function scoreDerivationStages() {
 												},
 											},
 											in: {
-												// Undetermined salary is excluded; remaining weights re-normalized.
 												$cond: [
 													{ $isNumber: '$scoreSalary' },
 													{ $add: ['$$base', { $multiply: ['$scoreSalary', SCORE_WEIGHTS.salary] }] },
@@ -159,8 +191,6 @@ export function needsScorePipeline(sort, hasScoreFilters) {
 export async function runJobListAggregation(jobsCollection, query, { sort, skip, limit, scoreFilters }) {
 	const pipeline = [
 		{ $match: query },
-		// Keep only the fields needed for score derivation and sorting so the
-		// compute + in-memory sort works on ~100B docs instead of full ~4KB docs.
 		{ $project: { skillScore: 1, scoreSalary: 1, scoreApplicant: 1, postedAt: 1, _createdAt: 1 } },
 		...scoreDerivationStages(),
 	];
@@ -187,7 +217,6 @@ export async function runJobListAggregation(jobsCollection, query, { sort, skip,
 	const pageRows = result?.data ?? [];
 	if (!pageRows.length) return { docs: [], total };
 
-	// Hydrate the page of full documents by _id, preserving pipeline order.
 	const ids = pageRows.map((row) => row._id);
 	const fullDocs = await jobsCollection.find({ _id: { $in: ids } }).toArray();
 	const byId = new Map(fullDocs.map((doc) => [String(doc._id), doc]));

@@ -9,10 +9,10 @@ import { processEnrichmentItem } from './processSkill.js';
 import { resolveLlmConfig, isEnrichmentEnabled } from './config.js';
 import { syncCooccurrenceToGraph } from '../skillCooccurrence/index.js';
 
-export async function runEnrichmentBatch(batchSize = 3, provider = 'auto') {
+export async function runEnrichmentBatch(batchSize = 3) {
 	if (!isNeo4jReady() || !isEnrichmentEnabled()) return { processed: 0 };
 
-	const llmConfig = await resolveLlmConfig(provider);
+	const llmConfig = await resolveLlmConfig();
 	const batch = await claimNextBatch(batchSize);
 	let processed = 0;
 

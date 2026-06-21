@@ -1,5 +1,4 @@
-import { calculateJobScores, JOB_SCORE_MODEL_VERSION } from '../../../configs/jobScore.js';
-import { inferJobSource, SOURCE_MAP_VERSION } from '../../../configs/pub.js';
+import { inferJobSource, SOURCE_MAP_VERSION } from '../config/jobSources.js';
 
 export async function ensureJobMarketIndexes(jobsCollection) {
 	if (!jobsCollection) return;
@@ -14,20 +13,14 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 	]);
 }
 
-/** One-time / background backfill for jobs missing denormalized score fields or computed with an older formula. */
-export async function backfillMissingJobScoreFields(jobsCollection) {
+/** Backfill denormalized `source` for older jobs missing it. */
+export async function backfillMissingJobSourceFields(jobsCollection) {
 	if (!jobsCollection) return { updated: 0 };
 	const cursor = jobsCollection.find(
 		{
-			$or: [
-				{ scoreSalary: { $exists: false } },
-				{ scoreApplicant: { $exists: false } },
-				{ source: { $exists: false } },
-				{ sourceVersion: { $ne: SOURCE_MAP_VERSION } },
-				{ scoreVersion: { $ne: JOB_SCORE_MODEL_VERSION } },
-			],
+			$or: [{ source: { $exists: false } }, { sourceVersion: { $ne: SOURCE_MAP_VERSION } }],
 		},
-		{ projection: { details: 1, salary: 1, applicants: 1, applicantCount: 1, skills: 1, applyLink: 1 } },
+		{ projection: { applyLink: 1 } },
 	);
 
 	let updated = 0;
@@ -40,17 +33,13 @@ export async function backfillMissingJobScoreFields(jobsCollection) {
 	};
 
 	for await (const job of cursor) {
-		const scores = calculateJobScores(job, []);
 		batch.push({
 			updateOne: {
 				filter: { _id: job._id },
 				update: {
 					$set: {
-						scoreSalary: scores.salaryScore,
-						scoreApplicant: scores.applicantScore,
 						source: inferJobSource(job.applyLink),
 						sourceVersion: SOURCE_MAP_VERSION,
-						scoreVersion: JOB_SCORE_MODEL_VERSION,
 					},
 				},
 			},
@@ -58,6 +47,6 @@ export async function backfillMissingJobScoreFields(jobsCollection) {
 		if (batch.length >= 200) await flush();
 	}
 	await flush();
-	if (updated) console.log(`[job_market] backfilled scoreSalary/scoreApplicant on ${updated} job(s)`);
+	if (updated) console.log(`[job_market] backfilled source on ${updated} job(s)`);
 	return { updated };
 }

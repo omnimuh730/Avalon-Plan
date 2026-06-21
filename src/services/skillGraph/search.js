@@ -62,8 +62,7 @@ export async function searchCandidates({ rawSkill, normalizedKey, searchKeywords
 			OPTIONAL MATCH (s2:Skill)
 			WHERE s2.id = $kw OR toLower(s2.label) CONTAINS $kwContains
 			WITH collect(DISTINCT coalesce(s1, s2)) AS skills
-			UNWIND skills AS skill
-			WHERE skill IS NOT NULL
+			UNWIND [s IN skills WHERE s IS NOT NULL] AS skill
 			RETURN skill.id AS id, skill.label AS label, skill.category AS category,
 			       skill.skillType AS skillType
 			LIMIT 5

@@ -1,72 +1,49 @@
-/** LLM provider + credentials for skill graph enrichment. */
+/** DeepSeek LLM config for skill graph enrichment — key from MongoDB account_info only. */
 
 import { accountInfoCollection } from '../../db/mongo.js';
 
+const DEEPSEEK_MODEL = 'deepseek-v4-flash';
+
 const DEEPSEEK_MODELS = {
-	keyword: process.env.SKILL_GRAPH_DEEPSEEK_KEYWORD_MODEL?.trim() || 'deepseek-v4-flash',
-	enrich: process.env.SKILL_GRAPH_DEEPSEEK_ENRICH_MODEL?.trim() || 'deepseek-v4-flash',
-	enrich_escalated: process.env.SKILL_GRAPH_DEEPSEEK_ENRICH_ESCALATED?.trim() || 'deepseek-v4-pro',
+	keyword: DEEPSEEK_MODEL,
+	enrich: DEEPSEEK_MODEL,
+	enrich_escalated: DEEPSEEK_MODEL,
 };
-
-const OPENAI_MODELS = {
-	keyword: process.env.SKILL_GRAPH_KEYWORD_MODEL?.trim() || 'gpt-4o-mini',
-	enrich: process.env.SKILL_GRAPH_ENRICH_MODEL?.trim() || 'gpt-4o-mini',
-	enrich_escalated: process.env.SKILL_GRAPH_ENRICH_MODEL_ESCALATED?.trim() || 'gpt-4o',
-};
-
-async function loadProfileKeys() {
-	if (!accountInfoCollection) return { openaiApiKey: '', deepseekApiKey: '' };
-	const acc = await accountInfoCollection.findOne(
-		{},
-		{ projection: { 'autoBidProfile.openaiApiKey': 1, 'autoBidProfile.deepseekApiKey': 1 } },
-	);
-	return {
-		openaiApiKey: acc?.autoBidProfile?.openaiApiKey?.trim() || '',
-		deepseekApiKey: acc?.autoBidProfile?.deepseekApiKey?.trim() || '',
-	};
-}
-
-function envOpenAiKey() {
-	return process.env.SKILL_GRAPH_OPENAI_API_KEY?.trim()
-		|| process.env.OPENAI_API_KEY?.trim()
-		|| '';
-}
-
-function envDeepseekKey() {
-	return process.env.SKILL_GRAPH_DEEPSEEK_API_KEY?.trim()
-		|| process.env.DEEPSEEK_API_KEY?.trim()
-		|| '';
-}
 
 /**
- * Resolve LLM credentials. Priority: profile keys → env keys.
- * @param {'openai'|'deepseek'|'auto'} preferredProvider
+ * Load deepseekApiKey from account_info.autoBidProfile (first account that has one).
+ * @param {string} [applierName] optional account name filter
  */
-export async function resolveLlmConfig(preferredProvider = 'auto') {
-	const profile = await loadProfileKeys();
-	const openaiKey = profile.openaiApiKey || envOpenAiKey();
-	const deepseekKey = profile.deepseekApiKey || envDeepseekKey();
+export async function loadDeepseekApiKey(applierName) {
+	if (!accountInfoCollection) return '';
 
-	const pick = (provider) => {
-		if (provider === 'deepseek' && deepseekKey) {
-			return { provider: 'deepseek', apiKey: deepseekKey, models: DEEPSEEK_MODELS };
-		}
-		if (provider === 'openai' && openaiKey) {
-			return { provider: 'openai', apiKey: openaiKey, models: OPENAI_MODELS };
-		}
-		return null;
+	const filter = { 'autoBidProfile.deepseekApiKey': { $exists: true, $nin: ['', null] } };
+	if (applierName?.trim()) {
+		filter.name = applierName.trim();
+	}
+
+	const acc = await accountInfoCollection.findOne(filter, {
+		projection: { 'autoBidProfile.deepseekApiKey': 1, name: 1 },
+	});
+
+	return acc?.autoBidProfile?.deepseekApiKey?.trim() || '';
+}
+
+/** Resolve DeepSeek credentials for skill graph LLM calls. */
+export async function resolveLlmConfig(applierName) {
+	const apiKey = await loadDeepseekApiKey(applierName);
+	if (!apiKey) return null;
+
+	return {
+		provider: 'deepseek',
+		apiKey,
+		model: DEEPSEEK_MODEL,
+		models: DEEPSEEK_MODELS,
 	};
-
-	if (preferredProvider === 'deepseek') return pick('deepseek') || pick('openai');
-	if (preferredProvider === 'openai') return pick('openai') || pick('deepseek');
-
-	// auto: prefer DeepSeek when configured, else OpenAI
-	return pick('deepseek') || pick('openai');
 }
 
 export function getEnrichmentModel(purpose = 'keyword', llmConfig = null) {
-	const models = llmConfig?.models || OPENAI_MODELS;
-	return models[purpose] || models.enrich || 'gpt-4o-mini';
+	return llmConfig?.models?.[purpose] || llmConfig?.model || DEEPSEEK_MODEL;
 }
 
 export function isEnrichmentEnabled() {
@@ -79,9 +56,4 @@ export function getWorkerIntervalMs() {
 
 export function getJobAnalysisBatchSize() {
 	return Number(process.env.SKILL_GRAPH_JOB_ANALYSIS_BATCH_SIZE) || 2;
-}
-
-/** @deprecated use resolveLlmConfig */
-export function getEnrichmentApiKey() {
-	return envOpenAiKey() || envDeepseekKey();
 }
