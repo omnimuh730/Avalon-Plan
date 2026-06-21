@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { FileText, Loader2, Sparkles } from "lucide-react";
+import { Eye, FileText, Loader2, Sparkles } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { fetchUserResumes } from "../../../services/resumeApi";
 import type { UserResumeSummary } from "../../../types/resume";
@@ -7,6 +7,7 @@ import { SearchField } from "../../../components/shared/SearchField";
 import { Badge } from "../../../components/ui";
 import { KnowledgeGraphView } from "../../knowledge-graph/components/KnowledgeGraphView";
 import { useResumeAnalysisGraph } from "../../knowledge-graph/hooks/useResumeAnalysisGraph";
+import { ResumePreviewDialog } from "./ResumePreviewDialog";
 
 type ResumeAnalysisTabProps = {
   onGoToLibrary?: () => void;
@@ -18,6 +19,7 @@ export function ResumeAnalysisTab({ onGoToLibrary }: ResumeAnalysisTabProps) {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [previewResume, setPreviewResume] = useState<UserResumeSummary | null>(null);
 
   const refresh = useCallback(async () => {
     if (!applier?.name) {
@@ -96,6 +98,16 @@ export function ResumeAnalysisTab({ onGoToLibrary }: ResumeAnalysisTabProps) {
     <div className="flex h-[calc(100vh-12rem)] min-h-[520px] gap-4">
       <aside className="w-64 shrink-0 flex flex-col gap-3">
         <SearchField value={q} onChange={setQ} placeholder="Search analyzed resumes…" />
+        {selected ? (
+          <button
+            type="button"
+            onClick={() => setPreviewResume(selected)}
+            className="flex items-center justify-center gap-2 w-full py-2 rounded-xl border border-border bg-card text-sm font-semibold hover:bg-secondary"
+          >
+            <Eye className="w-4 h-4 text-primary" />
+            Preview document
+          </button>
+        ) : null}
         <div className="flex-1 overflow-y-auto subtle-scroll space-y-2 pr-1">
           {filtered.map((r) => (
             <button
@@ -131,14 +143,23 @@ export function ResumeAnalysisTab({ onGoToLibrary }: ResumeAnalysisTabProps) {
       <div className="flex-1 min-w-0 rounded-xl border border-border overflow-hidden">
         <KnowledgeGraphView
           title={selected?.fileName ?? "Resume knowledge graph"}
-          description="Active vertices show skills from this resume. Strength scores reflect how central each skill is to this profile."
+          description="Skills below were extracted from this resume by AI. Unrelated skills (e.g. .NET) appear only in world graph context mode."
           graph={graph}
           showProfileToggle={false}
           showStrengthPanel
+          resumeSeedFocus
           toolbarClassName="top-20"
           className="min-h-[480px]"
         />
       </div>
+
+      <ResumePreviewDialog
+        resumeId={previewResume?.id ?? null}
+        ownerName={applier?.name ?? ""}
+        fileName={previewResume?.fileName}
+        open={Boolean(previewResume)}
+        onOpenChange={(open) => !open && setPreviewResume(null)}
+      />
     </div>
   );
 }

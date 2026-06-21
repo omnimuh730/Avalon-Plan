@@ -42,6 +42,7 @@ type GraphToolbarProps = {
   pendingSkills: PendingSkill[];
   matchScoreHint?: boolean;
   showProfiles?: boolean;
+  hideActivationControls?: boolean;
 };
 
 export function GraphToolbar({
@@ -60,6 +61,7 @@ export function GraphToolbar({
   pendingSkills,
   matchScoreHint,
   showProfiles = true,
+  hideActivationControls = false,
 }: GraphToolbarProps) {
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -159,6 +161,7 @@ export function GraphToolbar({
         ) : null}
       </div>
 
+      {!hideActivationControls ? (
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
@@ -180,7 +183,13 @@ export function GraphToolbar({
           Higher spread lets activation ripple further from your known skills.
         </p>
       </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground rounded-lg bg-muted/30 px-2 py-1.5 border border-border/50">
+          Showing skills extracted from this resume only. Toggle world graph context to see related skills.
+        </p>
+      )}
 
+      {!hideActivationControls ? (
       <div className="space-y-2">
         <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
           Relations
@@ -206,6 +215,7 @@ export function GraphToolbar({
           })}
         </div>
       </div>
+      ) : null}
 
       <div className="space-y-2 relative">
         <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">

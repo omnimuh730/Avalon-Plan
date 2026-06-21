@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2, Sparkles } from "lucide-react";
+import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2, Sparkles, Eye } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { SearchField } from "../../../components/shared/SearchField";
 import { Badge } from "../../../components/ui";
@@ -24,6 +24,7 @@ import {
 } from "../../../components/ui/dialog";
 import { AthensInput, FormField } from "../../../components/forms";
 import { downloadBlob } from "../lib/buildResumeModel";
+import { ResumePreviewDialog } from "./ResumePreviewDialog";
 
 type ResumeLibraryTabProps = {
   onOpenAnalysis?: () => void;
@@ -43,6 +44,7 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
   const [bulkPending, setBulkPending] = useState<PendingFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+  const [previewResume, setPreviewResume] = useState<UserResumeSummary | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bulkRef = useRef<HTMLInputElement>(null);
 
@@ -310,6 +312,9 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
                   {r.analyzed ? "Re-analyze" : "Analyze"}
                 </button>
                 <div className="flex items-center gap-1">
+                <button type="button" onClick={() => setPreviewResume(r)} className="icon-btn w-9 h-9 text-muted-foreground hover:text-primary" title="Preview">
+                  <Eye className="w-4 h-4" />
+                </button>
                 <button type="button" onClick={() => void handleDownload(r.id, r.fileName)} className="icon-btn w-9 h-9 text-muted-foreground hover:text-foreground" title="Download">
                   <Download className="w-4 h-4" />
                 </button>
@@ -377,6 +382,14 @@ export function ResumeLibraryTab({ onOpenAnalysis }: ResumeLibraryTabProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ResumePreviewDialog
+        resumeId={previewResume?.id ?? null}
+        ownerName={ownerName}
+        fileName={previewResume?.fileName}
+        open={Boolean(previewResume)}
+        onOpenChange={(open) => !open && setPreviewResume(null)}
+      />
     </>
   );
 }

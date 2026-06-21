@@ -114,3 +114,21 @@ export function buildGraphData(
 
   return { nodes, links };
 }
+
+/** Keep only resume seed skills and edges between them (no world-graph propagation). */
+export function filterGraphToResumeSeeds(data: GraphRenderData): GraphRenderData {
+  const seedIds = new Set(data.nodes.filter((n) => n.isSeed).map((n) => n.id));
+  if (!seedIds.size) return data;
+
+  const nodeId = (ref: string | GraphRenderNode) =>
+    typeof ref === "string" ? ref : ref.id;
+
+  const nodes = data.nodes.filter((n) => seedIds.has(n.id));
+  const links = data.links.filter((l) => {
+    const s = nodeId(l.source as string | GraphRenderNode);
+    const t = nodeId(l.target as string | GraphRenderNode);
+    return seedIds.has(s) && seedIds.has(t);
+  });
+
+  return { nodes, links };
+}

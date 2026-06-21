@@ -10,6 +10,7 @@ import { SkillGraphCanvas } from "./SkillGraphCanvas";
 import { GraphToolbar } from "./GraphToolbar";
 import { SkillInspectorPanel } from "./SkillInspectorPanel";
 import { SkillStrengthPanel } from "./SkillStrengthPanel";
+import { filterGraphToResumeSeeds, type GraphRenderData } from "../lib/graphAdapter";
 
 const ALL_RELATIONS: SkillRelationType[] = [
   "PREREQUISITE_OF",
@@ -30,6 +31,8 @@ export type KnowledgeGraphViewProps = {
   showProfileToggle?: boolean;
   showStrengthPanel?: boolean;
   applierName?: string;
+  /** When true, default to resume seed skills only (no world-graph neighbors). */
+  resumeSeedFocus?: boolean;
   className?: string;
   toolbarClassName?: string;
 };
@@ -42,6 +45,7 @@ export function KnowledgeGraphView({
   showEnrichment = false,
   showProfileToggle = true,
   showStrengthPanel = false,
+  resumeSeedFocus = false,
   applierName,
   className,
   toolbarClassName,
@@ -69,6 +73,14 @@ export function KnowledgeGraphView({
   const [visibleRelations, setVisibleRelations] = useState<Set<SkillRelationType>>(
     () => new Set(ALL_RELATIONS),
   );
+  const [showWorldContext, setShowWorldContext] = useState(false);
+
+  const canvasData: GraphRenderData = useMemo(() => {
+    if (resumeSeedFocus && !showWorldContext) {
+      return filterGraphToResumeSeeds(graphData);
+    }
+    return graphData;
+  }, [graphData, resumeSeedFocus, showWorldContext]);
 
   const toggleRelation = (type: SkillRelationType) =>
     setVisibleRelations((prev) => {
@@ -79,13 +91,13 @@ export function KnowledgeGraphView({
     });
 
   const selectedNode = useMemo(
-    () => graphData.nodes.find((n) => n.id === selectedId) ?? null,
-    [graphData.nodes, selectedId],
+    () => canvasData.nodes.find((n) => n.id === selectedId) ?? null,
+    [canvasData.nodes, selectedId],
   );
 
   const displayStats = useMemo(() => {
-    const seeds = graphData.nodes.filter((n) => n.isSeed).length;
-    const activated = graphData.nodes.filter((n) => n.activation > 0.15).length;
+    const seeds = canvasData.nodes.filter((n) => n.isSeed).length;
+    const activated = canvasData.nodes.filter((n) => n.activation > 0.15).length;
     return {
       pending: enrichment?.stats.pending ?? 0,
       universe: worldGraph?.nodes.length ?? 0,
@@ -93,7 +105,7 @@ export function KnowledgeGraphView({
       seeds,
       activated,
     };
-  }, [graphData.nodes, enrichment?.stats.pending, totalNodes, worldGraph?.nodes.length]);
+  }, [canvasData.nodes, enrichment?.stats.pending, totalNodes, worldGraph?.nodes.length]);
 
   const costLabel = enrichment ? formatEnrichmentCost(enrichment.usage) : null;
   const isRunning = enrichment?.isRunning ?? false;
@@ -121,7 +133,7 @@ export function KnowledgeGraphView({
           </div>
         ) : (
           <SkillGraphCanvas
-            data={graphData}
+            data={canvasData}
             selectedId={selectedId}
             onSelect={setSelectedId}
             visibleRelations={visibleRelations}
@@ -138,7 +150,18 @@ export function KnowledgeGraphView({
           {description ? (
             <p className="text-xs text-muted-foreground mt-0.5 max-w-md">{description}</p>
           ) : null}
-          {truncated ? (
+          {resumeSeedFocus ? (
+            <button
+              type="button"
+              onClick={() => setShowWorldContext((v) => !v)}
+              className="mt-2 text-xs font-semibold text-primary hover:underline pointer-events-auto"
+            >
+              {showWorldContext
+                ? "Show resume skills only"
+                : "Show world graph context (includes related skills)"}
+            </button>
+          ) : null}
+          {truncated && showWorldContext ? (
             <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
               Showing {displayStats.universe} of {displayStats.totalWorld} world skills.
             </p>
@@ -207,6 +230,7 @@ export function KnowledgeGraphView({
           pendingSkills={enrichment?.pending ?? []}
           matchScoreHint={showProfileToggle}
           showProfiles={showProfileToggle}
+          hideActivationControls={resumeSeedFocus && !showWorldContext}
         />
       </div>
 
@@ -225,8 +249,8 @@ export function KnowledgeGraphView({
         result={result}
         profiles={profiles}
         edges={worldGraph?.edges ?? []}
-        nodeLabels={Object.fromEntries(graphData.nodes.map((n) => [n.id, n.label]))}
-        nodeCategories={Object.fromEntries(graphData.nodes.map((n) => [n.id, n.category]))}
+        nodeLabels={Object.fromEntries(canvasData.nodes.map((n) => [n.id, n.label]))}
+        nodeCategories={Object.fromEntries(canvasData.nodes.map((n) => [n.id, n.category]))}
         onClose={() => setSelectedId(null)}
         onSelectNeighbor={setSelectedId}
       />
