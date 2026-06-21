@@ -51,6 +51,7 @@ export default defineConfig(({ mode }) => {
     },
     assetsInclude: ['**/*.svg', '**/*.csv'],
     server: {
+      port: 9030,
       proxy: {
         '/api': {
           target: proxyTarget,

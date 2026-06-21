@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { Job, JobStatus } from "../types";
+import type { Job, JobStatus } from "../types/job";
 import { JOBS } from "../data/jobs";
 
 export type JobSortKey =

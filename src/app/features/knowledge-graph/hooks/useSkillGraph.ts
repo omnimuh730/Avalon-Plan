@@ -29,6 +29,8 @@ export interface UseSkillGraphOptions {
   fixedResumeId?: string | null;
   /** Exclude graphs with these resumeIds from the profile list. */
   excludeResumeIds?: readonly string[];
+  /** Fetch the full Neo4j world graph and run spreading activation (force-graph UI). */
+  loadWorldGraph?: boolean;
 }
 
 const EMPTY_EXCLUDE: readonly string[] = [];
@@ -147,7 +149,7 @@ export interface UseSkillGraphResult {
 }
 
 export function useSkillGraph(options: UseSkillGraphOptions = {}): UseSkillGraphResult {
-  const { fixedResumeId, excludeResumeIds = EMPTY_EXCLUDE } = options;
+  const { fixedResumeId, excludeResumeIds = EMPTY_EXCLUDE, loadWorldGraph = false } = options;
   const excludeKey = excludeResumeIds.join("\0");
   const { applier } = useApplier();
   const [worldGraph, setWorldGraph] = useState<SkillGraph | null>(null);
@@ -161,60 +163,69 @@ export function useSkillGraph(options: UseSkillGraphOptions = {}): UseSkillGraph
   const worldGraphRef = useRef<SkillGraph | null>(null);
   worldGraphRef.current = worldGraph;
 
+  const loadUserProfiles = useCallback(async () => {
+    const applierName = applier?.name;
+    if (!applierName) {
+      setProfiles([]);
+      setActiveResumeIds(new Set());
+      return;
+    }
+
+    const [graphs, resumes] = await Promise.all([
+      fetchUserGraphs(applierName),
+      fetchUserResumes(applierName).catch(() => []),
+    ]);
+    const techByResumeId = new Map(resumes.map((r) => [r.id, r.techStack]));
+    const excluded = new Set(excludeResumeIds);
+    const filtered = graphs.filter((g) => !excluded.has(g.resumeId));
+    const nextProfiles: ProfileOption[] = filtered.map((g) => {
+      const isProfile = g.resumeId === "__profile__";
+      const fileName = g.resumeName || g.resumeId;
+      const techStack = isProfile
+        ? "Profile (all resumes)"
+        : techByResumeId.get(g.resumeId) || fileName;
+      return {
+        id: graphProfileId(g),
+        name: techStack,
+        subtitle: isProfile ? undefined : fileName,
+        skillIds: g.skills.map((s) => s.canonicalId).filter(Boolean) as string[],
+        graph: g,
+      };
+    });
+    setProfiles(nextProfiles);
+
+    if (fixedResumeId) {
+      const match = nextProfiles.find((p) => p.graph.resumeId === fixedResumeId);
+      setActiveResumeIds(match ? new Set([match.id]) : new Set());
+    } else {
+      setActiveResumeIds((prev) => {
+        if (prev.size > 0) {
+          const kept = new Set([...prev].filter((id) => nextProfiles.some((p) => p.id === id)));
+          if (kept.size > 0) return kept;
+        }
+        return nextProfiles.length ? new Set([nextProfiles[0].id]) : new Set();
+      });
+    }
+  }, [applier?.name, excludeKey, fixedResumeId]);
+
   const refreshWorldGraph = useCallback(async () => {
     const hasWorld = Boolean(worldGraphRef.current?.nodes.length);
     if (!hasWorld) setLoading(true);
     setError(null);
     try {
-      const { graph, totalNodes: total, truncated: trunc } = await fetchWorldGraph();
-      setWorldGraph(graph);
-      setTotalNodes(total);
-      setTruncated(trunc);
-
-      const applierName = applier?.name;
-      if (applierName) {
-        const [graphs, resumes] = await Promise.all([
-          fetchUserGraphs(applierName),
-          fetchUserResumes(applierName).catch(() => []),
-        ]);
-        const techByResumeId = new Map(resumes.map((r) => [r.id, r.techStack]));
-        const excluded = new Set(excludeResumeIds);
-        const filtered = graphs.filter((g) => !excluded.has(g.resumeId));
-        const nextProfiles: ProfileOption[] = filtered.map((g) => {
-          const isProfile = g.resumeId === "__profile__";
-          const fileName = g.resumeName || g.resumeId;
-          const techStack = isProfile
-            ? "Profile (all resumes)"
-            : techByResumeId.get(g.resumeId) || fileName;
-          return {
-            id: graphProfileId(g),
-            name: techStack,
-            subtitle: isProfile ? undefined : fileName,
-            skillIds: g.skills.map((s) => s.canonicalId).filter(Boolean) as string[],
-            graph: g,
-          };
-        });
-        setProfiles(nextProfiles);
-
-        if (fixedResumeId) {
-          const match = nextProfiles.find((p) => p.graph.resumeId === fixedResumeId);
-          setActiveResumeIds(match ? new Set([match.id]) : new Set());
-        } else {
-          setActiveResumeIds((prev) => {
-            if (prev.size > 0) {
-              const kept = new Set([...prev].filter((id) => nextProfiles.some((p) => p.id === id)));
-              if (kept.size > 0) return kept;
-            }
-            return nextProfiles.length ? new Set([nextProfiles[0].id]) : new Set();
-          });
-        }
+      if (loadWorldGraph) {
+        const { graph, totalNodes: total, truncated: trunc } = await fetchWorldGraph();
+        setWorldGraph(graph);
+        setTotalNodes(total);
+        setTruncated(trunc);
       }
+      await loadUserProfiles();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load graph");
     } finally {
       setLoading(false);
     }
-  }, [applier?.name, excludeKey, fixedResumeId]);
+  }, [applier?.name, excludeKey, fixedResumeId, loadUserProfiles, loadWorldGraph]);
 
   useEffect(() => {
     void refreshWorldGraph();
@@ -243,12 +254,17 @@ export function useSkillGraph(options: UseSkillGraphOptions = {}): UseSkillGraph
       edgeWeights: {},
       iterations: 0,
     };
-    if (!worldGraph?.nodes.length) {
+    if (!loadWorldGraph || !worldGraph?.nodes.length) {
+      const { strengthByNodeId: strengths, skillStrengthList: list } = buildStrengthMaps(
+        activeResumeIds,
+        profiles,
+        worldGraph,
+      );
       return {
         graphData: { nodes: [], links: [] } as GraphRenderData,
         result: empty,
-        strengthByNodeId: {},
-        skillStrengthList: [],
+        strengthByNodeId: strengths,
+        skillStrengthList: list,
       };
     }
 
@@ -271,7 +287,7 @@ export function useSkillGraph(options: UseSkillGraphOptions = {}): UseSkillGraph
       strengthByNodeId: strengths,
       skillStrengthList: list,
     };
-  }, [activeResumeIds, alpha, profiles, worldGraph]);
+  }, [activeResumeIds, alpha, loadWorldGraph, profiles, worldGraph]);
 
   const searchNodes = useMemo(
     () =>

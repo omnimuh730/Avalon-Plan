@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useApi } from "@/api/useApi";
 import { useApplier } from "@/context/applier-context";
 import { API_BASE } from "@/lib/api-base";
-import { JobSourceTitles } from "../../../data/jobs/pub.js";
+import { JobSourceTitles } from '@/app/data/jobs/pub';
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
 import type {
   JobSearchFilterState,
@@ -19,6 +19,11 @@ type ListResponse = {
   recommendationReason?: string | null;
   catalogTotal?: number | null;
   pagination?: { total: number; page: number; limit: number; totalPages: number };
+};
+
+type CountsResponse = {
+  success?: boolean;
+  counts?: Partial<Record<JobStatusTab, number>>;
 };
 
 const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
@@ -59,6 +64,31 @@ function workModeToRemote(workMode: string): string | undefined {
   return undefined;
 }
 
+/** Debounce only free-text search fields; other filters apply immediately. */
+function useDebouncedTextFilters(filters: JobSearchFilterState, delayMs = 400) {
+  const [debouncedJobQuery, setDebouncedJobQuery] = useState(filters.jobQuery);
+  const [debouncedCompanyQuery, setDebouncedCompanyQuery] = useState(filters.companyQuery);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedJobQuery(filters.jobQuery), delayMs);
+    return () => clearTimeout(t);
+  }, [filters.jobQuery, delayMs]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedCompanyQuery(filters.companyQuery), delayMs);
+    return () => clearTimeout(t);
+  }, [filters.companyQuery, delayMs]);
+
+  return useMemo(
+    () => ({
+      ...filters,
+      jobQuery: debouncedJobQuery,
+      companyQuery: debouncedCompanyQuery,
+    }),
+    [filters, debouncedJobQuery, debouncedCompanyQuery],
+  );
+}
+
 export function buildJobsListBody(
   filters: JobSearchFilterState,
   opts: { page: number; limit: number; applierName?: string; statusTab?: JobStatusTab },
@@ -88,6 +118,25 @@ export function buildJobsListBody(
   return body;
 }
 
+/** Shared filter body for batched status counts (no sort/status tab). */
+export function buildJobsCountsBody(
+  filters: JobSearchFilterState,
+  applierName?: string,
+): Record<string, unknown> {
+  const body = buildJobsListBody(filters, {
+    page: 1,
+    limit: 1,
+    applierName,
+    statusTab: "all",
+  });
+  delete body.sort;
+  delete body.page;
+  delete body.limit;
+  delete body.applied;
+  delete body.status;
+  return body;
+}
+
 export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<string> = new Set()) {
   const { post } = useApi(API_BASE);
   const { applier, applierReady } = useApplier();
@@ -97,21 +146,20 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   const [rawJobs, setRawJobs] = useState<Job[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
   const [recommendationFallback, setRecommendationFallback] = useState(false);
   const [recommendationReason, setRecommendationReason] = useState<string | null>(null);
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
 
+  const hasLoadedOnce = useRef(false);
+
+  const debouncedFilters = useDebouncedTextFilters(filters);
+
   const jobs = useMemo(
     () => rawJobs.filter((job) => !excludeIds.has(job.id)),
     [rawJobs, excludeIds],
   );
-
-  const [debouncedFilters, setDebouncedFilters] = useState(filters);
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedFilters(filters), 400);
-    return () => clearTimeout(t);
-  }, [filters]);
 
   useEffect(() => {
     setPage(1);
@@ -127,11 +175,19 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     [debouncedFilters, page, pageSize, applier?.name],
   );
 
+  const countsBody = useMemo(
+    () => buildJobsCountsBody(debouncedFilters, applier?.name),
+    [debouncedFilters, applier?.name],
+  );
+
   useEffect(() => {
     if (!applierReady) return;
     let cancelled = false;
+    const isInitial = !hasLoadedOnce.current;
+    if (isInitial) setLoading(true);
+    else setRefreshing(true);
+
     (async () => {
-      setLoading(true);
       try {
         const res = (await post("/jobs/list", listBody)) as ListResponse;
         if (cancelled) return;
@@ -141,6 +197,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
           setRecommendationFallback(Boolean(res.recommendationFallback));
           setRecommendationReason(res.recommendationReason ?? null);
           setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
+          hasLoadedOnce.current = true;
         } else {
           setRawJobs([]);
           setTotal(0);
@@ -153,10 +210,15 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
         toast.error("Failed to load jobs", {
           description: "Check that Athens-server is running and VITE_API_URL is set.",
         });
-        setRawJobs([]);
-        setTotal(0);
+        if (isInitial) {
+          setRawJobs([]);
+          setTotal(0);
+        }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     })();
     return () => {
@@ -168,21 +230,10 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     if (!applierReady) return;
     let cancelled = false;
     (async () => {
-      const tabs: JobStatusTab[] = ["all", "new", "applied", "scheduled", "declined"];
       try {
-        const entries = await Promise.all(
-          tabs.map(async (tab) => {
-            const body = buildJobsListBody(debouncedFilters, {
-              page: 1,
-              limit: 1,
-              applierName: applier?.name,
-              statusTab: tab,
-            });
-            const res = (await post("/jobs/list", body)) as ListResponse;
-            return [tab, res.pagination?.total ?? 0] as const;
-          }),
-        );
-        if (!cancelled) setStatusCounts(Object.fromEntries(entries) as Record<JobStatusTab, number>);
+        const res = (await post("/jobs/list/counts", countsBody)) as CountsResponse;
+        if (cancelled || !res?.success || !res.counts) return;
+        setStatusCounts({ ...EMPTY_STATUS_COUNTS, ...res.counts });
       } catch {
         /* counts are optional */
       }
@@ -190,7 +241,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     return () => {
       cancelled = true;
     };
-  }, [debouncedFilters, applier?.name, applierReady, post]);
+  }, [countsBody, applierReady, post]);
 
   const setPageSizeAndReset = useCallback((size: number) => {
     setPageSize(size);
@@ -201,6 +252,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     jobs,
     total,
     loading,
+    refreshing,
     page,
     pageSize,
     setPage,

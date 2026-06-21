@@ -82,7 +82,7 @@ const SOURCE_TOKENS = JobSource
  * rippling-ats.com) resolve to the most specific source. Shared by the backend
  * (denormalized `source` field) and the frontend so filters match display.
  */
-export function inferJobSource(applyLink) {
+export function inferJobSource(applyLink: string) {
 	const url = String(applyLink ?? "").trim().toLowerCase();
 	if (!url) return "Other";
 	let host = url;

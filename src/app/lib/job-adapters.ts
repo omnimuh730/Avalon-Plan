@@ -1,6 +1,6 @@
-import { inferJobSource } from "../data/jobs/pub.js";
+import { inferJobSource } from '@/app/data/jobs/pub';
 import type { ApplierAccount } from "@/context/applier-context";
-import type { Job, JobStatus, WorkMode } from "../types";
+import type { Job, JobStatus, WorkMode } from "../types/job";
 
 function readScore(doc: Record<string, unknown>, ...keys: string[]): number | null {
   for (const key of keys) {

@@ -31,7 +31,7 @@ export function JobSearchPage() {
 
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
-  const { jobs, total, loading, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason } =
+  const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason } =
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
 
@@ -141,23 +141,30 @@ export function JobSearchPage() {
         </button>
       </div>
 
-      {loading ? (
+      {loading && jobs.length === 0 ? (
         <div className="py-16 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
           <Loader2 className="w-6 h-6 animate-spin" />
           Loading jobs from server…
         </div>
       ) : (
-        <TabTransition tabKey={showGrid ? "grid" : "list"}>
-          <JobListView
-            jobs={jobs}
-            layout={showGrid ? "grid" : "list"}
-            selectedIds={selectedIds}
-            onSelectJob={selectJob}
-            showScores={showScoresOnCards}
-            bookmarkedIds={bookmarkedIds}
-            onToggleBookmark={toggleBookmark}
-          />
-        </TabTransition>
+        <div className={refreshing ? "relative opacity-80 pointer-events-none" : undefined}>
+          {refreshing ? (
+            <div className="absolute inset-x-0 top-0 z-10 flex justify-center py-2">
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : null}
+          <TabTransition tabKey={showGrid ? "grid" : "list"}>
+            <JobListView
+              jobs={jobs}
+              layout={showGrid ? "grid" : "list"}
+              selectedIds={selectedIds}
+              onSelectJob={selectJob}
+              showScores={showScoresOnCards}
+              bookmarkedIds={bookmarkedIds}
+              onToggleBookmark={toggleBookmark}
+            />
+          </TabTransition>
+        </div>
       )}
 
       <PaginationBar
