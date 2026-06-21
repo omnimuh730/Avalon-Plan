@@ -1,7 +1,12 @@
 import { resolveSkillToCanonical, listGraphSkills } from '../services/skillGraph/resolve.js';
 import { fetchSubgraph } from '../services/skillGraph/search.js';
-import { runJobAnalysisBatch } from '../services/jobAnalysis/index.js';
-import { runEnrichmentBatch } from '../services/skillEnrichment/worker.js';
+import { fetchWorldGraph } from '../services/skillGraph/worldGraph.js';
+import {
+	startEnrichmentSession,
+	stopEnrichmentSession,
+	getEnrichmentSessionStatus,
+} from '../services/skillEnrichment/worker.js';
+import { listPendingSkills, countQueueStats } from '../services/skillEnrichment/queue.js';
 import { isNeo4jReady } from '../db/neo4j.js';
 import { syncCooccurrenceToGraph } from '../services/skillCooccurrence/index.js';
 
@@ -42,13 +47,80 @@ export async function getSubgraphHandler(req, res) {
 	}
 }
 
+export async function getWorldGraphHandler(req, res) {
+	try {
+		if (!isNeo4jReady()) return res.status(503).json({ success: false, error: 'Neo4j not ready' });
+		const nodeLimit = Number(req.query.nodeLimit) || 2000;
+		const edgeLimit = Number(req.query.edgeLimit) || 5000;
+		const graph = await fetchWorldGraph({ nodeLimit, edgeLimit });
+		const stats = await countQueueStats();
+		return res.json({ success: true, graph, queueStats: stats });
+	} catch (err) {
+		console.error('GET /api/skills/graph/world error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function getPendingSkillsHandler(req, res) {
+	try {
+		const limit = Math.min(500, Number(req.query.limit) || 200);
+		const [pending, stats] = await Promise.all([
+			listPendingSkills({ limit }),
+			countQueueStats(),
+		]);
+		return res.json({
+			success: true,
+			pending,
+			stats,
+			count: pending.length,
+		});
+	} catch (err) {
+		console.error('GET /api/skills/enrichment/pending error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function getEnrichmentStatusHandler(req, res) {
+	try {
+		const session = getEnrichmentSessionStatus();
+		const stats = await countQueueStats();
+		return res.json({ success: true, session, stats });
+	} catch (err) {
+		console.error('GET /api/skills/enrichment/status error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function startEnrichmentHandler(req, res) {
+	try {
+		if (!isNeo4jReady()) return res.status(503).json({ success: false, error: 'Neo4j not ready' });
+		const { applierName, mode, limit } = req.body || {};
+		const result = await startEnrichmentSession({ applierName, mode, limit });
+		return res.status(202).json({ success: true, ...result });
+	} catch (err) {
+		const status = err.message.includes('already running') ? 409 : 500;
+		console.error('POST /api/skills/enrichment/start error', err);
+		return res.status(status).json({ success: false, error: err.message });
+	}
+}
+
+export async function stopEnrichmentHandler(req, res) {
+	try {
+		const result = stopEnrichmentSession();
+		return res.json({ success: true, ...result });
+	} catch (err) {
+		console.error('POST /api/skills/enrichment/stop error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+/** Legacy manual batch trigger — forwards to session start. */
 export async function runEnrichmentHandler(req, res) {
 	try {
-		const batchSize = Number(req.body?.batchSize) || 5;
-		const jobs = await runJobAnalysisBatch(Number(req.body?.jobBatchSize) || 2);
-		const enrichment = await runEnrichmentBatch(batchSize);
+		const limit = Number(req.body?.batchSize) || 5;
+		const result = await startEnrichmentSession({ limit });
 		const cooc = await syncCooccurrenceToGraph(50);
-		return res.json({ success: true, jobs, enrichment, cooccurrenceSynced: cooc });
+		return res.json({ success: true, enrichment: result, cooccurrenceSynced: cooc });
 	} catch (err) {
 		console.error('POST /api/skills/enrichment/run error', err);
 		return res.status(500).json({ success: false, error: err.message });

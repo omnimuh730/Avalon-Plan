@@ -31,7 +31,7 @@ export async function enqueueSkills(rawSkills = [], cooccurringSkills = []) {
 					attempts: 0,
 					createdAt: now,
 				},
-				$set: { updatedAt: now, surfaceForm },
+				$set: { updatedAt: now },
 			},
 			{ upsert: true },
 		);

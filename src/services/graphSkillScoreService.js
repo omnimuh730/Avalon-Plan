@@ -1,3 +1,16 @@
+/**
+ * Graph-aware job skill scoring via spreading activation on the **world skillset graph**.
+ *
+ * Future matching score (user resume graph × job skills):
+ *   matchScore(job, userResumeGraph) =
+ *     activation-weighted overlap of job.skills (resolved to world canonicalIds)
+ *     against spreading activation seeded by userResumeGraph.skills canonicalIds.
+ *
+ * Today: seeds from personal_info canonicalIds (interim).
+ * Later: pass userGraphId / resumeId to select per-resume user_knowledge_graphs seeds.
+ *
+ * @param {object} [options.userGraphId] — reserved for per-resume graph scoring (not implemented).
+ */
 import {
 	jobsCollection,
 	personalInfoCollection,

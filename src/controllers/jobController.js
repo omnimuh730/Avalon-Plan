@@ -12,6 +12,8 @@ import { SKILL_SCORE_VERSION } from '../services/skillScoreService.js';
 import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/safeRegex.js';
 import { attachStaticScoreFields, needsScorePipeline, runJobListAggregation } from '../services/jobListPipeline.js';
 import { queueJobAnalysis, getJobAnalysisStatus } from '../services/jobAnalysis/index.js';
+import { enqueueSkills } from '../services/skillEnrichment/queue.js';
+import { recordCooccurrenceForJob } from '../services/skillCooccurrence/index.js';
 
 const SCORE_DIMENSIONS = {
 	overall: 'overallScore',
@@ -142,13 +144,23 @@ export async function createJob(req, res) {
 			console.warn('Failed to upsert company categories', e);
 		}
 
-		// MongoDB only on ingest — Neo4j + LLM run when user clicks Analyze.
+		// MongoDB only on ingest — world graph enrichment runs from Knowledge Graph page.
 		job.skillAnalysis = { status: 'pending' };
 		job.skillScore = 0;
 		job.skillScoreVersion = SKILL_SCORE_VERSION;
 		Object.assign(job, attachStaticScoreFields({ ...job, skills }));
 
 		const result = jobsCollection ? await jobsCollection.insertOne(job) : null;
+
+		// Enqueue unseen skills for KG analyze + record co-occurrence (free, no LLM).
+		if (skills.length) {
+			try {
+				await enqueueSkills(skills, skills);
+				await recordCooccurrenceForJob(skills, { jobId: result?.insertedId ? String(result.insertedId) : undefined });
+			} catch (e) {
+				console.warn('Failed to enqueue job skills for graph enrichment', e);
+			}
+		}
 
 		return res.status(201).json({
 			success: true,
