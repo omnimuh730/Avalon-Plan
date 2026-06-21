@@ -22,6 +22,7 @@ export function KnowledgeGraphSettingsTab() {
         showProfileToggle={false}
         showStrengthPanel
         resumeSeedFocus
+        showPendingQueue={false}
         applierName={applier?.name}
       />
     </div>

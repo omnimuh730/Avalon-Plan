@@ -33,6 +33,8 @@ export type KnowledgeGraphViewProps = {
   applierName?: string;
   /** When true, default to resume seed skills only (no world-graph neighbors). */
   resumeSeedFocus?: boolean;
+  /** When false, hide the global enrichment queue (not the user's resume skills). */
+  showPendingQueue?: boolean;
   className?: string;
   toolbarClassName?: string;
 };
@@ -47,6 +49,7 @@ export function KnowledgeGraphView({
   showStrengthPanel = false,
   resumeSeedFocus = false,
   applierName,
+  showPendingQueue = true,
   className,
   toolbarClassName,
 }: KnowledgeGraphViewProps) {
@@ -75,14 +78,25 @@ export function KnowledgeGraphView({
   );
   const [showWorldContext, setShowWorldContext] = useState(false);
 
+  const activeProfileEdges = useMemo(() => {
+    if (!resumeSeedFocus || showWorldContext) return [];
+    for (const p of profiles) {
+      if (activeResumeIds.has(p.id)) return p.graph.edges ?? [];
+    }
+    return [];
+  }, [profiles, activeResumeIds, resumeSeedFocus, showWorldContext]);
+
   const canvasData: GraphRenderData = useMemo(() => {
+    if (resumeSeedFocus && !showWorldContext && skillStrengthList.length) {
+      return buildDirectSkillGraphData(skillStrengthList, worldGraph, activeProfileEdges);
+    }
     let data = graphData;
     if (resumeSeedFocus && !showWorldContext) {
       data = filterGraphToResumeSeeds(graphData);
       data = appendLocalSkillNodes(data, skillStrengthList);
     }
     return data;
-  }, [graphData, resumeSeedFocus, showWorldContext, skillStrengthList]);
+  }, [graphData, resumeSeedFocus, showWorldContext, skillStrengthList, worldGraph, activeProfileEdges]);
 
   const toggleRelation = (type: SkillRelationType) =>
     setVisibleRelations((prev) => {
@@ -98,20 +112,30 @@ export function KnowledgeGraphView({
   );
 
   const displayStats = useMemo(() => {
+    const usingDirectSkills = resumeSeedFocus && !showWorldContext && skillStrengthList.length > 0;
     const seeds = canvasData.nodes.filter((n) => n.isSeed).length;
-    const activated = canvasData.nodes.filter((n) => n.activation > 0.15).length;
+    const activated = usingDirectSkills
+      ? canvasData.nodes.length
+      : canvasData.nodes.filter((n) => n.activation > 0.15).length;
     return {
       pending: enrichment?.stats.pending ?? 0,
-      universe: worldGraph?.nodes.length ?? 0,
+      universe: usingDirectSkills ? canvasData.nodes.length : (worldGraph?.nodes.length ?? 0),
       totalWorld: totalNodes,
       seeds,
       activated,
     };
-  }, [canvasData.nodes, enrichment?.stats.pending, totalNodes, worldGraph?.nodes.length]);
+  }, [canvasData.nodes, enrichment?.stats.pending, totalNodes, worldGraph?.nodes.length, resumeSeedFocus, showWorldContext, skillStrengthList.length]);
 
   const costLabel = enrichment ? formatEnrichmentCost(enrichment.usage) : null;
   const isRunning = enrichment?.isRunning ?? false;
   const enrichLoading = enrichment?.loading ?? false;
+
+  const toolbarSearchNodes = useMemo(() => {
+    if (resumeSeedFocus && !showWorldContext && canvasData.nodes.length) {
+      return canvasData.nodes.map((n) => ({ id: n.id, label: n.label, category: n.category }));
+    }
+    return searchNodes;
+  }, [resumeSeedFocus, showWorldContext, canvasData.nodes, searchNodes]);
 
   return (
     <div className={cn("relative h-full w-full bg-background", className)}>
@@ -228,11 +252,12 @@ export function KnowledgeGraphView({
           onSearchSelect={setSelectedId}
           search={search}
           onSearchChange={setSearch}
-          searchNodes={searchNodes}
-          pendingSkills={enrichment?.pending ?? []}
+          searchNodes={toolbarSearchNodes}
+          pendingSkills={showPendingQueue ? (enrichment?.pending ?? []) : []}
           matchScoreHint={showProfileToggle}
           showProfiles={showProfileToggle}
           hideActivationControls={resumeSeedFocus && !showWorldContext}
+          profileSkillFocus={resumeSeedFocus && !showWorldContext}
         />
       </div>
 

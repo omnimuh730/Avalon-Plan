@@ -43,6 +43,8 @@ type GraphToolbarProps = {
   matchScoreHint?: boolean;
   showProfiles?: boolean;
   hideActivationControls?: boolean;
+  /** Profile/resume skill-only view — adjust helper copy. */
+  profileSkillFocus?: boolean;
 };
 
 export function GraphToolbar({
@@ -62,6 +64,7 @@ export function GraphToolbar({
   matchScoreHint,
   showProfiles = true,
   hideActivationControls = false,
+  profileSkillFocus = false,
 }: GraphToolbarProps) {
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -76,7 +79,11 @@ export function GraphToolbar({
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 shadow-sm space-y-4 pointer-events-auto">
-      {pendingSkills.length > 0 ? (
+      {profileSkillFocus ? (
+        <p className="text-[11px] text-muted-foreground rounded-lg bg-muted/30 px-2 py-1.5 border border-border/50">
+          Dots are your analyzed skills (same list as Skill Strength). Toggle world graph context to see related skills from the global taxonomy.
+        </p>
+      ) : pendingSkills.length > 0 ? (
         <div className="space-y-2">
           <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
             Not in graph yet ({pendingSkills.length})
