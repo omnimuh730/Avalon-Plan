@@ -33,7 +33,7 @@ export function MailPage() {
 
   const mail = useMailThreads(applierName);
   const { labels, createLabel, removeLabel, reload: reloadLabels } = useMailLabels(applierName);
-  const { loadThreads, fetchThreadBody, cancelBodyFetch, page, pageSize, setPage, setPageSize, total } =
+  const { loadThreads, fetchThreadBody, getCachedThreadBody, cancelBodyFetch, page, pageSize, setPage, setPageSize, total } =
     mail;
 
   const loadCurrentPage = useCallback(() => {
@@ -78,7 +78,16 @@ export function MailPage() {
     }
 
     cancelBodyFetch();
+    const sessionCached = getCachedThreadBody(threadId);
     const listThread = mail.threads.find((t) => t.id === threadId) ?? null;
+    const immediate = sessionCached ?? (listThread?.bodyHtml ? listThread : null);
+
+    if (immediate?.bodyHtml) {
+      setActiveThread(immediate);
+      setDetailLoading(false);
+      return;
+    }
+
     setActiveThread(listThread);
     setDetailLoading(true);
 
@@ -86,7 +95,7 @@ export function MailPage() {
       if (thread) setActiveThread(thread);
       setDetailLoading(false);
     });
-  }, [threadId, applierName, folder, fetchThreadBody, cancelBodyFetch]);
+  }, [threadId, applierName, folder, fetchThreadBody, getCachedThreadBody, cancelBodyFetch]);
 
   const grouped = useMemo(() => groupThreadsByDate(mail.threads), [mail.threads]);
   const isThreadView = Boolean(threadId);

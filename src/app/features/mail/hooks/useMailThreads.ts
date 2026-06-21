@@ -20,15 +20,18 @@ function mergeThreads(prev: MailThread[], fresh: MailThread[]): MailThread[] {
   const prevById = new Map(prev.map((t) => [t.id, t]));
   return fresh.map((t) => {
     const existing = prevById.get(t.id);
-    if (!existing?.hasBody || !existing.bodyHtml) return t;
-    if (existing.subj !== t.subj || existing.from !== t.from) return t;
-    return {
-      ...t,
-      body: existing.body,
-      bodyHtml: existing.bodyHtml,
-      hasBody: true,
-      prev: existing.prev || t.prev,
-    };
+    const cached = existing?.hasBody && existing.bodyHtml ? existing : null;
+    if (cached && cached.subj === t.subj && cached.from === t.from) {
+      return {
+        ...t,
+        body: cached.body,
+        bodyHtml: cached.bodyHtml,
+        hasBody: true,
+        prev: cached.prev || t.prev,
+      };
+    }
+    if (t.hasBody) return t;
+    return t;
   });
 }
 
@@ -52,6 +55,7 @@ export function useMailThreads(applierName: string | undefined) {
   });
   const loadGen = useRef(0);
   const bodyFetchGen = useRef(0);
+  const bodyCache = useRef(new Map<string, MailThread>());
 
   const loadThreads = useCallback(
     async (opts: Partial<LoadOpts> & { folder: MailFolderId; labelFilter: string | null; search: string }) => {
@@ -119,10 +123,18 @@ export function useMailThreads(applierName: string | undefined) {
   const fetchThreadBody = useCallback(
     async (uid: string, folder: MailFolderId) => {
       if (!applierName) return null;
+
+      const sessionHit = bodyCache.current.get(uid);
+      if (sessionHit?.bodyHtml) {
+        setThreads((prev) => prev.map((t) => (t.id === uid ? sessionHit : t)));
+        return sessionHit;
+      }
+
       const gen = ++bodyFetchGen.current;
       try {
         const thread = await fetchMailMessage(applierName, uid, folder);
         if (gen !== bodyFetchGen.current) return null;
+        bodyCache.current.set(uid, thread);
         setThreads((prev) => prev.map((t) => (t.id === uid ? thread : t)));
         return thread;
       } catch (e) {
@@ -133,6 +145,10 @@ export function useMailThreads(applierName: string | undefined) {
     },
     [applierName],
   );
+
+  const getCachedThreadBody = useCallback((uid: string) => {
+    return bodyCache.current.get(uid) ?? null;
+  }, []);
 
   const cancelBodyFetch = useCallback(() => {
     bodyFetchGen.current += 1;
@@ -240,6 +256,7 @@ export function useMailThreads(applierName: string | undefined) {
     currentFolder,
     loadThreads,
     fetchThreadBody,
+    getCachedThreadBody,
     cancelBodyFetch,
     star,
     archive,
