@@ -78,7 +78,7 @@ export async function sendMailMessage(
 export async function patchMailMessage(
   applierName: string,
   uid: string,
-  patch: { seen?: boolean; flagged?: boolean; folder?: string },
+  patch: { seen?: boolean; flagged?: boolean; folder?: string; addLabels?: string[]; removeLabels?: string[] },
 ) {
   const data = await mailFetch<{ thread: MailThread }>(`mail/messages/${encodeURIComponent(uid)}`, {
     method: "PATCH",
@@ -98,6 +98,14 @@ export async function saveMailLabels(applierName: string, labels: MailLabel[]) {
     body: JSON.stringify({ applierName, labels }),
   });
   return data.labels;
+}
+
+export async function createMailLabel(applierName: string, name: string, parentId?: string) {
+  const data = await mailFetch<{ label: MailLabel }>("mail/labels", {
+    method: "POST",
+    body: JSON.stringify({ applierName, name, parentId }),
+  });
+  return data.label;
 }
 
 export async function checkMailCredentials(applierName: string) {

@@ -12,6 +12,7 @@ import { MailComposeSheet } from "./components/MailComposeSheet";
 import { useMailThreads } from "./hooks/useMailThreads";
 import { useMailLabels } from "./hooks/useMailLabels";
 import { useMailSync } from "./hooks/useMailSync";
+import { groupThreadsByDate } from "./lib/mailLabelStyles";
 import type { MailFolderId } from "../../../data/mail";
 
 export function MailPage() {
@@ -27,12 +28,13 @@ export function MailPage() {
   const listRef = useRef<HTMLDivElement>(null);
 
   const mail = useMailThreads(applierName);
-  const { labels, createLabel } = useMailLabels(applierName);
+  const { labels, createLabel, reload: reloadLabels } = useMailLabels(applierName);
   const { loadThreads, fetchThreadBody } = mail;
 
   const reload = useCallback(() => {
     void loadThreads({ folder, labelFilter, search });
-  }, [loadThreads, folder, labelFilter, search]);
+    void reloadLabels();
+  }, [loadThreads, reloadLabels, folder, labelFilter, search]);
 
   useMailSync({
     applierName,
@@ -60,6 +62,7 @@ export function MailPage() {
   }, [threadId, applierName, mail.threads, fetchThreadBody]);
 
   const threads = useMemo(() => mail.threads, [mail.threads]);
+  const grouped = useMemo(() => groupThreadsByDate(threads), [threads]);
 
   const selected = threadId ? mail.threads.find((t) => t.id === threadId) ?? null : null;
   const isThreadView = Boolean(threadId);
@@ -163,17 +166,26 @@ export function MailPage() {
             ) : threads.length === 0 ? (
               <p className="p-6 text-sm text-muted-foreground text-center">No messages</p>
             ) : (
-              threads.map((t) => (
-                <MailListRow
-                  key={t.id}
-                  thread={t}
-                  selected={false}
-                  onSelect={() => openThread(t.id)}
-                  onStar={() => mail.star(t.id)}
-                  onArchive={() => mail.archive(t.id)}
-                  onTrash={() => mail.trash(t.id)}
-                  onMarkUnread={() => mail.markUnread(t.id, true)}
-                />
+              grouped.map((group) => (
+                <div key={group.section}>
+                  {group.label && (
+                    <div className="px-4 py-2 text-xs font-semibold text-muted-foreground sticky top-0 bg-background/95 backdrop-blur-sm border-b border-border/30">
+                      {group.label}
+                    </div>
+                  )}
+                  {group.threads.map((t) => (
+                    <MailListRow
+                      key={t.id}
+                      thread={t}
+                      selected={false}
+                      onSelect={() => openThread(t.id)}
+                      onStar={() => mail.star(t.id)}
+                      onArchive={() => mail.archive(t.id)}
+                      onTrash={() => mail.trash(t.id)}
+                      onMarkUnread={() => mail.markUnread(t.id, true)}
+                    />
+                  ))}
+                </div>
               ))
             )}
             {mail.loadingOlder && (

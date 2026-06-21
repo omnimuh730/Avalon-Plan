@@ -1,7 +1,7 @@
 import React from "react";
-import { ArrowLeft, Send, Sparkles, Archive, Trash2, Loader2 } from "lucide-react";
-import { Av, Badge } from "../../../components/ui";
-import { MAIL_TAG_VARIANTS } from "../../../data/mail";
+import { ArrowLeft, Send, Sparkles, Archive, Trash2, Loader2, Star } from "lucide-react";
+import { Av } from "../../../components/ui";
+import { labelPillClass } from "../lib/mailLabelStyles";
 import type { MailThread } from "../../../types";
 
 type MailDetailPaneProps = {
@@ -56,10 +56,16 @@ export function MailDetailPane({
             <p className="text-xs text-muted-foreground">{thread.time}</p>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {thread.labels.filter((l) => l !== "starred").map((l) => (
-              <Badge key={l} v={MAIL_TAG_VARIANTS[l] ?? "subtle"}>
+            {thread.starred && (
+              <Star className="w-4 h-4 text-amber-400 fill-amber-400" aria-label="Starred" />
+            )}
+            {thread.labels.map((l) => (
+              <span
+                key={l}
+                className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${labelPillClass(l)}`}
+              >
                 {l}
-              </Badge>
+              </span>
             ))}
             <button type="button" onClick={onArchive} className="icon-btn text-muted-foreground hover:text-foreground border border-border">
               <Archive className="w-4 h-4" />

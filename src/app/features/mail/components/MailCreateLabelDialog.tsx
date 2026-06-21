@@ -16,7 +16,7 @@ type MailCreateLabelDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   labels: MailLabel[];
-  onCreate: (name: string, parentId?: string) => void;
+  onCreate: (name: string, parentId?: string) => void | Promise<void>;
 };
 
 export function MailCreateLabelDialog({
@@ -30,7 +30,7 @@ export function MailCreateLabelDialog({
 
   const handleCreate = () => {
     if (!name.trim()) return;
-    onCreate(name.trim(), parentId === NO_PARENT ? undefined : parentId);
+    void Promise.resolve(onCreate(name.trim(), parentId === NO_PARENT ? undefined : parentId));
     setName("");
     setParentId(NO_PARENT);
     onOpenChange(false);
@@ -42,7 +42,7 @@ export function MailCreateLabelDialog({
         <DialogHeader>
           <DialogTitle>Create label</DialogTitle>
           <DialogDescription>
-            Add a new label and optionally nest it under an existing one.
+            Creates the label in your Gmail account. Nested labels use Gmail&apos;s parent/child format.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">

@@ -104,18 +104,9 @@ export function useMailThreads(applierName: string | undefined) {
   const star = useCallback(
     (id: string) => {
       const thread = threads.find((t) => t.id === id);
-      const flagged = !thread?.labels.includes("starred");
+      const flagged = !(thread?.starred ?? false);
       setThreads((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                labels: flagged
-                  ? [...t.labels.filter((l) => l !== "starred"), "starred"]
-                  : t.labels.filter((l) => l !== "starred"),
-              }
-            : t,
-        ),
+        prev.map((t) => (t.id === id ? { ...t, starred: flagged } : t)),
       );
       void patchThread(id, { flagged });
     },

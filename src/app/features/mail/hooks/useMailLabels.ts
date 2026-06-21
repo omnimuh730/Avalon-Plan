@@ -1,81 +1,62 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchMailLabels, saveMailLabels } from "@/api/mail";
-import { MAIL_LABELS } from "../../../data/mail";
+import { fetchMailLabels, createMailLabel } from "@/api/mail";
 import type { BadgeVariant, MailLabel } from "../../../types";
 
 const LABEL_COLORS: BadgeVariant[] = ["violet", "blue", "success", "amber", "pink", "subtle"];
 
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 32);
+function assignColors(labels: MailLabel[]): MailLabel[] {
+  return labels.map((l, i) => ({
+    ...l,
+    color: l.color || LABEL_COLORS[i % LABEL_COLORS.length],
+  }));
 }
 
 export function useMailLabels(applierName: string | undefined) {
-  const [labels, setLabels] = useState<MailLabel[]>(MAIL_LABELS.map((l) => ({ ...l })));
+  const [labels, setLabels] = useState<MailLabel[]>([]);
   const [ready, setReady] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const reload = useCallback(async () => {
+    if (!applierName) return;
+    setLoading(true);
+    try {
+      const serverLabels = await fetchMailLabels(applierName);
+      setLabels(assignColors(serverLabels));
+    } catch (e) {
+      console.error("fetch mail labels failed", e);
+    } finally {
+      setLoading(false);
+      setReady(true);
+    }
+  }, [applierName]);
 
   useEffect(() => {
     if (!applierName) {
       setReady(true);
       return;
     }
-    let cancelled = false;
-    (async () => {
-      try {
-        const serverLabels = await fetchMailLabels(applierName);
-        if (!cancelled && serverLabels.length > 0) {
-          setLabels(serverLabels);
-        }
-      } catch {
-        /* keep defaults */
-      } finally {
-        if (!cancelled) setReady(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [applierName]);
-
-  const persist = useCallback(
-    async (next: MailLabel[]) => {
-      setLabels(next);
-      if (applierName) {
-        try {
-          await saveMailLabels(applierName, next);
-        } catch (e) {
-          console.error("save mail labels failed", e);
-        }
-      }
-    },
-    [applierName],
-  );
+    void reload();
+  }, [applierName, reload]);
 
   const createLabel = useCallback(
-    (name: string, parentId?: string) => {
+    async (name: string, parentId?: string) => {
+      if (!applierName) return null;
       const trimmed = name.trim();
       if (!trimmed) return null;
-      if (labels.some((l) => l.name.toLowerCase() === trimmed.toLowerCase())) return null;
 
-      let id = slugify(trimmed);
-      if (labels.some((l) => l.id === id)) id = `${id}-${Date.now()}`;
-
-      const label: MailLabel = {
-        id,
-        name: trimmed,
-        color: LABEL_COLORS[labels.length % LABEL_COLORS.length],
-        ...(parentId ? { parentId } : {}),
-      };
-      void persist([...labels, label]);
-      return label;
+      try {
+        const label = await createMailLabel(applierName, trimmed, parentId);
+        await reload();
+        return label;
+      } catch (e) {
+        console.error("create mail label failed", e);
+        return null;
+      }
     },
-    [labels, persist],
+    [applierName, reload],
   );
 
-  return { labels, createLabel, ready };
+  return { labels, createLabel, ready, loading, reload };
 }
 
 /** Build a nested tree for sidebar rendering. */

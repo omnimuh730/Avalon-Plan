@@ -17,9 +17,11 @@ export interface MailThread {
   time: string;
   date?: string;
   unread: boolean;
+  starred?: boolean;
   tag: string;
   folder: "inbox" | "sent" | "drafts" | "trash" | "spam" | "archive";
   labels: string[];
+  gmailLabels?: string[];
   hasBody?: boolean;
 }
 
@@ -29,6 +31,9 @@ export interface MailLabel {
   color: BadgeVariant;
   /** When set, this label is nested under the parent in the sidebar. */
   parentId?: string;
+  /** Full Gmail label path (e.g. Notify/Decline) */
+  path?: string;
+  shortName?: string;
 }
 
 export interface Resume {
