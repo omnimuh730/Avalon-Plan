@@ -1,7 +1,23 @@
-import { calculateJobScores, combineSubScores } from "../../../../FoxHire/configs/jobScore.js";
-import { inferJobSource } from "../../../../FoxHire/configs/pub.js";
+import { inferJobSource } from "../data/jobs/pub.js";
 import type { ApplierAccount } from "@/context/applier-context";
 import type { Job, JobStatus, WorkMode } from "../types";
+
+function readScore(doc: Record<string, unknown>, ...keys: string[]): number | null {
+  for (const key of keys) {
+    const v = doc[key];
+    if (typeof v === "number" && !Number.isNaN(v)) return Math.round(v);
+  }
+  return null;
+}
+
+function freshnessFromPosted(doc: Record<string, unknown>): number {
+  const postedRaw = String(doc.postedAt || doc._createdAt || "");
+  if (!postedRaw) return 50;
+  const postedMs = new Date(postedRaw).getTime();
+  if (Number.isNaN(postedMs)) return 50;
+  const ageDays = Math.max(0, (Date.now() - postedMs) / 86400000);
+  return Math.max(0, Math.min(100, Math.round(100 - Math.min(ageDays, 30) * 3)));
+}
 
 export function normalizeId(value: unknown): string {
   if (value == null) return "";
@@ -41,11 +57,7 @@ function parseWorkMode(remote: string): WorkMode {
   return "onsite";
 }
 
-export function mapDocToJob(
-  doc: Record<string, unknown>,
-  applier: ApplierAccount | null,
-  userSkills: string[] = [],
-): Job {
+export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccount | null): Job {
   const backendId = normalizeId(doc._id);
   const company = (doc.company as { name?: string; tags?: string[]; logo?: string } | undefined) || {};
   const details = (doc.details as Record<string, string | undefined> | undefined) || {};
@@ -76,27 +88,11 @@ export function mapDocToJob(
   const source =
     typeof doc.source === "string" && doc.source ? doc.source : inferJobSource(String(doc.applyLink || ""));
 
-  const apiSkill =
-    typeof doc.scoreSkill === "number" && !Number.isNaN(doc.scoreSkill)
-      ? doc.scoreSkill
-      : typeof doc.matchScore === "number" && !Number.isNaN(doc.matchScore)
-        ? doc.matchScore
-        : null;
-  const storedSkill =
-    typeof doc.skillScore === "number" && !Number.isNaN(doc.skillScore) ? doc.skillScore : null;
-  const jsScores = calculateJobScores(doc, apiSkill === null && storedSkill === null ? userSkills : []);
-  const skill = apiSkill ?? storedSkill ?? jsScores.skillMatch;
-  const overall =
-    typeof doc._score === "number" && !Number.isNaN(doc._score)
-      ? Math.round(doc._score)
-      : typeof doc.scoreOverall === "number" && !Number.isNaN(doc.scoreOverall)
-        ? Math.round(doc.scoreOverall)
-        : combineSubScores({
-            skill,
-            applicant: jsScores.applicantScore,
-            freshness: jsScores.postedDateScore,
-            salary: jsScores.salaryScore,
-          });
+  const skill = readScore(doc, "scoreSkill", "matchScore", "skillScore") ?? 0;
+  const overall = readScore(doc, "_score", "scoreOverall") ?? skill;
+  const salaryScore = readScore(doc, "scoreSalary") ?? 0;
+  const bidEst = readScore(doc, "scoreApplicant") ?? 0;
+  const freshness = readScore(doc, "scoreFreshness") ?? freshnessFromPosted(doc);
 
   const bestResumeTechStack =
     typeof doc.bestResumeTechStack === "string" && doc.bestResumeTechStack.trim()
@@ -124,9 +120,9 @@ export function mapDocToJob(
     scores: {
       overall,
       skill,
-      salary: jsScores.salaryScore ?? 0,
-      bidEst: jsScores.applicantScore,
-      freshness: jsScores.postedDateScore,
+      salary: salaryScore,
+      bidEst,
+      freshness,
     },
     matchScore: overall,
     posted,

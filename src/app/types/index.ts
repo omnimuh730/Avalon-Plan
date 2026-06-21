@@ -19,7 +19,7 @@ export type {
   JobStatus,
   JobTabKey,
 } from "./agent";
-export type { Job, SkillAnalysis, SkillAnalysisStatus, SkillAnalysisUsage } from "./job";
+export type { Job, SkillAnalysis, SkillAnalysisStatus, SkillAnalysisUsage, WorkMode } from "./job";
 export type { Msg, MailThread, Resume, BadgeVariant } from "./common";
 export type {
   ResumeIdentity,

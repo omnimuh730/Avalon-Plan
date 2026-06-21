@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { useApi } from "@/api/useApi";
 import { useApplier } from "@/context/applier-context";
 import { API_BASE } from "@/lib/api-base";
-import { JobSourceTitles } from "../../../../../../FoxHire/configs/pub.js";
+import { JobSourceTitles } from "../../../data/jobs/pub.js";
 import { mapDocToJob, SORT_TO_API } from "../../../lib/job-adapters";
 import type {
   JobSearchFilterState,

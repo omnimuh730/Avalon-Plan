@@ -1,5 +1,5 @@
 import type { Job, JobStatus, WorkMode } from "../../types";
-import { JobSourceTitles } from "../../../../../FoxHire/configs/pub.js";
+import { JobSourceTitles } from './pub';
 
 const COMPANIES = [
   "Vercel", "Linear", "Figma", "OpenAI", "GitHub", "Stripe", "Notion", "Anthropic",
@@ -23,7 +23,7 @@ const TITLES = [
 
 const LOCATIONS = ["Remote", "San Francisco, CA", "New York, NY", "Seattle, WA", "Austin, TX", "Boston, MA"];
 const SOURCES = ["LinkedIn", "Indeed", "Referral", "Direct", "Glassdoor", "Company Site"];
-const STATUSES: JobStatus[] = ["new", "new", "new", "applied", "scheduled", "declined"];
+const STATUSES: JobStatus[] = ["in_progress", "succeeded", "failed", "scheduled", "review"];
 
 const INDUSTRY_SETS = [
   ["SaaS", "Developer Tools"],

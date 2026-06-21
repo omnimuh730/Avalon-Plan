@@ -1,27 +1,22 @@
 import { PageShell } from "../../components/layout/PageShell";
 import { useApplier } from "@/context/applier-context";
-import { useSkillGraph } from "./hooks/useSkillGraph";
 import { useSkillEnrichment } from "./hooks/useSkillEnrichment";
-import { KnowledgeGraphView } from "./components/KnowledgeGraphView";
+import { SkillCatalogView } from "./components/SkillCatalogView";
 
 export function KnowledgeGraphPage() {
   const { applier } = useApplier();
-  const graph = useSkillGraph();
 
-  const enrichment = useSkillEnrichment(() => {
-    void graph.refreshWorldGraph();
-  });
+  const enrichment = useSkillEnrichment();
 
   return (
     <PageShell fullWidth className="!overflow-hidden">
-      <KnowledgeGraphView
+      <SkillCatalogView
         title="Skill Knowledge Graph"
-        description="World skillset from jobs — your resume graphs activate nodes. Analyze pending skills on the Knowledge Graph page (not per job)."
-        graph={graph}
+        description="Browse world skills from jobs and resumes. Search, select skills, and use Enhance relations to generate new connections with AI."
+        applierName={applier?.name}
         enrichment={enrichment}
         showEnrichment
-        showProfileToggle
-        applierName={applier?.name}
+        className="h-[calc(100vh-5rem)]"
       />
     </PageShell>
   );

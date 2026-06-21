@@ -5,7 +5,7 @@ import { fetchUserResumes } from "../../../services/resumeApi";
 import type { UserResumeSummary } from "../../../types/resume";
 import { SearchField } from "../../../components/shared/SearchField";
 import { Badge } from "../../../components/ui";
-import { KnowledgeGraphView } from "../../knowledge-graph/components/KnowledgeGraphView";
+import { ResumeSkillAnalysisView } from "./analysis/ResumeSkillAnalysisView";
 import { useResumeAnalysisGraph } from "../../knowledge-graph/hooks/useResumeAnalysisGraph";
 import { ResumePreviewDialog } from "./ResumePreviewDialog";
 
@@ -75,8 +75,8 @@ export function ResumeAnalysisTab({ onGoToLibrary }: ResumeAnalysisTabProps) {
         <div>
           <h3 className="text-lg font-bold text-foreground">No analyzed resumes yet</h3>
           <p className="text-sm text-muted-foreground mt-1 max-w-md">
-            Upload a resume in the Library tab and run Analyze to build a skill knowledge graph with
-            strength scores.
+            Upload a resume in the Library tab and run Analyze to extract skills and strength
+            scores for radar analysis.
           </p>
         </div>
         {onGoToLibrary ? (
@@ -140,16 +140,11 @@ export function ResumeAnalysisTab({ onGoToLibrary }: ResumeAnalysisTabProps) {
         </div>
       </aside>
 
-      <div className="flex-1 min-w-0 rounded-xl border border-border overflow-hidden">
-        <KnowledgeGraphView
-          title={selected?.fileName ?? "Resume knowledge graph"}
-          description="Skills below were extracted from this resume by AI. Unrelated skills (e.g. .NET) appear only in world graph context mode."
+      <div className="flex-1 min-w-0 rounded-xl border border-border overflow-hidden bg-background">
+        <ResumeSkillAnalysisView
           graph={graph}
-          showProfileToggle={false}
-          showStrengthPanel
-          resumeSeedFocus
-          toolbarClassName="top-20"
-          className="min-h-[480px]"
+          title={selected?.fileName ?? "Resume skill analysis"}
+          description="Skills extracted from this resume by AI, ranked by estimated proficiency strength."
         />
       </div>
 

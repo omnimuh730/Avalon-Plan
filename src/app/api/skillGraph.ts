@@ -192,3 +192,86 @@ export function formatEnrichmentCost(usage?: SkillAnalysisUsage | null): string 
   }
   return `$${usage.cost.toFixed(4)} · ${inTok.toLocaleString()} in · ${outTok.toLocaleString()} out`;
 }
+
+export interface GraphSkill {
+  id: string;
+  label: string;
+  category: string;
+  skillType?: string;
+}
+
+export interface SkillListPagination {
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export async function fetchSkillList(options: {
+  q?: string;
+  page?: number;
+  limit?: number;
+}): Promise<{ skills: GraphSkill[]; pagination: SkillListPagination }> {
+  const params = new URLSearchParams();
+  if (options.q) params.set("q", options.q);
+  params.set("page", String(options.page ?? 1));
+  params.set("limit", String(options.limit ?? 30));
+
+  const res = await fetch(`${API_BASE}/skills/list?${params}`);
+  const data = (await res.json()) as {
+    success?: boolean;
+    skills?: GraphSkill[];
+    pagination?: SkillListPagination;
+    error?: string;
+  };
+  if (!res.ok || !data.success) throw new Error(data.error || "Failed to load skills");
+  return {
+    skills: data.skills || [],
+    pagination: data.pagination || { total: 0, page: 1, limit: 30 },
+  };
+}
+
+export async function fetchMatchingSkillIds(q: string, maxIds = 200): Promise<{ ids: string[]; total: number }> {
+  const params = new URLSearchParams({ idsOnly: "true", maxIds: String(maxIds) });
+  if (q.trim()) params.set("q", q.trim());
+
+  const res = await fetch(`${API_BASE}/skills/list?${params}`);
+  const data = (await res.json()) as {
+    success?: boolean;
+    ids?: string[];
+    total?: number;
+    error?: string;
+  };
+  if (!res.ok || !data.success) throw new Error(data.error || "Failed to load skill ids");
+  return { ids: data.ids || [], total: data.total ?? 0 };
+}
+
+export async function enhanceSkillRelations(options: {
+  skillIds: string[];
+  applierName?: string;
+}): Promise<{
+  skillsProcessed: number;
+  relationshipsProposed: number;
+  relationshipsApplied: number;
+  usage?: SkillAnalysisUsage | null;
+}> {
+  const res = await fetch(`${API_BASE}/skills/enrichment/enhance-relations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+  });
+  const data = (await res.json()) as {
+    success?: boolean;
+    skillsProcessed?: number;
+    relationshipsProposed?: number;
+    relationshipsApplied?: number;
+    usage?: SkillAnalysisUsage | null;
+    error?: string;
+  };
+  if (!res.ok || !data.success) throw new Error(data.error || "Failed to enhance relations");
+  return {
+    skillsProcessed: data.skillsProcessed ?? 0,
+    relationshipsProposed: data.relationshipsProposed ?? 0,
+    relationshipsApplied: data.relationshipsApplied ?? 0,
+    usage: data.usage ?? null,
+  };
+}
