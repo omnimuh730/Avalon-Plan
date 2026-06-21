@@ -1,4 +1,4 @@
-import { DEFAULT_PROFILE } from "../data/settings/profile";
+import { emptyProfile } from "../data/settings/profile";
 import { DEFAULT_IDENTITY } from "../data/resumes/seedDocument";
 import { getIdentityProfile, saveIdentityProfile } from "./resumeStorage";
 import type { ResumeIdentity } from "../types/resume";
@@ -22,7 +22,7 @@ const DEFAULT_AI: ResumeAiDefaults = {
 };
 
 function profileToIdentity(): ResumeIdentity {
-  const p = DEFAULT_PROFILE;
+  const p = emptyProfile();
   return {
     fullName: `${p.firstName} ${p.lastName}`.trim(),
     location: `${p.city}, ${p.state}`.trim(),
@@ -55,12 +55,7 @@ export function getAiDefaults(): ResumeAiDefaults {
   } catch {
     /* ignore */
   }
-  return {
-    ...DEFAULT_AI,
-    openaiKey: DEFAULT_PROFILE.openaiKey,
-    openaiModel: DEFAULT_PROFILE.openaiModel,
-    deepseekKey: DEFAULT_PROFILE.deepseekKey,
-  };
+  return DEFAULT_AI;
 }
 
 export function saveAiDefaults(defaults: ResumeAiDefaults): void {

@@ -1,94 +1,221 @@
+import {
+  type Gender,
+  type ImmigrationStatus,
+  type Pronouns,
+  type RaceEthnicity,
+  type SexualOrientation,
+  type VeteranStatus,
+  type YesNoDecline,
+  GENDER_VALUES,
+  IMMIGRATION_STATUS_VALUES,
+  ORIENTATION_VALUES,
+  PRONOUN_VALUES,
+  RACE_VALUES,
+  VETERAN_VALUES,
+  YES_NO_DECLINE_VALUES,
+  pickEnum,
+} from "./profileConstants";
+
+export type EducationEntry = {
+  school: string;
+  diploma: string;
+  startMonth: string;
+  startYear: string;
+  endMonth: string;
+  endYear: string;
+};
+
 export type CareerEntry = {
-  id: string;
-  type: "role" | "education";
+  company: string;
   title: string;
-  org: string;
-  start: string;
-  end: string;
-  current?: boolean;
+  startMonth: string;
+  startYear: string;
+  endMonth: string;
+  endYear: string;
+  endPresent: boolean;
 };
 
 export type UserProfile = {
+  fullName: string;
   firstName: string;
   lastName: string;
   age: string;
-  gender: string;
-  pronouns: string;
-  orientation: string;
-  email: string;
-  phone: string;
-  gmailAppPassword: string;
-  street: string;
+  address: string;
   city: string;
   state: string;
-  zip: string;
   country: string;
-  citizenship: string;
-  hispanic: string;
-  race: string;
-  visa: string;
-  disability: string;
-  veteran: string;
-  targetRole: string;
+  zipCode: string;
   desiredSalary: string;
-  workAuth: string;
-  remotePreference: string;
-  openaiKey: string;
+  gender: Gender;
+  pronouns: Pronouns;
+  sexualOrientation: SexualOrientation;
+  email: string;
+  gmailAppPassword: string;
+  openaiApiKey: string;
   openaiModel: string;
-  deepseekKey: string;
-  resumeFolder: string;
+  deepseekApiKey: string;
+  defaultPassword: string;
+  phone: string;
   linkedin: string;
   github: string;
-  portfolio: string;
-  vendorAccess: boolean;
-  timeline: CareerEntry[];
+  portfolioUrl: string;
+  education: EducationEntry[];
+  careers: CareerEntry[];
+  demographicHispanic: YesNoDecline;
+  demographicRaceEthnicity: RaceEthnicity;
+  demographicDisability: YesNoDecline;
+  demographicMilitaryStatus: VeteranStatus;
+  sponsorship: YesNoDecline;
+  immigrationStatus: ImmigrationStatus;
+  resumeFolderUrl: string;
 };
 
-export const DEFAULT_PROFILE: UserProfile = {
-  firstName: "Jordan",
-  lastName: "Doe",
-  age: "32",
-  gender: "Non-binary",
-  pronouns: "they/them",
-  orientation: "Prefer not to say",
-  email: "jordan.doe@email.com",
-  phone: "+1 (555) 123-4567",
-  gmailAppPassword: "••••••••••••",
-  street: "123 Market Street",
-  city: "San Francisco",
-  state: "California",
-  zip: "94105",
-  country: "United States",
-  citizenship: "US Citizen",
-  hispanic: "No",
-  race: "Asian",
-  visa: "No sponsorship needed",
-  disability: "No",
-  veteran: "No",
-  targetRole: "Senior Frontend Engineer",
-  desiredSalary: "180000",
-  workAuth: "Authorized to work in US",
-  remotePreference: "Remote preferred",
-  openaiKey: "sk-••••••••••••",
+export const emptyEducation = (): EducationEntry => ({
+  school: "",
+  diploma: "",
+  startMonth: "",
+  startYear: "",
+  endMonth: "",
+  endYear: "",
+});
+
+export const emptyCareer = (): CareerEntry => ({
+  company: "",
+  title: "",
+  startMonth: "",
+  startYear: "",
+  endMonth: "",
+  endYear: "",
+  endPresent: false,
+});
+
+export const emptyProfile = (): UserProfile => ({
+  fullName: "",
+  firstName: "",
+  lastName: "",
+  age: "",
+  address: "",
+  city: "",
+  state: "",
+  country: "",
+  zipCode: "",
+  desiredSalary: "",
+  gender: "prefer_not_say",
+  pronouns: "prefer_not_say",
+  sexualOrientation: "prefer_not_say",
+  email: "",
+  gmailAppPassword: "",
+  openaiApiKey: "",
   openaiModel: "gpt-5-nano",
-  deepseekKey: "••••••••••••",
-  resumeFolder: "/Users/jordan/resumes",
-  linkedin: "https://linkedin.com/in/jordandoe",
-  github: "https://github.com/jordandoe",
-  portfolio: "https://jordandoe.dev",
-  vendorAccess: false,
-  timeline: [
-    { id: "e1", type: "role", title: "Senior Software Engineer", org: "Acme Corp", start: "2022-02", end: "", current: true },
-    { id: "e2", type: "role", title: "Software Engineer", org: "StartupXYZ", start: "2019-06", end: "2022-01" },
-    { id: "e3", type: "education", title: "B.S. Computer Science", org: "State University", start: "2015-09", end: "2019-05" },
-  ],
-};
+  deepseekApiKey: "",
+  defaultPassword: "",
+  phone: "",
+  linkedin: "",
+  github: "",
+  portfolioUrl: "",
+  education: [emptyEducation()],
+  careers: [emptyCareer()],
+  demographicHispanic: "prefer_not_say",
+  demographicRaceEthnicity: "prefer_not_say",
+  demographicDisability: "prefer_not_say",
+  demographicMilitaryStatus: "prefer_not_say",
+  sponsorship: "prefer_not_say",
+  immigrationStatus: "prefer_not_say",
+  resumeFolderUrl: "",
+});
 
-export function profileCompletion(p: UserProfile): number {
-  const fields = [
-    p.firstName, p.lastName, p.email, p.phone, p.city, p.targetRole,
-    p.desiredSalary, p.linkedin, p.github, p.timeline.length > 0 ? "x" : "",
-  ];
-  const filled = fields.filter((f) => f && f.trim()).length;
-  return Math.round((filled / fields.length) * 100);
+/** @deprecated Use emptyProfile() — kept for resume bridge fallback */
+export const DEFAULT_PROFILE = emptyProfile();
+
+export function mapProfileFromApi(raw: Record<string, unknown> | undefined): UserProfile {
+  if (!raw || typeof raw !== "object") return emptyProfile();
+
+  const eduRaw = raw.education;
+  const education: EducationEntry[] = Array.isArray(eduRaw)
+    ? eduRaw.map((e) => {
+        const x = e && typeof e === "object" ? (e as Record<string, unknown>) : {};
+        return {
+          school: String(x.school ?? ""),
+          diploma: String(x.diploma ?? ""),
+          startMonth: String(x.startMonth ?? ""),
+          startYear: String(x.startYear ?? ""),
+          endMonth: String(x.endMonth ?? ""),
+          endYear: String(x.endYear ?? ""),
+        };
+      })
+    : [];
+
+  const carRaw = raw.careers;
+  const careers: CareerEntry[] = Array.isArray(carRaw)
+    ? carRaw.map((c) => {
+        const x = c && typeof c === "object" ? (c as Record<string, unknown>) : {};
+        const endPresent = !!x.endPresent || String(x.endMonth ?? "").trim().toLowerCase() === "present";
+        return {
+          company: String(x.company ?? ""),
+          title: String(x.title ?? ""),
+          startMonth: String(x.startMonth ?? ""),
+          startYear: String(x.startYear ?? ""),
+          endPresent,
+          endMonth: endPresent ? "" : String(x.endMonth ?? ""),
+          endYear: endPresent ? "" : String(x.endYear ?? ""),
+        };
+      })
+    : [];
+
+  const legacyCareer = String(raw.companyCareer ?? "").trim();
+  const mergedCareers =
+    careers.length > 0
+      ? careers
+      : legacyCareer
+        ? [{ ...emptyCareer(), company: legacyCareer.split("·")[0]?.trim() || legacyCareer, title: legacyCareer.split("·")[1]?.trim() || "" }]
+        : [emptyCareer()];
+
+  return {
+    fullName: String(raw.fullName ?? ""),
+    firstName: String(raw.firstName ?? ""),
+    lastName: String(raw.lastName ?? ""),
+    age: String(raw.age ?? ""),
+    address: String(raw.address ?? ""),
+    city: String(raw.city ?? ""),
+    state: String(raw.state ?? ""),
+    country: String(raw.country ?? ""),
+    zipCode: String(raw.zipCode ?? ""),
+    desiredSalary: String(raw.desiredSalary ?? ""),
+    gender: pickEnum(raw.gender, GENDER_VALUES, "prefer_not_say"),
+    pronouns: pickEnum(raw.pronouns, PRONOUN_VALUES, "prefer_not_say"),
+    sexualOrientation: pickEnum(raw.sexualOrientation, ORIENTATION_VALUES, "prefer_not_say"),
+    email: String(raw.email ?? ""),
+    gmailAppPassword: String(raw.gmailAppPassword ?? ""),
+    openaiApiKey: String(raw.openaiApiKey ?? ""),
+    openaiModel: String(raw.openaiModel ?? "gpt-5-nano") || "gpt-5-nano",
+    deepseekApiKey: String(raw.deepseekApiKey ?? ""),
+    defaultPassword: String(raw.defaultPassword ?? ""),
+    phone: String(raw.phone ?? ""),
+    linkedin: String(raw.linkedin ?? ""),
+    github: String(raw.github ?? ""),
+    portfolioUrl: String(raw.portfolioUrl ?? ""),
+    education: education.length ? education : [emptyEducation()],
+    careers: mergedCareers.length ? mergedCareers : [emptyCareer()],
+    demographicHispanic: pickEnum(raw.demographicHispanic, YES_NO_DECLINE_VALUES, "prefer_not_say"),
+    demographicRaceEthnicity: pickEnum(raw.demographicRaceEthnicity, RACE_VALUES, "prefer_not_say"),
+    demographicDisability: pickEnum(raw.demographicDisability, YES_NO_DECLINE_VALUES, "prefer_not_say"),
+    demographicMilitaryStatus: pickEnum(raw.demographicMilitaryStatus, VETERAN_VALUES, "prefer_not_say"),
+    sponsorship: pickEnum(raw.sponsorship, YES_NO_DECLINE_VALUES, "prefer_not_say"),
+    immigrationStatus: pickEnum(raw.immigrationStatus, IMMIGRATION_STATUS_VALUES, "prefer_not_say"),
+    resumeFolderUrl: String(raw.resumeFolderUrl ?? ""),
+  };
+}
+
+export function buildProfileSavePayload(profile: UserProfile, applierName: string, vendorAllowed: boolean) {
+  return {
+    applierName,
+    vendorAllowed,
+    ...profile,
+    education: profile.education.filter((e) => e.school.trim() || e.diploma.trim() || e.startYear || e.endYear),
+    careers: profile.careers.filter((c) => {
+      const hasWho = !!(c.company.trim() || c.title.trim());
+      const hasWhen = !!(c.startYear || c.endYear || c.endPresent);
+      return hasWho && hasWhen;
+    }),
+  };
 }

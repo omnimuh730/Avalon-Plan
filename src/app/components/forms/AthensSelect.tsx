@@ -14,6 +14,17 @@ import { FormField } from "./FormField";
 
 export type AthensSelectOption = { value: string; label: string };
 
+/** Radix Select rejects empty-string item values; map "" ↔ sentinel internally. */
+const EMPTY_SENTINEL = "__athens_select_empty__";
+
+function toSelectValue(value: string) {
+  return value === "" ? EMPTY_SENTINEL : value;
+}
+
+function fromSelectValue(value: string) {
+  return value === EMPTY_SENTINEL ? "" : value;
+}
+
 type AthensSelectProps = {
   label?: string;
   hint?: string;
@@ -41,7 +52,11 @@ export function AthensSelect({
 }: AthensSelectProps) {
   return (
     <FormField label={label} hint={hint} error={error} className={className}>
-      <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <Select
+        value={toSelectValue(value)}
+        onValueChange={(v) => onChange(fromSelectValue(v))}
+        disabled={disabled}
+      >
         <SelectTrigger
           size={size}
           className={cn(
@@ -53,11 +68,14 @@ export function AthensSelect({
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent className="rounded-xl border-border">
-          {options.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value} className="rounded-lg">
-              {opt.label}
-            </SelectItem>
-          ))}
+          {options.map((opt) => {
+            const itemValue = toSelectValue(opt.value);
+            return (
+              <SelectItem key={itemValue} value={itemValue} className="rounded-lg">
+                {opt.label}
+              </SelectItem>
+            );
+          })}
         </SelectContent>
       </Select>
     </FormField>
