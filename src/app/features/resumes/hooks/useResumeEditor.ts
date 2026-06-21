@@ -45,6 +45,10 @@ export function useResumeEditor() {
     let next: EditorDraft = {
       ...stored,
       templateId: resolveTemplateId(stored.templateId),
+      theme: {
+        ...stored.theme,
+        marginIn: Number.isFinite(stored.theme?.marginIn) && stored.theme.marginIn > 0 ? stored.theme.marginIn : 0.6,
+      },
       systemInstruction: stored.systemInstruction || DEFAULT_SYSTEM_INSTRUCTION,
       refinementSteps: ensureSteps(stored.refinementSteps ?? []),
     };

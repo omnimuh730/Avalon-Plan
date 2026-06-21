@@ -1,5 +1,5 @@
 import type { ExperienceLayout } from "../lib/templates";
-import { pt } from "../lib/previewUtils";
+import { pt } from "../../lib/previewUtils";
 
 export type PreviewCareer = {
   title: string;

@@ -26,11 +26,11 @@ import { AthensInput, FormField } from "../../../components/forms";
 import { downloadBlob } from "../lib/buildResumeModel";
 import { ResumePreviewDialog } from "./ResumePreviewDialog";
 import { GeneratedResumesSection } from "./GeneratedResumesSection";
-import type { EditorDraft } from "../../../types/resume";
+import type { FullRun } from "../generator/history/history-types";
 
 type ResumeLibraryTabProps = {
   onOpenAnalysis?: () => void;
-  onLoadIntoEditor?: (payload: { config: Partial<EditorDraft>; sections?: Record<string, unknown> }) => void;
+  onLoadIntoEditor?: (run: FullRun) => void;
 };
 
 type LibraryView = "uploaded" | "generated";

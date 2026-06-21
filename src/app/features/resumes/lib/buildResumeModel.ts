@@ -71,8 +71,11 @@ export function buildResumeModel(draft: EditorDraft, identity: GeneratorIdentity
 export function fontStack(name: string): string {
   if (!name) return "sans-serif";
   if (name.includes(",")) return name;
+  const serif = new Set(["Georgia", "Times New Roman", "Garamond", "Cambria", "Source Serif 4", "Merriweather", "Lora", "PT Serif"]);
+  const mono = new Set(["Roboto Mono", "JetBrains Mono"]);
+  const generic = mono.has(name) || name.includes("monospace") ? "monospace" : serif.has(name) ? "serif" : "sans-serif";
   const quoted = /\s/.test(name) ? `"${name}"` : name;
-  return `${quoted}, sans-serif`;
+  return `${quoted}, ${generic}`;
 }
 
 export async function downloadBlob(blob: Blob, fileName: string) {

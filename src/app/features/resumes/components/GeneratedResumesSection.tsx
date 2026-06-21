@@ -4,7 +4,8 @@ import { Badge } from "../../../components/ui";
 import { SearchField } from "../../../components/shared/SearchField";
 import { BUILTIN_TEMPLATES, DEFAULT_SECTIONS, DEFAULT_THEME } from "../../../data/resumes/seedDocument";
 import { fetchGenerationDetail, fetchGenerationHistory } from "../../../services/resumeApi";
-import type { EditorDraft, HistoryRunSummary } from "../../../types/resume";
+import type { HistoryRunSummary } from "../../../types/resume";
+import { detailToFullRun } from "../generator/detail-to-full-run";
 import { useCallback, useEffect, useState } from "react";
 import { useApplier } from "@/context/applier-context";
 import { ResumePreview } from "./preview/ResumePreview";
@@ -13,7 +14,7 @@ import type { GeneratorIdentity } from "../../../types/resume";
 import { resolveTemplateId } from "../lib/templates";
 
 type GeneratedResumesSectionProps = {
-  onLoadIntoEditor?: (payload: { config: Partial<EditorDraft>; sections?: Record<string, unknown> }) => void;
+  onLoadIntoEditor?: (run: FullRun) => void;
 };
 
 export function GeneratedResumesSection({ onLoadIntoEditor }: GeneratedResumesSectionProps) {
@@ -74,18 +75,7 @@ export function GeneratedResumesSection({ onLoadIntoEditor }: GeneratedResumesSe
   const handleLoad = async (id: string) => {
     if (!ownerName || !onLoadIntoEditor) return;
     const detail = await fetchGenerationDetail(id, ownerName);
-    const cfg = (detail.config ?? {}) as Partial<EditorDraft>;
-    onLoadIntoEditor({
-      config: {
-        ...cfg,
-        jobDescription: detail.jobDescription,
-        provider: detail.provider,
-        model: detail.model,
-        templateId: resolveTemplateId(detail.templateId ?? cfg.templateId),
-        generatorIdentity: detail.identity,
-      },
-      sections: detail.sections,
-    });
+    onLoadIntoEditor(detailToFullRun(detail));
   };
 
   if (!applierReady || loading) {

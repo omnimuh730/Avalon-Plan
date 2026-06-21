@@ -1,8 +1,6 @@
 import React, { useEffect, useCallback, useState } from "react";
 import { Wand2, Loader2 } from "lucide-react";
-import { BUILTIN_TEMPLATES } from "../../../data/resumes/seedDocument";
-import { listTemplates, saveTemplate } from "../../../services/resumeStorage";
-import type { EditorDraft, ResumeTemplateRef } from "../../../types/resume";
+import type { EditorDraft } from "../../../types/resume";
 import { useResumeEditor } from "../hooks/useResumeEditor";
 import { ProviderIdentityPanel } from "./editor/ProviderIdentityPanel";
 import { JobDescriptionPanel } from "./editor/JobDescriptionPanel";
@@ -31,22 +29,12 @@ export function ResumeEditorTab({
   onHistoryLoaded,
 }: ResumeEditorTabProps) {
   const editor = useResumeEditor();
-  const [templates, setTemplates] = useState<ResumeTemplateRef[]>(BUILTIN_TEMPLATES);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
-
-  const refreshTemplates = useCallback(async () => {
-    const stored = await listTemplates();
-    setTemplates(stored.length ? stored : BUILTIN_TEMPLATES);
-  }, []);
-
-  useEffect(() => {
-    void refreshTemplates();
-  }, [refreshTemplates]);
 
   useEffect(() => {
     if (initialized || editor.loading) return;
@@ -94,11 +82,6 @@ export function ResumeEditorTab({
       setExporting(false);
     }
   }, [editor]);
-
-  const handleImportTemplate = async (template: ResumeTemplateRef) => {
-    await saveTemplate(template);
-    await refreshTemplates();
-  };
 
   const handleSelectTemplate = (id: string) => {
     if (!draft) return;
@@ -206,10 +189,8 @@ export function ResumeEditorTab({
       <TemplatePickerModal
         open={templateOpen}
         onOpenChange={setTemplateOpen}
-        templates={templates}
         selectedId={templateId}
         onSelect={handleSelectTemplate}
-        onImport={handleImportTemplate}
       />
       <ThemeModal
         open={themeOpen}

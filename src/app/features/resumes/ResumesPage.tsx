@@ -7,11 +7,10 @@ import { TabTransition } from "../../components/overlays";
 import { DEFAULT_TABS, normalizeTab, PATHS, type ResumesTab } from "../../config/routes";
 import { useResumeNavigationOptional } from "../../context/ResumeNavigationContext";
 import { initResumeStorage } from "../../services/resumeStorage";
-import type { EditorDraft } from "../../types/resume";
 import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
-import { ResumeEditorTab } from "./components/ResumeEditorTab";
-import { ResumeHistoryTab } from "./components/ResumeHistoryTab";
 import { ResumeAnalysisTab } from "./components/ResumeAnalysisTab";
+import { ResumeGeneratorPanel } from "./generator/ResumeGeneratorPanel";
+import type { FullRun } from "./generator/history/history-types";
 
 const TABS = ["library", "editor", "history", "analysis"] as const satisfies readonly ResumesTab[];
 
@@ -28,7 +27,7 @@ export function ResumesPage() {
   const [editorJd, setEditorJd] = useState<string | undefined>();
   const [ready, setReady] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
-  const [historyLoad, setHistoryLoad] = useState<{ config: Partial<EditorDraft>; sections?: Record<string, unknown> } | null>(null);
+  const [pendingRun, setPendingRun] = useState<FullRun | null>(null);
 
   useEffect(() => {
     initResumeStorage().then(() => setReady(true));
@@ -52,9 +51,10 @@ export function ResumesPage() {
   );
 
   const handleLoadFromHistory = useCallback(
-    (payload: { config: Partial<EditorDraft>; sections?: Record<string, unknown> }) => {
-      setHistoryLoad(payload);
-      setEditorJd(payload.config.jobDescription);
+    (run: FullRun) => {
+      setPendingRun(run);
+      const jd = typeof run.jobDescription === "string" ? run.jobDescription : (run.config?.jobDescription as string | undefined);
+      if (jd) setEditorJd(jd);
       navigate(`${PATHS.resumes}/editor`);
     },
     [navigate],
@@ -103,27 +103,24 @@ export function ResumesPage() {
           )}
           {tab === "analysis" && <ResumeAnalysisTab onGoToLibrary={() => setTab("library")} />}
           {tab === "history" && (
-            <ResumeHistoryTab key={historyKey} onLoadIntoEditor={handleLoadFromHistory} />
+            <ResumeGeneratorPanel
+              key={historyKey}
+              activeView="history"
+              tabPills={tabPills}
+              onGenerated={() => setHistoryKey((k) => k + 1)}
+            />
           )}
         </TabTransition>
         {tab === "editor" && (
           <div className="flex-1 min-h-0 flex flex-col">
-            <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 m-4 mb-0 w-fit scroll-row flex-shrink-0">
-              {TABS.map((t) => (
-                <Pill key={t} active={tab === t} onClick={() => setTab(t)}>
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
-                </Pill>
-              ))}
-            </div>
-            <div className="flex-1 min-h-0">
-              <ResumeEditorTab
-                initialJd={editorJd}
-                loadFromHistory={historyLoad}
-                onHistoryLoaded={() => setHistoryLoad(null)}
-                onGenerated={() => setHistoryKey((k) => k + 1)}
-                onSwitchToHistory={() => setTab("history")}
-              />
-            </div>
+            <ResumeGeneratorPanel
+              activeView="editor"
+              initialJd={editorJd}
+              pendingRun={pendingRun}
+              onPendingRunConsumed={() => setPendingRun(null)}
+              onGenerated={() => setHistoryKey((k) => k + 1)}
+              tabPills={tabPills}
+            />
           </div>
         )}
       </div>
