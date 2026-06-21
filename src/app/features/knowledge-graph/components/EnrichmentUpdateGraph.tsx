@@ -10,6 +10,8 @@ export type EnrichmentUpdateSnapshot = {
   relationshipsUpdated: number;
   graphData: GraphRenderData | null;
   loadingGraph?: boolean;
+  /** Read-only preview of existing relations (before AI enhance). */
+  isPreview?: boolean;
 };
 
 type EnrichmentUpdateGraphProps = {
@@ -22,6 +24,22 @@ export function EnrichmentUpdateGraph({ snapshot, className }: EnrichmentUpdateG
 
   const summary = useMemo(() => {
     if (!snapshot) return null;
+    if (snapshot.isPreview) {
+      const parts = [
+        `${snapshot.nodesUpdated} skill${snapshot.nodesUpdated === 1 ? "" : "s"} selected`,
+      ];
+      if (hasGraph) {
+        parts.push(
+          `${snapshot.graphData!.links.length} existing relation${snapshot.graphData!.links.length === 1 ? "" : "s"}`,
+        );
+        parts.push(
+          `${snapshot.graphData!.nodes.length} skill${snapshot.graphData!.nodes.length === 1 ? "" : "s"} in view`,
+        );
+      } else {
+        parts.push("no relations yet");
+      }
+      return parts.join(" · ");
+    }
     const parts = [
       `${snapshot.nodesUpdated} node${snapshot.nodesUpdated === 1 ? "" : "s"} updated`,
       `${snapshot.relationshipsUpdated} relation${snapshot.relationshipsUpdated === 1 ? "" : "s"} added`,
@@ -62,13 +80,16 @@ export function EnrichmentUpdateGraph({ snapshot, className }: EnrichmentUpdateG
             selectedId={null}
             onSelect={() => {}}
             neo4jStyle
+            compactNodes
           />
         </div>
       ) : (
         <div className="px-4 py-6 text-xs text-muted-foreground text-center">
-          {snapshot.nodesUpdated > 0
-            ? "Skills were updated but no internal relations exist yet among them."
-            : "No graph changes to display."}
+          {snapshot.isPreview
+            ? "No relations exist yet between the selected skills. Use Enhance relations to generate connections with AI."
+            : snapshot.nodesUpdated > 0
+              ? "Skills were updated but no internal relations exist yet among them."
+              : "No graph changes to display."}
         </div>
       )}
     </div>

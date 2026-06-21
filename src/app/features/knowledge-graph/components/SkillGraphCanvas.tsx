@@ -20,6 +20,8 @@ type SkillGraphCanvasProps = {
   visibleRelations?: Set<string>;
   /** Neo4j-style: visible edges, category-colored nodes, strong activation contrast. */
   neo4jStyle?: boolean;
+  /** Smaller nodes so edges stay visible in compact preview panels. */
+  compactNodes?: boolean;
 };
 
 type Palette = {
@@ -39,6 +41,7 @@ export function SkillGraphCanvas({
   onSelect,
   visibleRelations,
   neo4jStyle = false,
+  compactNodes = false,
 }: SkillGraphCanvasProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const fgRef = useRef<ForceGraphMethods<GraphRenderNode, GraphRenderLink> | undefined>(undefined);
@@ -188,6 +191,7 @@ export function SkillGraphCanvas({
       const isSeed = Boolean(node.isSeed);
       const isActivated = isSeed || a > 0.04;
       const isHighlyActivated = isSeed || a > 0.12;
+      const nodeScale = compactNodes ? 0.62 : 1;
 
       const focusDim = neighborIds ? !neighborIds.has(node.id) : false;
       const alpha = focusDim
@@ -201,13 +205,14 @@ export function SkillGraphCanvas({
               : 0.18;
 
       const strength = typeof node.strength === "number" ? node.strength : isSeed ? 8 : 0;
-      const baseR = isHighlyActivated
-        ? 6 + strength * 0.55 + a * 10
-        : isActivated
-          ? 3.5 + a * 8
-          : neo4jStyle
-            ? 3.2
-            : 2 + a * 4;
+      const baseR =
+        (isHighlyActivated
+          ? 6 + strength * 0.55 + a * 10
+          : isActivated
+            ? 3.5 + a * 8
+            : neo4jStyle
+              ? 3.2
+              : 2 + a * 4) * nodeScale;
 
       const hue = nodeColor(node.category, Math.max(a, isSeed ? 0.85 : 0.15));
       ctx.globalAlpha = alpha;
@@ -283,7 +288,7 @@ export function SkillGraphCanvas({
 
       ctx.globalAlpha = 1;
     },
-    [neighborIds, selectedId, focusId, palette.text, neo4jStyle],
+    [neighborIds, selectedId, focusId, palette.text, neo4jStyle, compactNodes],
   );
 
   const drawPointerArea = useCallback(
@@ -292,13 +297,13 @@ export function SkillGraphCanvas({
       const x = node.x as number;
       const y = node.y as number;
       const a = Number.isFinite(node.activation) ? node.activation : 0;
-      const r = 6 + a * 9;
+      const r = (6 + a * 9) * (compactNodes ? 0.62 : 1);
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.fill();
     },
-    [],
+    [compactNodes],
   );
 
   const drawLink = useCallback(

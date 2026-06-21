@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Sparkles, Square, Wand2 } from "lucide-react";
+import { Loader2, Network, Sparkles, Square, Wand2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { SearchField } from "../../../components/shared/SearchField";
@@ -10,11 +10,13 @@ import {
   enhanceSkillRelations,
   fetchMatchingSkillIds,
   fetchSkillList,
+  fetchSkillSubgraph,
   formatEnrichmentCost,
   type GraphSkill,
 } from "@/app/api/skillGraph";
 import { useSkillEnrichment } from "../hooks/useSkillEnrichment";
-import { EnrichmentUpdateGraph } from "./EnrichmentUpdateGraph";
+import { buildUpdatedSubgraphData } from "../lib/graphAdapter";
+import { EnrichmentUpdateGraph, type EnrichmentUpdateSnapshot } from "./EnrichmentUpdateGraph";
 
 type EnrichmentState = ReturnType<typeof useSkillEnrichment>;
 
@@ -48,6 +50,8 @@ export function SkillCatalogView({
   const [enhancing, setEnhancing] = useState(false);
   const [enhanceResult, setEnhanceResult] = useState<string | null>(null);
   const [selectAllLoading, setSelectAllLoading] = useState(false);
+  const [previewSnapshot, setPreviewSnapshot] = useState<EnrichmentUpdateSnapshot | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -82,6 +86,10 @@ export function SkillCatalogView({
   useEffect(() => {
     void loadSkills();
   }, [loadSkills]);
+
+  useEffect(() => {
+    setPreviewSnapshot(null);
+  }, [selectedIds]);
 
   const pageIds = useMemo(() => skills.map((s) => s.id), [skills]);
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
@@ -126,12 +134,51 @@ export function SkillCatalogView({
   const clearSelection = () => {
     setSelectedIds(new Set());
     setEnhanceResult(null);
+    setPreviewSnapshot(null);
+  };
+
+  const handlePreview = async () => {
+    if (selectedIds.size < 2) return;
+    setPreviewLoading(true);
+    setError(null);
+    const ids = [...selectedIds].slice(0, 80);
+    setPreviewSnapshot({
+      label: "Current relations",
+      isPreview: true,
+      nodesUpdated: ids.length,
+      relationshipsUpdated: 0,
+      graphData: null,
+      loadingGraph: true,
+    });
+    try {
+      const subgraph = await fetchSkillSubgraph(ids, true);
+      const graphData = subgraph.nodes.length
+        ? buildUpdatedSubgraphData(
+            subgraph.nodes.map((n) => ({ id: n.id, label: n.label, category: n.category })),
+            subgraph.edges.map((e) => ({ from: e.from, to: e.to, type: e.type, weight: e.weight })),
+          )
+        : null;
+      setPreviewSnapshot({
+        label: "Current relations",
+        isPreview: true,
+        nodesUpdated: ids.length,
+        relationshipsUpdated: subgraph.edges.length,
+        graphData,
+        loadingGraph: false,
+      });
+    } catch (e) {
+      setPreviewSnapshot(null);
+      setError(e instanceof Error ? e.message : "Failed to load relation preview");
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
   const handleEnhance = async () => {
     if (selectedIds.size < 2) return;
     setEnhancing(true);
     setEnhanceResult(null);
+    setPreviewSnapshot(null);
     setError(null);
     try {
       const result = await enhanceSkillRelations({
@@ -160,6 +207,8 @@ export function SkillCatalogView({
   const enrichLoading = enrichment?.loading ?? false;
   const costLabel = enrichment ? formatEnrichmentCost(enrichment.usage) : null;
   const pending = enrichment?.stats.pending ?? 0;
+  const graphSnapshot = enrichment?.updateSnapshot ?? previewSnapshot;
+  const graphSnapshotLoading = previewLoading || Boolean(graphSnapshot?.loadingGraph);
 
   return (
     <div className={cn("flex flex-col h-full bg-background", className)}>
@@ -234,6 +283,19 @@ export function SkillCatalogView({
                 Clear ({selectedIds.size})
               </Button>
               <Button
+                variant="outline"
+                size="sm"
+                disabled={selectedIds.size < 2 || previewLoading || enhancing}
+                onClick={() => void handlePreview()}
+              >
+                {previewLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Network className="w-4 h-4" />
+                )}
+                Preview current status
+              </Button>
+              <Button
                 size="sm"
                 disabled={selectedIds.size < 2 || enhancing}
                 onClick={() => void handleEnhance()}
@@ -254,8 +316,14 @@ export function SkillCatalogView({
         ) : null}
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-        {enrichment?.updateSnapshot ? (
-          <EnrichmentUpdateGraph snapshot={enrichment.updateSnapshot} />
+        {graphSnapshot ? (
+          <EnrichmentUpdateGraph
+            snapshot={
+              graphSnapshotLoading
+                ? { ...graphSnapshot, loadingGraph: true }
+                : graphSnapshot
+            }
+          />
         ) : null}
       </div>
 
