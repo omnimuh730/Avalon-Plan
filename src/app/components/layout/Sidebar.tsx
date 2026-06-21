@@ -26,7 +26,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className="w-60 flex-shrink-0 flex flex-col h-full border-r border-border shadow-sm"
+      className="w-60 flex-shrink-0 flex flex-col h-dvh min-h-0 border-r border-border shadow-sm"
       style={{ background: "var(--sidebar)" }}
     >
       <div className="px-5 py-4 border-b border-border">

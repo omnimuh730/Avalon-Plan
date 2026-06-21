@@ -7,10 +7,10 @@ type AuthSplitLayoutProps = {
 
 export function AuthSplitLayout({ children }: AuthSplitLayoutProps) {
   return (
-    <div className="flex h-dvh min-h-dvh w-full overflow-hidden bg-background">
+    <div className="grid h-svh w-full overflow-hidden bg-background lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
       <AuthHeroPanel />
-      <div className="flex w-full lg:w-1/3 min-h-0 flex-col justify-center overflow-y-auto px-6 py-10 sm:px-10 xl:px-14 border-l border-border/60 bg-card">
-        <div className="w-full max-w-sm mx-auto">{children}</div>
+      <div className="flex min-h-0 flex-col justify-center overflow-y-auto border-l border-border/60 bg-card px-6 py-10 sm:px-10 xl:px-14">
+        <div className="mx-auto w-full max-w-sm">{children}</div>
       </div>
     </div>
   );

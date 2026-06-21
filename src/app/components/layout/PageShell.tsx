@@ -10,8 +10,8 @@ export function PageShell({
   fullWidth?: boolean;
 }) {
   return (
-    <div className={`flex-1 min-h-0 overflow-auto subtle-scroll ${className}`}>
-      {fullWidth ? children : <div className="page-container min-h-full">{children}</div>}
+    <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden subtle-scroll ${className}`}>
+      {fullWidth ? children : <div className="page-container pb-8">{children}</div>}
     </div>
   );
 }

@@ -22,7 +22,7 @@ const FEATURES = [
 
 export function AuthHeroPanel() {
   return (
-    <div className="relative hidden lg:flex lg:w-2/3 min-h-0 self-stretch overflow-hidden bg-[#0d0b18] text-white">
+    <div className="relative hidden min-h-0 overflow-hidden bg-[#0d0b18] text-white lg:block">
       <div
         className="absolute inset-0 opacity-90"
         style={{
@@ -59,7 +59,7 @@ export function AuthHeroPanel() {
         </g>
       </svg>
 
-      <div className="relative z-10 flex min-h-full flex-col justify-between p-12 xl:p-16 w-full max-w-3xl overflow-y-auto">
+      <div className="relative z-10 flex h-full min-h-0 w-full max-w-3xl flex-col justify-between overflow-y-auto p-12 xl:p-16">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-white/10 border border-white/10 px-3 py-1.5 text-xs font-semibold mb-8">
             <AppLogo size={20} className="rounded-md" />
