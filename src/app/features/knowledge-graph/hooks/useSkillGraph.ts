@@ -48,12 +48,18 @@ function buildEvidence(
     if (!active.has(profile.id)) continue;
     const counts = new Map<string, number>();
     for (const s of profile.graph.skills) {
-      const id = s.canonicalId;
+      const id =
+        s.canonicalId ||
+        (s.normalizedKey ? `local:${s.normalizedKey}` : null);
       if (!id) continue;
       counts.set(id, (counts.get(id) ?? 0) + 1);
     }
     for (const [id, freq] of counts) {
-      const skill = profile.graph.skills.find((s) => s.canonicalId === id);
+      const skill = profile.graph.skills.find(
+        (s) =>
+          s.canonicalId === id ||
+          (s.normalizedKey && `local:${s.normalizedKey}` === id),
+      );
       items.push({
         id,
         proficiency: skill ? skillProficiency(skill) : 0.85,
@@ -78,7 +84,10 @@ function buildStrengthMaps(
   for (const profile of profiles) {
     if (!active.has(profile.id)) continue;
     for (const s of profile.graph.skills) {
-      if (!s.canonicalId) continue;
+      const id =
+        s.canonicalId ||
+        (s.normalizedKey ? `local:${s.normalizedKey}` : null);
+      if (!id) continue;
       const strength =
         typeof s.strength === "number"
           ? s.strength
@@ -86,17 +95,25 @@ function buildStrengthMaps(
             ? s.proficiency * 10
             : undefined;
       if (strength == null) continue;
-      const prev = strengthByNodeId[s.canonicalId];
+      const prev = strengthByNodeId[id];
       if (prev == null || strength > prev) {
-        strengthByNodeId[s.canonicalId] = strength;
+        strengthByNodeId[id] = strength;
       }
     }
   }
 
   for (const [id, strength] of Object.entries(strengthByNodeId)) {
+    const fromWorld = labels.get(id);
+    const fromProfile = profiles
+      .flatMap((p) => p.graph.skills)
+      .find(
+        (s) =>
+          s.canonicalId === id ||
+          (s.normalizedKey && `local:${s.normalizedKey}` === id),
+      );
     skillStrengthList.push({
       id,
-      label: labels.get(id) ?? id,
+      label: fromWorld ?? fromProfile?.surfaceForm ?? id.replace(/^local:/, ""),
       strength,
     });
   }

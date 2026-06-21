@@ -10,7 +10,7 @@ import { SkillGraphCanvas } from "./SkillGraphCanvas";
 import { GraphToolbar } from "./GraphToolbar";
 import { SkillInspectorPanel } from "./SkillInspectorPanel";
 import { SkillStrengthPanel } from "./SkillStrengthPanel";
-import { filterGraphToResumeSeeds, type GraphRenderData } from "../lib/graphAdapter";
+import { filterGraphToResumeSeeds, appendLocalSkillNodes, type GraphRenderData } from "../lib/graphAdapter";
 
 const ALL_RELATIONS: SkillRelationType[] = [
   "PREREQUISITE_OF",
@@ -76,11 +76,13 @@ export function KnowledgeGraphView({
   const [showWorldContext, setShowWorldContext] = useState(false);
 
   const canvasData: GraphRenderData = useMemo(() => {
+    let data = graphData;
     if (resumeSeedFocus && !showWorldContext) {
-      return filterGraphToResumeSeeds(graphData);
+      data = filterGraphToResumeSeeds(graphData);
+      data = appendLocalSkillNodes(data, skillStrengthList);
     }
-    return graphData;
-  }, [graphData, resumeSeedFocus, showWorldContext]);
+    return data;
+  }, [graphData, resumeSeedFocus, showWorldContext, skillStrengthList]);
 
   const toggleRelation = (type: SkillRelationType) =>
     setVisibleRelations((prev) => {

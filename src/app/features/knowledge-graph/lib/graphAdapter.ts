@@ -132,3 +132,25 @@ export function filterGraphToResumeSeeds(data: GraphRenderData): GraphRenderData
 
   return { nodes, links };
 }
+
+/** Add nodes for skills not yet linked to the world graph (local:* ids). */
+export function appendLocalSkillNodes(
+  data: GraphRenderData,
+  localSkills: { id: string; label: string; strength: number }[],
+): GraphRenderData {
+  const existing = new Set(data.nodes.map((n) => n.id));
+  const extra = localSkills
+    .filter((s) => s.id.startsWith("local:") && !existing.has(s.id))
+    .map((s) => ({
+      id: s.id,
+      label: s.label,
+      category: "language" as const,
+      activation: s.strength / 10,
+      evidence: s.strength / 10,
+      isSeed: true,
+      strength: s.strength,
+    }));
+
+  if (!extra.length) return data;
+  return { nodes: [...data.nodes, ...extra], links: data.links };
+}
