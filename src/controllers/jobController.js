@@ -19,6 +19,7 @@ import { enqueueSkills } from '../services/skillEnrichment/queue.js';
 import { recordCooccurrenceForJob } from '../services/skillCooccurrence/index.js';
 import { recommendJobsForApplier } from '../services/recommendation/recommendationService.js';
 import { upsertJobEmbeddingAsync } from '../services/embeddings/embeddingIngest.js';
+import { buildJobSkillRadar } from '../services/jobSkillRadarService.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -566,6 +567,42 @@ export async function getJobById(req, res) {
 	} catch (err) {
 		console.error(`GET /api/jobs/${req.params.id} error`, err);
 		return res.status(500).json({ success: false, error: 'Failed to fetch job' });
+	}
+}
+
+/** Skill-match radar data for job vs user resume graph. */
+export async function getJobSkillRadar(req, res) {
+	try {
+		const { id } = req.params;
+		const applierName = String(req.query.applierName || '').trim();
+		const resumeId = req.query.resumeId ? String(req.query.resumeId) : undefined;
+		const recommendedResumeId = req.query.recommendedResumeId
+			? String(req.query.recommendedResumeId)
+			: undefined;
+		const recommendedTechStack = req.query.recommendedTechStack
+			? String(req.query.recommendedTechStack)
+			: undefined;
+
+		if (!applierName) {
+			return res.status(400).json({ success: false, error: 'applierName query required' });
+		}
+
+		const data = await buildJobSkillRadar({
+			jobId: id,
+			applierName,
+			resumeId,
+			recommendedResumeId,
+			recommendedTechStack,
+		});
+		return res.json({ success: true, ...data });
+	} catch (err) {
+		const status = err.message === 'Job not found'
+			? 404
+			: err.message === 'Invalid job id' || err.message === 'applierName is required'
+				? 400
+				: 500;
+		console.error(`GET /api/jobs/${req.params.id}/skill-radar error`, err);
+		return res.status(status).json({ success: false, error: err.message });
 	}
 }
 

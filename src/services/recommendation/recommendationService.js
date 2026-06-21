@@ -17,7 +17,11 @@ import { computeGraphBoost } from './graphRankBoost.js';
 import { applyScoreFilters, composeJobScores } from './scoreComposer.js';
 import { buildQdrantFilterFromBody } from './qdrantFilter.js';
 import { fetchVectorRankedPage } from './ringPagination.js';
-import { mergeMultiVectorScores } from './vectorRetrieval.js';
+import {
+	attachPerJobResumeMetadata,
+	mergeMultiVectorScores,
+} from './vectorRetrieval.js';
+import { fallbackTechStackLabel } from '../resumeSkillProfile.js';
 
 const VECTOR_CACHE_TTL_MS = 3 * 60 * 1000;
 const vectorEntryCache = new Map();
@@ -125,41 +129,99 @@ function pickPrimaryQueryVector(resumeVectors) {
 	return resumeVectors.find((e) => e.vector?.length) || null;
 }
 
+async function loadProfileGraphSkills(applierName) {
+	if (!userKnowledgeGraphsCollection) return [];
+	const graph = await userKnowledgeGraphsCollection.findOne({
+		applierName,
+		resumeId: PROFILE_GRAPH_ID,
+	});
+	return graph?.skills || [];
+}
+
+function synthesizeProfileTechStackLabel(skills = []) {
+	const profile = skills.map((s) => ({
+		name: s.surfaceForm || s.name || '',
+		strength: Number(s.strength ?? (Number(s.proficiency) || 0.5) * 10),
+	}));
+	const label = fallbackTechStackLabel(profile);
+	return label === 'Generated' ? 'Profile' : label;
+}
+
+function resolveDisplayResumeMeta(row, profileSkills = []) {
+	const {
+		bestResumeId,
+		bestResumeTechStack,
+		bestConcreteResumeId,
+		bestConcreteTechStack,
+	} = row;
+
+	if (bestResumeId && bestResumeId !== PROFILE_GRAPH_ID && bestResumeTechStack) {
+		return {
+			bestResumeId,
+			bestResumeTechStack,
+		};
+	}
+
+	if (bestConcreteResumeId && bestConcreteTechStack) {
+		return {
+			bestResumeId: bestConcreteResumeId,
+			bestResumeTechStack: bestConcreteTechStack,
+		};
+	}
+
+	return {
+		bestResumeId: bestResumeId || PROFILE_GRAPH_ID,
+		bestResumeTechStack: synthesizeProfileTechStackLabel(profileSkills),
+	};
+}
+
 async function applyGraphBoostToPage(pageRows, applierName) {
+	const profileSkills = await loadProfileGraphSkills(applierName);
+
 	if (!isNeo4jReady() || !pageRows.length) {
-		return pageRows.map(({ job, vectorScore, bestResumeId, bestResumeTechStack }) => ({
-			...job,
-			...composeJobScores(job, { vectorScore, graphBoost: 0 }),
-			bestResumeId: bestResumeId || null,
-			bestResumeTechStack: bestResumeTechStack || null,
-			recommendationRanked: true,
-		}));
+		return pageRows.map((row) => {
+			const display = resolveDisplayResumeMeta(row, profileSkills);
+			return {
+				...row.job,
+				...composeJobScores(row.job, { vectorScore: row.vectorScore, graphBoost: 0 }),
+				bestResumeId: display.bestResumeId || null,
+				bestResumeTechStack: display.bestResumeTechStack || null,
+				recommendationRanked: true,
+			};
+		});
 	}
 
 	const graphCache = new Map();
 	const scored = [];
 
 	for (const row of pageRows) {
-		const { job, vectorScore, bestResumeId, bestResumeTechStack } = row;
+		const display = resolveDisplayResumeMeta(row, profileSkills);
+		const graphKey = display.bestResumeId;
 		let graphBoost = 0;
-		const graphKey = bestResumeId;
+
 		if (graphKey && graphKey !== PROFILE_GRAPH_ID && userKnowledgeGraphsCollection) {
 			if (!graphCache.has(graphKey)) {
 				const graph = await loadResumeGraph(graphKey, applierName);
 				graphCache.set(graphKey, graph?.skills || []);
 			}
 			try {
-				graphBoost = await computeGraphBoost(job.skills || [], graphCache.get(graphKey));
+				graphBoost = await computeGraphBoost(row.job.skills || [], graphCache.get(graphKey));
 			} catch (err) {
-				console.warn(`[recommendation] graph boost job ${job._id}:`, err.message);
+				console.warn(`[recommendation] graph boost job ${row.job._id}:`, err.message);
+			}
+		} else if (graphKey === PROFILE_GRAPH_ID && profileSkills.length) {
+			try {
+				graphBoost = await computeGraphBoost(row.job.skills || [], profileSkills);
+			} catch (err) {
+				console.warn(`[recommendation] profile graph boost job ${row.job._id}:`, err.message);
 			}
 		}
 
 		scored.push({
-			...job,
-			...composeJobScores(job, { vectorScore, graphBoost }),
-			bestResumeId: bestResumeId || null,
-			bestResumeTechStack: bestResumeTechStack || null,
+			...row.job,
+			...composeJobScores(row.job, { vectorScore: row.vectorScore, graphBoost }),
+			bestResumeId: display.bestResumeId || null,
+			bestResumeTechStack: display.bestResumeTechStack || null,
 			recommendationRanked: true,
 		});
 	}
@@ -230,7 +292,9 @@ export async function recommendJobsForApplier({
 		};
 	}
 
-	const merged = mergeMultiVectorScores(pageRows, resumeVectors);
+	const merged = resumeVectors.length > 1
+		? await attachPerJobResumeMetadata(pageRows, resumeVectors)
+		: mergeMultiVectorScores(pageRows, resumeVectors);
 
 	let docs = await applyGraphBoostToPage(merged, name);
 	docs = applyScoreFilters(docs, scoreFilters);
