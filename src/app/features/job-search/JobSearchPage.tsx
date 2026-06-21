@@ -13,6 +13,7 @@ import { JobBulkActionsBar } from "./components/JobBulkActionsBar";
 import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { useJobSelection } from "./hooks/useJobSelection";
+import { useJobEmbeddings } from "./hooks/useJobEmbeddings";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { cn } from "../../lib/utils";
 
@@ -34,6 +35,14 @@ export function JobSearchPage() {
   const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason } =
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
+  const {
+    session: embeddingSession,
+    missing: missingEmbeddings,
+    loading: embeddingLoading,
+    isRunning: embeddingRunning,
+    start: startEmbedding,
+    stop: stopEmbedding,
+  } = useJobEmbeddings();
 
   useEffect(() => {
     const pending = jobNav?.pendingFilters;
@@ -96,7 +105,7 @@ export function JobSearchPage() {
 
       {recommendationFallback && filters.sort === "matchScore" && (
         <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-900 dark:text-amber-100">
-          {recommendationFallbackMessage(recommendationReason)}
+          {recommendationFallbackMessage(recommendationReason, missingEmbeddings > 0)}
         </div>
       )}
 
@@ -115,6 +124,20 @@ export function JobSearchPage() {
         onApplyAll={handleApplyAll}
         onDownload={handleDownload}
         onRemove={handleRemove}
+        missingEmbeddings={missingEmbeddings}
+        embeddingRunning={embeddingRunning}
+        embeddingLoading={embeddingLoading}
+        embeddingProgress={
+          embeddingRunning && embeddingSession.total
+            ? {
+                embedded: embeddingSession.embedded ?? 0,
+                processed: embeddingSession.processed ?? 0,
+                total: embeddingSession.total,
+              }
+            : undefined
+        }
+        onStartEmbedding={() => void startEmbedding()}
+        onStopEmbedding={() => void stopEmbedding()}
         className="mb-3"
       />
 

@@ -283,16 +283,20 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   };
 }
 
-function recommendationFallbackMessage(reason: string | null): string {
+function recommendationFallbackMessage(reason: string | null, hasUnembeddedJobs = false): string {
   switch (reason) {
     case "no_candidates":
-      return "Job embeddings are not indexed yet. Run `npm run backfill-job-embeddings` in Athens-server (one-time for existing jobs). New jobs embed automatically.";
+      return hasUnembeddedJobs
+        ? "Job embeddings are not indexed yet. Use Embed jobs in the toolbar to index missing jobs."
+        : "Job embeddings are not indexed yet. New jobs embed automatically when Qdrant is running.";
     case "embedding_failed":
       return "Could not build resume/profile embeddings. Re-analyze a resume and ensure Ollama (`mxbai-embed-large`) is running.";
     case "no_analyzed_resumes":
       return "Analyze at least one resume in My Resumes → Library before using Best match.";
     case "qdrant_not_ready":
-      return "Qdrant is not reachable. Start it with `npm run qdrant:start` in Athens-server.";
+      return hasUnembeddedJobs
+        ? "Qdrant is not reachable. Start it with `npm run qdrant:start` in Athens-server, then use Embed jobs in the toolbar."
+        : "Qdrant is not reachable. Start it with `npm run qdrant:start` in Athens-server.";
     default:
       return "Personalized ranking is unavailable. Analyze at least one resume and ensure Qdrant + Ollama (`mxbai-embed-large`) are running.";
   }

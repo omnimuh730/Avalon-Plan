@@ -1,5 +1,5 @@
 import React from "react";
-import { Download, Send, Trash2 } from "lucide-react";
+import { Download, Loader2, Send, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
 
@@ -12,6 +12,12 @@ type JobBulkActionsBarProps = {
   onApplyAll: () => void;
   onDownload: () => void;
   onRemove: () => void;
+  missingEmbeddings?: number;
+  embeddingRunning?: boolean;
+  embeddingLoading?: boolean;
+  embeddingProgress?: { embedded: number; processed: number; total: number };
+  onStartEmbedding?: () => void;
+  onStopEmbedding?: () => void;
   className?: string;
 };
 
@@ -24,6 +30,12 @@ export function JobBulkActionsBar({
   onApplyAll,
   onDownload,
   onRemove,
+  missingEmbeddings = 0,
+  embeddingRunning = false,
+  embeddingLoading = false,
+  embeddingProgress,
+  onStartEmbedding,
+  onStopEmbedding,
   className,
 }: JobBulkActionsBarProps) {
   const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
@@ -57,6 +69,45 @@ export function JobBulkActionsBar({
       </label>
 
       <div className="flex items-center gap-1 ml-auto">
+        {(missingEmbeddings > 0 || embeddingRunning) && onStartEmbedding ? (
+          embeddingRunning ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2.5 gap-1 text-amber-700 hover:text-amber-800 hover:bg-amber-50"
+              onClick={onStopEmbedding}
+              disabled={embeddingLoading}
+            >
+              {embeddingLoading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">
+                {embeddingProgress
+                  ? `Embedding ${embeddingProgress.embedded}/${embeddingProgress.total}`
+                  : "Embedding…"}
+              </span>
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2.5 gap-1 text-amber-700 hover:text-amber-800 hover:bg-amber-50"
+              onClick={onStartEmbedding}
+              disabled={embeddingLoading}
+            >
+              {embeddingLoading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">
+                Embed {missingEmbeddings} job{missingEmbeddings === 1 ? "" : "s"}
+              </span>
+            </Button>
+          )
+        ) : null}
         <Button variant="ghost" size="sm" className="h-8 px-2.5 gap-1" onClick={onApplyAll} disabled={totalSelected === 0}>
           <Send className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Apply</span>
