@@ -28,14 +28,14 @@ type CountsResponse = {
 
 const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
   all: 0,
-  new: 0,
+  posted: 0,
   applied: 0,
   scheduled: 0,
   declined: 0,
 };
 
 function statusTabToApi(statusTab: JobStatusTab): { applied?: boolean; status?: string } {
-  if (statusTab === "new") return { applied: false };
+  if (statusTab === "posted") return { applied: false };
   if (statusTab === "applied") return { applied: true, status: "Applied" };
   if (statusTab === "scheduled") return { applied: true, status: "Scheduled" };
   if (statusTab === "declined") return { applied: true, status: "Declined" };

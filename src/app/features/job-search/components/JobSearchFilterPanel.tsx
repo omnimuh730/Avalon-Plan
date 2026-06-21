@@ -27,7 +27,7 @@ const STATUS_TABS: {
   dot: string;
 }[] = [
   { id: "all", label: "All", dot: "bg-foreground" },
-  { id: "new", label: "New", dot: "bg-emerald-500" },
+  { id: "posted", label: "New", dot: "bg-emerald-500" },
   { id: "applied", label: "Applied", dot: "bg-blue-500" },
   { id: "scheduled", label: "Scheduled", dot: "bg-amber-500" },
   { id: "declined", label: "Declined", dot: "bg-rose-500" },

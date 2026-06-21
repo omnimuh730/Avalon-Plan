@@ -7,9 +7,9 @@ import {
   Zap,
 } from "lucide-react";
 import React from "react";
-import type { JobStatus, LogEntry } from "../../../types/agent";
+import type { AgentJobStatus, LogEntry } from "../../../types/agent";
 
-export function jobStatusStyle(s: JobStatus): { dot: string; badge: string; text: string; label: string } {
+export function agentJobStatusStyle(s: AgentJobStatus): { dot: string; badge: string; text: string; label: string } {
   switch (s) {
     case "succeeded":
       return { dot: "bg-green-500", badge: "bg-green-50 border-green-200", text: "text-green-700", label: "Succeeded" };

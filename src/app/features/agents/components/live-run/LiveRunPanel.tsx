@@ -70,7 +70,7 @@ export function LiveRunPanel({ run, onClose, onLog }: {
             meta={selJob.meta}
           />
         </div>
-        <LiveRunFooter done={state.done} isReview={state.isReview} status={curJob.status} onClose={onClose} />
+        <LiveRunFooter done={state.done} isReview={state.isReview} status={curJob.status} onClose={onClose} runId={run.runId} paused={!!state.paused} />
       </div>
     </div>
   );

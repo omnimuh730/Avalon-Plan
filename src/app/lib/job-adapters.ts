@@ -47,7 +47,7 @@ function mapApiStatusToJob(st: "applied" | "scheduled" | "declined" | "none"): J
   if (st === "declined") return "declined";
   if (st === "scheduled") return "scheduled";
   if (st === "applied") return "applied";
-  return "new";
+  return "posted";
 }
 
 function parseWorkMode(remote: string): WorkMode {

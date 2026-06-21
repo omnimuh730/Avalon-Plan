@@ -91,3 +91,18 @@ export async function resumeAgentRun(runId: string, note?: string) {
     body: JSON.stringify({ note: note || "The human has completed the required step in the browser." }),
   });
 }
+
+/** Pause a running agent: aborts the current turn; browser stays open for Resume. */
+export async function pauseAgentRun(runId: string) {
+  return json<{ ok: boolean }>(`/runs/${encodeURIComponent(runId)}/pause`, { method: "POST" });
+}
+
+/** Stop (kill) a run: aborts it and closes its browser session. */
+export async function stopAgentRun(runId: string) {
+  return json<{ ok: boolean }>(`/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" });
+}
+
+/** Close orphaned browser sessions left by a crash (active runs are skipped). */
+export async function sweepAgentBrowsers() {
+  return json<{ ok: boolean; closed: string[] }>(`/browsers/sweep`, { method: "POST" });
+}

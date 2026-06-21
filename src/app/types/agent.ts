@@ -1,4 +1,8 @@
-export type JobStatus = "in_progress" | "succeeded" | "failed" | "scheduled" | "review";
+/**
+ * Per-job outcome inside an agent run (codex core-backend / agent-bff).
+ * Mapped from apply results via `mapJobResultToStatus` — not the Job Search pipeline.
+ */
+export type AgentJobStatus = "in_progress" | "succeeded" | "failed" | "scheduled" | "review";
 
 export interface RunSummary {
   id: string;
@@ -24,7 +28,7 @@ export interface JobRow {
   url: string;
   postedAgo: string;
   appliedDate: string | null;
-  status: JobStatus;
+  status: AgentJobStatus;
   agentName?: string | null;
   matchPercent?: number | null;
   resumeStack?: string | null;
@@ -103,7 +107,8 @@ export interface ActiveRun {
   mode: "live" | "review";
 }
 
-export type JobTabKey = "in_progress" | "succeeded" | "failed" | "scheduled";
+/** Agent dashboard job table tabs (subset of AgentJobStatus). */
+export type AgentJobTabKey = "in_progress" | "succeeded" | "failed" | "scheduled";
 
 export interface DeployOptions {
   name: string;

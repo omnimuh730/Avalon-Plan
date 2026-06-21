@@ -143,7 +143,7 @@ export function countJobsByStatus(
 
   return {
     all: base.length,
-    new: base.filter((j) => j.status === "new").length,
+    posted: base.filter((j) => j.status === "posted").length,
     applied: base.filter((j) => j.status === "applied").length,
     scheduled: base.filter((j) => j.status === "scheduled").length,
     declined: base.filter((j) => j.status === "declined").length,

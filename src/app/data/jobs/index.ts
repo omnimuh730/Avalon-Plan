@@ -1,4 +1,4 @@
-import type { Job, JobStatus, WorkMode } from "../../types";
+import type { Job, JobStatus, WorkMode } from "../../types/job";
 import { JobSourceTitles } from './pub';
 
 const COMPANIES = [
@@ -23,7 +23,7 @@ const TITLES = [
 
 const LOCATIONS = ["Remote", "San Francisco, CA", "New York, NY", "Seattle, WA", "Austin, TX", "Boston, MA"];
 const SOURCES = ["LinkedIn", "Indeed", "Referral", "Direct", "Glassdoor", "Company Site"];
-const STATUSES: JobStatus[] = ["in_progress", "succeeded", "failed", "scheduled", "review"];
+const STATUSES: JobStatus[] = ["posted", "applied", "scheduled", "declined"];
 
 const INDUSTRY_SETS = [
   ["SaaS", "Developer Tools"],

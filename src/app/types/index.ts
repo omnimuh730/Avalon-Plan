@@ -16,10 +16,17 @@ export type {
   HealthData,
   ActiveRun,
   DeployOptions,
-  JobStatus,
-  JobTabKey,
+  AgentJobStatus,
+  AgentJobTabKey,
 } from "./agent";
-export type { Job, SkillAnalysis, SkillAnalysisStatus, SkillAnalysisUsage, WorkMode } from "./job";
+export type {
+  Job,
+  JobStatus,
+  SkillAnalysis,
+  SkillAnalysisStatus,
+  SkillAnalysisUsage,
+  WorkMode,
+} from "./job";
 export type { Msg, MailThread, Resume, BadgeVariant } from "./common";
 export type {
   ResumeIdentity,

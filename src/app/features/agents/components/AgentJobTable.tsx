@@ -2,11 +2,11 @@ import React, { useState } from "react";
 import { Search } from "lucide-react";
 import { Badge } from "../../../components/ui";
 import { mono } from "../lib/constants";
-import { jobStatusStyle } from "../lib/status-styles";
-import type { JobRow, JobTabKey } from "../../../types/agent";
+import { agentJobStatusStyle } from "../lib/status-styles";
+import type { AgentJobTabKey, JobRow } from "../../../types/agent";
 
 function JobBadge({ status }: { status: JobRow["status"] }) {
-  const st = jobStatusStyle(status);
+  const st = agentJobStatusStyle(status);
   return (
     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${st.badge} ${st.text}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
@@ -46,9 +46,9 @@ function JobTableRow({ job }: { job: JobRow }) {
 }
 
 export function AgentJobTable({ jobs }: { jobs: JobRow[] }) {
-  const [tab, setTab] = useState<JobTabKey>("in_progress");
+  const [tab, setTab] = useState<AgentJobTabKey>("in_progress");
   const [search, setSearch] = useState("");
-  const tabs: { key: JobTabKey; label: string; count: number }[] = [
+  const tabs: { key: AgentJobTabKey; label: string; count: number }[] = [
     { key: "in_progress", label: "In progress", count: jobs.filter((j) => j.status === "in_progress").length },
     { key: "succeeded", label: "Succeeded", count: jobs.filter((j) => j.status === "succeeded").length },
     { key: "failed", label: "Failed", count: jobs.filter((j) => j.status === "failed").length },

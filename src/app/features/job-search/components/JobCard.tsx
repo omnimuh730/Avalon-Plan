@@ -21,8 +21,15 @@ import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avat
 import { cn } from "../../../lib/utils";
 import type { BadgeVariant, Job } from "../../../types";
 
-const STATUS_VARIANTS: Record<string, BadgeVariant> = {
-  new: "blue",
+const STATUS_LABELS: Record<Job["status"], string> = {
+  posted: "Posted",
+  applied: "Applied",
+  scheduled: "Scheduled",
+  declined: "Declined",
+};
+
+const STATUS_VARIANTS: Record<Job["status"], BadgeVariant> = {
+  posted: "blue",
   applied: "success",
   scheduled: "amber",
   declined: "err",
@@ -142,7 +149,7 @@ export function JobCard({
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
                 <Score score={job.scores.overall} />
-                <Badge v={STATUS_VARIANTS[job.status]}>{job.status}</Badge>
+                <Badge v={STATUS_VARIANTS[job.status]}>{STATUS_LABELS[job.status]}</Badge>
               </div>
             </div>
           </div>
