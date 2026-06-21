@@ -24,6 +24,15 @@ import {
 } from "../controllers/resumeGenController.js";
 import { renderResumePdf } from "../controllers/resumePdfController.js";
 import { renderResumeDocx } from "../controllers/resumeDocxController.js";
+import {
+	listUserResumesHandler,
+	getUserResumeHandler,
+	createUserResumeHandler,
+	bulkCreateUserResumesHandler,
+	setPrimaryUserResumeHandler,
+	deleteUserResumeHandler,
+} from "../controllers/userResumeController.js";
+import { analyzeResumeMatch } from "../controllers/resumeAnalysisController.js";
 
 const router = express.Router();
 
@@ -50,5 +59,13 @@ router.get('/personal/resume-generations/:id', getGeneration);
 router.post('/personal/llm-key-check', checkLlmKey);
 router.post('/personal/resume-pdf', renderResumePdf);
 router.post('/personal/resume-docx', renderResumeDocx);
+
+router.get('/personal/user-resumes', listUserResumesHandler);
+router.get('/personal/user-resumes/:id', getUserResumeHandler);
+router.post('/personal/user-resumes', createUserResumeHandler);
+router.post('/personal/user-resumes/bulk', bulkCreateUserResumesHandler);
+router.put('/personal/user-resumes/:id/primary', setPrimaryUserResumeHandler);
+router.delete('/personal/user-resumes/:id', deleteUserResumeHandler);
+router.post('/personal/resume-analysis', analyzeResumeMatch);
 
 export default router;

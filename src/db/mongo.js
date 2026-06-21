@@ -26,6 +26,7 @@ let resumeGenerationsCollection;
 let mailMessagesCollection;
 let mailSyncStateCollection;
 let mailUserLabelsCollection;
+let userResumesCollection;
 
 async function ensureMailCollectionsIndexes() {
 	if (mailMessagesCollection) {
@@ -67,6 +68,10 @@ async function ensureSkillCollectionsIndexes() {
 		await userKnowledgeGraphsCollection.createIndex({ applierName: 1, resumeId: 1 }, { unique: true });
 		await userKnowledgeGraphsCollection.createIndex({ applierName: 1, updatedAt: -1 });
 	}
+	if (userResumesCollection) {
+		await userResumesCollection.createIndex({ ownerId: 1, techStack: 1 });
+		await userResumesCollection.createIndex({ ownerName: 1, uploadedAt: -1 });
+	}
 	if (jobsCollection) {
 		await jobsCollection.createIndex({ 'skillAnalysis.status': 1, 'skillAnalysis.queuedAt': 1 });
 	}
@@ -96,6 +101,7 @@ async function initMongo() {
 	mailMessagesCollection = db.collection('mail_messages');
 	mailSyncStateCollection = db.collection('mail_sync_state');
 	mailUserLabelsCollection = db.collection('mail_user_labels');
+	userResumesCollection = db.collection('user_resumes');
 	await ensureJobMarketIndexes(jobsCollection);
 	await ensureSkillCollectionsIndexes();
 	await ensureMailCollectionsIndexes();
@@ -210,5 +216,6 @@ export {
 	mailMessagesCollection,
 	mailSyncStateCollection,
 	mailUserLabelsCollection,
+	userResumesCollection,
 	closeMongo
 };
