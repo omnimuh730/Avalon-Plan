@@ -28,7 +28,7 @@ export default defineConfig({
 					"public/icons/icon128.png",
 					"dist/icons/icon128.png"
 				);
-
+				copyFileSync("public/logo.png", "dist/logo.png");
 			},
 		},
 	],

@@ -66,7 +66,13 @@ export default function LayoutPage() {
 
 	return (
 		<Box sx={{ width: '100%' }}>
-			<Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1.5 }}>
+			<Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+				<Box
+					component="img"
+					src="/logo.png"
+					alt="AutoLancer"
+					sx={{ width: 32, height: 32, borderRadius: 1.5, objectFit: 'cover' }}
+				/>
 				<BackendTrafficLight />
 			</Box>
 			<Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
