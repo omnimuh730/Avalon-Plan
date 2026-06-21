@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchEnrichmentStatus,
   fetchPendingSkills,
+  fetchSkillSubgraph,
   startEnrichment,
   stopEnrichment,
   type EnrichmentSession,
@@ -9,6 +10,23 @@ import {
   type QueueStats,
   type SkillAnalysisUsage,
 } from "@/app/api/skillGraph";
+import { buildUpdatedSubgraphData } from "../lib/graphAdapter";
+import type { EnrichmentUpdateSnapshot } from "../components/EnrichmentUpdateGraph";
+import type { GraphRenderData } from "../lib/graphAdapter";
+
+const SUBGRAPH_DEBOUNCE_MS = 1500;
+const SUBGRAPH_MIN_SKILLS = 1;
+
+async function loadUpdateGraph(skillIds: string[]): Promise<GraphRenderData | null> {
+  const ids = [...new Set(skillIds.filter(Boolean))].slice(0, 80);
+  if (ids.length < SUBGRAPH_MIN_SKILLS) return null;
+  const subgraph = await fetchSkillSubgraph(ids, true);
+  if (!subgraph.nodes.length) return null;
+  return buildUpdatedSubgraphData(
+    subgraph.nodes.map((n) => ({ id: n.id, label: n.label, category: n.category })),
+    subgraph.edges.map((e) => ({ from: e.from, to: e.to, type: e.type, weight: e.weight })),
+  );
+}
 
 export function useSkillEnrichment(onProgress?: () => void) {
   const [session, setSession] = useState<EnrichmentSession>({ running: false, status: "idle" });
@@ -16,8 +34,53 @@ export function useSkillEnrichment(onProgress?: () => void) {
   const [pending, setPending] = useState<PendingSkill[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [updateSnapshot, setUpdateSnapshot] = useState<EnrichmentUpdateSnapshot | null>(null);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevProcessed = useRef(0);
+  const subgraphTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSkillIds = useRef<string[]>([]);
+
+  const scheduleSubgraphRefresh = useCallback((skillIds: string[], meta: {
+    label: string;
+    nodesUpdated: number;
+    relationshipsUpdated: number;
+    loadingGraph?: boolean;
+  }) => {
+    lastSkillIds.current = skillIds;
+    if (subgraphTimer.current) clearTimeout(subgraphTimer.current);
+
+    setUpdateSnapshot((prev) => ({
+      label: meta.label,
+      nodesUpdated: meta.nodesUpdated,
+      relationshipsUpdated: meta.relationshipsUpdated,
+      graphData: meta.loadingGraph ? prev?.graphData ?? null : prev?.graphData ?? null,
+      loadingGraph: true,
+    }));
+
+    subgraphTimer.current = setTimeout(() => {
+      void (async () => {
+        try {
+          const graphData = await loadUpdateGraph(skillIds);
+          setUpdateSnapshot({
+            label: meta.label,
+            nodesUpdated: meta.nodesUpdated,
+            relationshipsUpdated: meta.relationshipsUpdated,
+            graphData,
+            loadingGraph: false,
+          });
+        } catch {
+          setUpdateSnapshot({
+            label: meta.label,
+            nodesUpdated: meta.nodesUpdated,
+            relationshipsUpdated: meta.relationshipsUpdated,
+            graphData: null,
+            loadingGraph: false,
+          });
+        }
+      })();
+    }, SUBGRAPH_DEBOUNCE_MS);
+  }, []);
 
   const refreshPending = useCallback(async () => {
     const data = await fetchPendingSkills();
@@ -28,24 +91,41 @@ export function useSkillEnrichment(onProgress?: () => void) {
 
   const refreshStatus = useCallback(async () => {
     const data = await fetchEnrichmentStatus();
-    setSession(data.session);
+    const s = data.session;
+    setSession(s);
     setStats(data.stats);
-    if (data.session.processed != null && data.session.processed > prevProcessed.current) {
-      prevProcessed.current = data.session.processed;
+
+    const nodesUpdated = s.nodesUpdated ?? 0;
+    const relationshipsUpdated = s.relationshipsUpdated ?? 0;
+    const skillIds = s.updatedSkillIds ?? [];
+
+    if (s.processed != null && s.processed > prevProcessed.current) {
+      prevProcessed.current = s.processed;
       onProgress?.();
     }
-    if (!data.session.running && pollRef.current) {
+
+    if (skillIds.length > 0 && (s.running || s.status === "completed" || s.status === "cancelled")) {
+      scheduleSubgraphRefresh(skillIds, {
+        label: s.running ? "Analyzing pending skills…" : "Last analyze session",
+        nodesUpdated,
+        relationshipsUpdated,
+      });
+    }
+
+    if (!s.running && pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
       await refreshPending();
     }
+
     return data;
-  }, [onProgress, refreshPending]);
+  }, [onProgress, refreshPending, scheduleSubgraphRefresh]);
 
   useEffect(() => {
     void refreshPending().catch(() => undefined);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      if (subgraphTimer.current) clearTimeout(subgraphTimer.current);
     };
   }, [refreshPending]);
 
@@ -62,6 +142,14 @@ export function useSkillEnrichment(onProgress?: () => void) {
       setError(null);
       try {
         prevProcessed.current = 0;
+        lastSkillIds.current = [];
+        setUpdateSnapshot({
+          label: "Analyzing pending skills…",
+          nodesUpdated: 0,
+          relationshipsUpdated: 0,
+          graphData: null,
+          loadingGraph: false,
+        });
         await startEnrichment(options);
         startPoll();
         await refreshStatus();
@@ -88,6 +176,18 @@ export function useSkillEnrichment(onProgress?: () => void) {
     }
   }, [refreshPending, refreshStatus]);
 
+  const showManualUpdate = useCallback(
+    (meta: {
+      label: string;
+      nodesUpdated: number;
+      relationshipsUpdated: number;
+      updatedSkillIds: string[];
+    }) => {
+      scheduleSubgraphRefresh(meta.updatedSkillIds, meta);
+    },
+    [scheduleSubgraphRefresh],
+  );
+
   const usage = (session.usage ?? null) as SkillAnalysisUsage | null;
 
   return {
@@ -97,10 +197,12 @@ export function useSkillEnrichment(onProgress?: () => void) {
     loading,
     error,
     usage,
+    updateSnapshot,
     analyze,
     stop,
     refreshPending,
     refreshStatus,
+    showManualUpdate,
     isRunning: session.running || loading,
   };
 }

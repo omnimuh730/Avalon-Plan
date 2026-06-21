@@ -13,7 +13,8 @@ import {
   formatEnrichmentCost,
   type GraphSkill,
 } from "@/app/api/skillGraph";
-import type { useSkillEnrichment } from "../hooks/useSkillEnrichment";
+import { useSkillEnrichment } from "../hooks/useSkillEnrichment";
+import { EnrichmentUpdateGraph } from "./EnrichmentUpdateGraph";
 
 type EnrichmentState = ReturnType<typeof useSkillEnrichment>;
 
@@ -32,7 +33,7 @@ export function SkillCatalogView({
   title,
   description,
   applierName,
-  enrichment,
+  enrichment: enrichmentProp,
   showEnrichment = false,
   className,
 }: SkillCatalogViewProps) {
@@ -47,16 +48,6 @@ export function SkillCatalogView({
   const [enhancing, setEnhancing] = useState(false);
   const [enhanceResult, setEnhanceResult] = useState<string | null>(null);
   const [selectAllLoading, setSelectAllLoading] = useState(false);
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
-    return () => clearTimeout(t);
-  }, [search]);
-
-  useEffect(() => {
-    setPage(1);
-    setSelectedIds(new Set());
-  }, [debouncedSearch]);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -73,6 +64,21 @@ export function SkillCatalogView({
       setLoading(false);
     }
   }, [debouncedSearch, page]);
+
+  const enrichmentInternal = useSkillEnrichment(() => {
+    void loadSkills();
+  });
+  const enrichment = showEnrichment ? enrichmentInternal : enrichmentProp;
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+    setSelectedIds(new Set());
+  }, [debouncedSearch]);
 
   useEffect(() => {
     void loadSkills();
@@ -135,8 +141,15 @@ export function SkillCatalogView({
       });
       const cost = formatEnrichmentCost(result.usage);
       setEnhanceResult(
-        `Added ${result.relationshipsApplied} relation${result.relationshipsApplied === 1 ? "" : "s"} among ${result.skillsProcessed} skills${cost ? ` · ${cost}` : ""}`,
+        `Updated ${result.nodesUpdated} skill${result.nodesUpdated === 1 ? "" : "s"} · ${result.relationshipsUpdated} relation${result.relationshipsUpdated === 1 ? "" : "s"} added${cost ? ` · ${cost}` : ""}`,
       );
+      enrichment?.showManualUpdate({
+        label: "Enhance relations",
+        nodesUpdated: result.nodesUpdated,
+        relationshipsUpdated: result.relationshipsUpdated,
+        updatedSkillIds: result.updatedSkillIds,
+      });
+      void loadSkills();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Enhance relations failed");
     } finally {
@@ -187,7 +200,10 @@ export function SkillCatalogView({
               </div>
               {isRunning && enrichment.session.processed != null ? (
                 <p className={cn("text-[10px] text-muted-foreground", mono)}>
-                  {enrichment.session.processed} done · {enrichment.session.remaining ?? "?"} left
+                  {enrichment.session.processed} processed ·{" "}
+                  {enrichment.session.nodesUpdated ?? 0} nodes ·{" "}
+                  {enrichment.session.relationshipsUpdated ?? 0} relations ·{" "}
+                  {enrichment.session.remaining ?? "?"} left
                   {costLabel ? ` · AI ${costLabel}` : ""}
                 </p>
               ) : enrichment.error ? (
@@ -238,6 +254,10 @@ export function SkillCatalogView({
           <p className="text-xs text-emerald-600 dark:text-emerald-400">{enhanceResult}</p>
         ) : null}
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
+
+        {enrichment?.updateSnapshot ? (
+          <EnrichmentUpdateGraph snapshot={enrichment.updateSnapshot} />
+        ) : null}
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto subtle-scroll">

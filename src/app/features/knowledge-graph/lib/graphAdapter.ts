@@ -196,3 +196,31 @@ export function appendLocalSkillNodes(
   if (!extra.length) return data;
   return { nodes: [...data.nodes, ...extra], links: data.links };
 }
+
+/** Lightweight render data for a small updated-skills subgraph (no activation pass). */
+export function buildUpdatedSubgraphData(
+  nodes: { id: string; label: string; category?: SkillCategory }[],
+  edges: { from: string; to: string; type: string; weight?: number }[],
+): GraphRenderData {
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const renderNodes: GraphRenderNode[] = nodes.map((n) => ({
+    id: n.id,
+    label: n.label,
+    category: n.category ?? "concept",
+    activation: 0.92,
+    evidence: 0.92,
+    isSeed: true,
+  }));
+  const links: GraphRenderLink[] = [];
+  for (const e of edges) {
+    if (!nodeIds.has(e.from) || !nodeIds.has(e.to)) continue;
+    links.push({
+      source: e.from,
+      target: e.to,
+      type: e.type,
+      weight: e.weight ?? 0.55,
+      energy: 0.75,
+    });
+  }
+  return { nodes: renderNodes, links };
+}

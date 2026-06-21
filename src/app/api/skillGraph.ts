@@ -36,11 +36,19 @@ export interface EnrichmentSession {
   processed?: number;
   failed?: number;
   remaining?: number;
+  nodesUpdated?: number;
+  relationshipsUpdated?: number;
+  updatedSkillIds?: string[];
   usage?: SkillAnalysisUsage | null;
   lastSkill?: { normalizedKey: string; surfaceForm: string; skillId?: string; path?: string } | null;
   startedAt?: string;
   finishedAt?: string | null;
   cancelled?: boolean;
+}
+
+export interface SkillSubgraph {
+  nodes: WorldGraphNode[];
+  edges: WorldGraphEdge[];
 }
 
 export interface WorldGraphNode {
@@ -245,6 +253,28 @@ export async function fetchMatchingSkillIds(q: string, maxIds = 200): Promise<{ 
   return { ids: data.ids || [], total: data.total ?? 0 };
 }
 
+export async function fetchSkillSubgraph(
+  skillIds: string[],
+  internal = true,
+): Promise<SkillSubgraph> {
+  const capped = skillIds.slice(0, 80);
+  if (!capped.length) return { nodes: [], edges: [] };
+  const params = new URLSearchParams({
+    ids: capped.join(","),
+    ...(internal ? { internal: "true" } : {}),
+  });
+  const res = await fetch(`${API_BASE}/skills/graph/subgraph?${params}`);
+  const data = (await res.json()) as {
+    success?: boolean;
+    graph?: SkillSubgraph;
+    error?: string;
+  };
+  if (!res.ok || !data.success || !data.graph) {
+    throw new Error(data.error || "Failed to load skill subgraph");
+  }
+  return data.graph;
+}
+
 export async function enhanceSkillRelations(options: {
   skillIds: string[];
   applierName?: string;
@@ -252,6 +282,9 @@ export async function enhanceSkillRelations(options: {
   skillsProcessed: number;
   relationshipsProposed: number;
   relationshipsApplied: number;
+  nodesUpdated: number;
+  relationshipsUpdated: number;
+  updatedSkillIds: string[];
   usage?: SkillAnalysisUsage | null;
 }> {
   const res = await fetch(`${API_BASE}/skills/enrichment/enhance-relations`, {
@@ -264,6 +297,9 @@ export async function enhanceSkillRelations(options: {
     skillsProcessed?: number;
     relationshipsProposed?: number;
     relationshipsApplied?: number;
+    nodesUpdated?: number;
+    relationshipsUpdated?: number;
+    updatedSkillIds?: string[];
     usage?: SkillAnalysisUsage | null;
     error?: string;
   };
@@ -272,6 +308,9 @@ export async function enhanceSkillRelations(options: {
     skillsProcessed: data.skillsProcessed ?? 0,
     relationshipsProposed: data.relationshipsProposed ?? 0,
     relationshipsApplied: data.relationshipsApplied ?? 0,
+    nodesUpdated: data.nodesUpdated ?? data.skillsProcessed ?? 0,
+    relationshipsUpdated: data.relationshipsUpdated ?? data.relationshipsApplied ?? 0,
+    updatedSkillIds: data.updatedSkillIds ?? options.skillIds,
     usage: data.usage ?? null,
   };
 }
