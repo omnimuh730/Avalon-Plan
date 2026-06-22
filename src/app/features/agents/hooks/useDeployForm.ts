@@ -11,6 +11,7 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
   const [autoSubmit, setAutoSubmit] = useState(true);
   const [mode, setMode] = useState<"turbo" | "plan">("plan");
   const [autoApprove, setAutoApprove] = useState(true);
+  const [generateResumeByAi, setGenerateResumeByAi] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -77,6 +78,7 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
         autoSubmit,
         mode,
         autoApprove,
+        generateResumeByAi,
         profileId,
         model,
         source,
@@ -98,6 +100,8 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
     setMode,
     autoApprove,
     setAutoApprove,
+    generateResumeByAi,
+    setGenerateResumeByAi,
     loading,
     err,
     profileName: applier?.name || "",

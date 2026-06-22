@@ -210,6 +210,21 @@ export function DeployAgentModal({
 
           <label className="flex items-center justify-between rounded-xl border border-border px-4 py-3 cursor-pointer">
             <div>
+              <div className="text-sm font-semibold text-foreground">Generate resume by AI</div>
+              <div className="text-xs text-muted-foreground">
+                Tailor a resume per job from the job description (uses Resume Generator prompts & style). Reuses prior generations on retry.
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={form.generateResumeByAi}
+              onChange={() => form.setGenerateResumeByAi((v) => !v)}
+              className="w-4 h-4 accent-primary"
+            />
+          </label>
+
+          <label className="flex items-center justify-between rounded-xl border border-border px-4 py-3 cursor-pointer">
+            <div>
               <div className="text-sm font-semibold text-foreground">Auto-submit applications</div>
               <div className="text-xs text-muted-foreground">Click Submit on review screen (disable to stop at review gate)</div>
             </div>

@@ -120,6 +120,7 @@ export interface DeployOptions {
   endIndex: number;
   mode?: "turbo" | "plan";
   autoApprove?: boolean;
+  generateResumeByAi?: boolean;
 }
 
 export interface ModelOption {
