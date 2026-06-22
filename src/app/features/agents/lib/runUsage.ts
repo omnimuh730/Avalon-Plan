@@ -7,6 +7,14 @@ export function formatRunCost(costUsd: number): string {
   return `$${costUsd.toFixed(4)}`;
 }
 
+/** DeepSeek bills input as cache hit vs cache miss; OpenAI uses Input / Cached. */
+export function usageTokenLabels(model?: string | null): { input: string; cached: string } {
+  if (model && /^deepseek/i.test(model)) {
+    return { input: "Input (cache miss)", cached: "Input (cache hit)" };
+  }
+  return { input: "Input", cached: "Cached" };
+}
+
 export function usageFromEvent(e: Record<string, unknown>): RunUsage {
   const costUsd = e.costUsd as number;
   return {

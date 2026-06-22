@@ -28,6 +28,7 @@ import { JOB_DESC_TOKEN } from "../constants/tokens";
 import { FALLBACK_MODELS, PROVIDER_OPTIONS, REASONING_OPTIONS } from "../constants/defaults";
 import { areaCls, cardCls, inputCls } from "../styles";
 import { fmtCost, fmtTokens, stepOutputText } from "../utils/format";
+import { usageTokenLabels } from "../../../agents/lib/runUsage";
 import type { GeneratorPageVm } from "../hooks/use-generator-page";
 import type { ProviderId, Purpose, ReasoningEffort } from "../types";
 import { PURPOSES, SECTION_LABEL } from "../types";
@@ -291,12 +292,20 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
             <div className={cardCls}>
               <SectionTitle icon={Coins}>Token usage &amp; cost</SectionTitle>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {[
-                  { label: "Input", value: fmtTokens(usage.inputTokens) },
-                  { label: "Cached", value: fmtTokens(usage.cachedTokens), hint: usage.inputTokens > 0 ? `${Math.round((usage.cachedTokens / usage.inputTokens) * 100)}% of input` : undefined },
-                  { label: "Output", value: fmtTokens(usage.outputTokens) },
-                  { label: "Total", value: fmtTokens(usage.totalTokens) },
-                ].map((s) => (
+                {(() => {
+                  const labels = usageTokenLabels(usage.model);
+                  const totalInput = usage.inputTokens + usage.cachedTokens;
+                  return [
+                    { label: labels.input, value: fmtTokens(usage.inputTokens) },
+                    {
+                      label: labels.cached,
+                      value: fmtTokens(usage.cachedTokens),
+                      hint: totalInput > 0 ? `${Math.round((usage.cachedTokens / totalInput) * 100)}% of input` : undefined,
+                    },
+                    { label: "Output", value: fmtTokens(usage.outputTokens) },
+                    { label: "Total", value: fmtTokens(usage.totalTokens) },
+                  ];
+                })().map((s) => (
                   <div key={s.label} className="rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-white/[0.03] px-3 py-2">
                     <div className="text-[10px] uppercase tracking-wider text-neutral-400 dark:text-white/40">{s.label}</div>
                     <div className="text-base font-medium tabular-nums">{s.value}</div>

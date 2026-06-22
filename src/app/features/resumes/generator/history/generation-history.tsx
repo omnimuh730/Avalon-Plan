@@ -8,6 +8,7 @@ import { defaultConfig, defaultTheme } from "../constants/defaults";
 import { ResumePreview } from "../preview/resume-preview";
 import { normalizeGenerated } from "../utils/content";
 import { fmtCost, fmtRelative, fmtTokens } from "../utils/format";
+import { usageTokenLabels } from "../../../agents/lib/runUsage";
 import { cardCls } from "../styles";
 import type { FullRun, HistoryFacets, HistorySearchIn, HistorySort, HistoryStatus, LayoutSection, ResumeTheme, RunSummary } from "./history-types";
 import { HISTORY_PER_PAGE, HISTORY_SORTS, idStr, jdHeadline, resumeSummarySnippet } from "./history-helpers";
@@ -600,12 +601,15 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                       {selected.usage ? (
                         <>
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                            {[
-                              { label: "Input", value: fmtTokens(selected.usage.inputTokens) },
-                              { label: "Cached", value: fmtTokens(selected.usage.cachedTokens) },
-                              { label: "Output", value: fmtTokens(selected.usage.outputTokens) },
-                              { label: "Total", value: fmtTokens(selected.usage.totalTokens) },
-                            ].map((row) => (
+                            {(() => {
+                              const labels = usageTokenLabels(selected.model);
+                              return [
+                                { label: labels.input, value: fmtTokens(selected.usage.inputTokens) },
+                                { label: labels.cached, value: fmtTokens(selected.usage.cachedTokens) },
+                                { label: "Output", value: fmtTokens(selected.usage.outputTokens) },
+                                { label: "Total", value: fmtTokens(selected.usage.totalTokens) },
+                              ];
+                            })().map((row) => (
                               <div key={row.label} className="rounded-xl border border-neutral-200 dark:border-white/10 p-3">
                                 <div className="text-[10px] uppercase tracking-wider text-neutral-400 dark:text-white/40">{row.label}</div>
                                 <div className="text-sm font-semibold tabular-nums mt-1">{row.value}</div>

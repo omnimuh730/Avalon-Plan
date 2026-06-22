@@ -1,13 +1,14 @@
 import { DollarSign } from "lucide-react";
 import { mono } from "../../lib/constants";
-import { formatRunCost } from "../../lib/runUsage";
+import { formatRunCost, usageTokenLabels } from "../../lib/runUsage";
 import type { JobView, RunMeta, RunUsage } from "./types";
 
-function UsageGrid({ usage }: { usage: RunUsage }) {
+function UsageGrid({ usage, model }: { usage: RunUsage; model?: string | null }) {
+  const labels = usageTokenLabels(model);
   return (
     <div className="grid grid-cols-2 gap-2 text-sm">
-      <div><span className="text-muted-foreground">Input</span><div className={`${mono} font-semibold`}>{usage.inputTokens.toLocaleString()}</div></div>
-      <div><span className="text-muted-foreground">Cached</span><div className={`${mono} font-semibold`}>{usage.cachedTokens.toLocaleString()}</div></div>
+      <div><span className="text-muted-foreground">{labels.input}</span><div className={`${mono} font-semibold`}>{usage.inputTokens.toLocaleString()}</div></div>
+      <div><span className="text-muted-foreground">{labels.cached}</span><div className={`${mono} font-semibold`}>{usage.cachedTokens.toLocaleString()}</div></div>
       <div><span className="text-muted-foreground">Output</span><div className={`${mono} font-semibold`}>{usage.outputTokens.toLocaleString()}</div></div>
       <div><span className="text-muted-foreground">Total</span><div className={`${mono} font-semibold`}>{usage.totalTokens.toLocaleString()}</div></div>
       <div className="col-span-2 pt-1 border-t border-border/60">
@@ -51,7 +52,7 @@ export function LiveRunUsageCard({
           {jobLabel && (
             <p className="text-[11px] font-medium text-muted-foreground truncate">{jobLabel}</p>
           )}
-          <UsageGrid usage={usage} />
+          <UsageGrid usage={usage} model={model} />
         </div>
       ) : (
         <p className="text-xs text-muted-foreground px-1 mb-2">No usage recorded for this job yet.</p>
