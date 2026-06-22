@@ -9,6 +9,10 @@ export type SkillRadarAxis = {
   user: number;
   matchType: "direct" | "graph" | "none";
   matchedVia?: string;
+  pathHops?: number;
+  pathCost?: number;
+  pathSkills?: string[];
+  pathRelTypes?: string[];
 };
 
 export type AvailableResume = {
@@ -25,6 +29,7 @@ export type JobSkillRadarData = {
   recommendedResumeId: string | null;
   recommendedResumeTechStack?: string | null;
   neo4jReady: boolean;
+  skillAnalysisStatus?: string;
 };
 
 type RadarResponse = {

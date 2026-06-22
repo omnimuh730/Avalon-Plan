@@ -36,6 +36,18 @@ const MATCH_VARIANTS = {
 
 const PROFILE_RESUME_ID = "__profile__";
 
+function formatGraphPath(axis: JobSkillRadarData["axes"][number]): string | null {
+  if (axis.matchType !== "graph" || !axis.pathSkills?.length) return null;
+  const hops = axis.pathHops ?? 0;
+  if (hops <= 0) return null;
+  const via = axis.matchedVia ? ` → ${axis.matchedVia}` : "";
+  const path = axis.pathSkills.join(" → ");
+  const relHint = axis.pathRelTypes?.length
+    ? ` (${axis.pathRelTypes.join(", ")})`
+    : "";
+  return `${path}${via}${relHint}`;
+}
+
 function MatchTable({ axes }: { axes: JobSkillRadarData["axes"] }) {
   if (!axes.length) return null;
 
@@ -52,7 +64,9 @@ function MatchTable({ axes }: { axes: JobSkillRadarData["axes"] }) {
           </tr>
         </thead>
         <tbody>
-          {axes.map((axis) => (
+          {axes.map((axis) => {
+            const graphPath = formatGraphPath(axis);
+            return (
             <tr key={axis.skill} className="border-b border-border/60 last:border-0">
               <td className="px-3 py-2 font-medium text-foreground">{axis.skill}</td>
               <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{axis.required}</td>
@@ -60,9 +74,15 @@ function MatchTable({ axes }: { axes: JobSkillRadarData["axes"] }) {
               <td className="px-3 py-2">
                 <Badge v={MATCH_VARIANTS[axis.matchType]}>{MATCH_LABELS[axis.matchType]}</Badge>
               </td>
-              <td className="px-3 py-2 text-muted-foreground">{axis.matchedVia || "—"}</td>
+              <td
+                className="px-3 py-2 text-muted-foreground max-w-[200px] truncate"
+                title={graphPath ?? axis.matchedVia ?? undefined}
+              >
+                {graphPath ?? axis.matchedVia ?? "—"}
+              </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -219,6 +239,12 @@ export function JobSkillMatchPanel({
       {!data.neo4jReady ? (
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           Neo4j is offline — only direct skill matches are shown. Start Neo4j for graph-bridged comparisons.
+        </p>
+      ) : null}
+
+      {data.skillAnalysisStatus && data.skillAnalysisStatus !== "analyzed" ? (
+        <p className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+          Skill graph enrichment is in progress for this job — scores will improve as relationships are added.
         </p>
       ) : null}
 
