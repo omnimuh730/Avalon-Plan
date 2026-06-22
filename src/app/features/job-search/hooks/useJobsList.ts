@@ -46,9 +46,6 @@ function appendScoreFilters(body: Record<string, unknown>, scores: JobScoreFilte
   const keys: { key: keyof JobScoreFilters; api: string }[] = [
     { key: "overall", api: "Overall" },
     { key: "skill", api: "Skill" },
-    { key: "salary", api: "Salary" },
-    { key: "bidEst", api: "BidEst" },
-    { key: "freshness", api: "Freshness" },
   ];
   for (const { key, api } of keys) {
     const r = scores[key];
@@ -209,15 +206,6 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
           hasLoadedOnce.current = true;
           filterKeyRef.current = filterKey;
 
-          const totalPages = res.pagination?.totalPages ?? 1;
-          if (page < totalPages) {
-            const nextBody = buildJobsListBody(debouncedFilters, {
-              page: page + 1,
-              limit: pageSize,
-              applierName: applier?.name,
-            });
-            void post("/jobs/list", nextBody).catch(() => undefined);
-          }
         } else if (isInitial) {
           setRawJobs([]);
           setTotal(0);

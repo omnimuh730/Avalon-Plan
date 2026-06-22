@@ -1,10 +1,14 @@
+import { useCallback } from "react";
 import { toast } from "sonner";
 
 export type NotifyTone = "success" | "info" | "warning" | "error" | "magic";
 export type NotifyOpts = { title?: string; description?: string; tone?: NotifyTone; durationMs?: number };
 
 export function useNotify() {
-  const notify = (opts: NotifyOpts | string) => {
+  // Memoized so the returned reference is stable across renders — consumers list
+  // `notify` in effect/callback deps, and an unstable identity drives them into
+  // an infinite re-render loop.
+  const notify = useCallback((opts: NotifyOpts | string) => {
     const o: NotifyOpts = typeof opts === "string" ? { title: opts } : opts;
     const title = o.title ?? "";
     const description = o.description;
@@ -22,6 +26,6 @@ export function useNotify() {
         toast.success(title, { description });
         break;
     }
-  };
+  }, []);
   return { notify };
 }

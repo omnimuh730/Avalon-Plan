@@ -38,7 +38,7 @@ export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
 export function useGeneratorPage() {
   const { get, put } = useApi(API_BASE);
   const { applier } = useApplier();
-  const notify = useNotify();
+  const { notify } = useNotify();
 
   const [config, setConfig] = useState<GeneratorConfig>(defaultConfig);
   const [identity, setIdentity] = useState<Identity | null>(null);

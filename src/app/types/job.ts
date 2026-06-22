@@ -32,9 +32,6 @@ export interface SkillAnalysis {
 export interface JobScores {
   overall: number;
   skill: number;
-  salary: number;
-  bidEst: number;
-  freshness: number;
 }
 
 export interface Job {

@@ -9,9 +9,6 @@ import { clearScoreFilters, DEFAULT_SCORE_RANGE } from "../../../../hooks/useJob
 const SCORE_FIELDS: { key: keyof JobScoreFilters; label: string }[] = [
   { key: "overall", label: "Overall" },
   { key: "skill", label: "Skill" },
-  { key: "salary", label: "Salary" },
-  { key: "bidEst", label: "Bid est" },
-  { key: "freshness", label: "Freshness" },
 ];
 
 type JobScoreFiltersPopoverProps = {
@@ -119,9 +116,6 @@ export function JobScoreFiltersPopover({
                   scores: {
                     overall: { ...DEFAULT_SCORE_RANGE },
                     skill: { ...DEFAULT_SCORE_RANGE },
-                    salary: { ...DEFAULT_SCORE_RANGE },
-                    bidEst: { ...DEFAULT_SCORE_RANGE },
-                    freshness: { ...DEFAULT_SCORE_RANGE },
                   },
                 })
               }

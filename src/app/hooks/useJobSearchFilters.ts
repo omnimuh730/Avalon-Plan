@@ -5,9 +5,6 @@ import { JOBS } from "../data/jobs";
 export type JobSortKey =
   | "newest"
   | "matchScore"
-  | "skill"
-  | "salary"
-  | "freshness"
   | "title";
 
 export type JobStatusTab = "all" | JobStatus;
@@ -17,9 +14,6 @@ export type ScoreRange = { min: number; max: number };
 export type JobScoreFilters = {
   overall: ScoreRange;
   skill: ScoreRange;
-  salary: ScoreRange;
-  bidEst: ScoreRange;
-  freshness: ScoreRange;
 };
 
 export type JobSearchFilterState = {
@@ -55,17 +49,9 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
   scores: {
     overall: { ...DEFAULT_SCORE_RANGE },
     skill: { ...DEFAULT_SCORE_RANGE },
-    salary: { ...DEFAULT_SCORE_RANGE },
-    bidEst: { ...DEFAULT_SCORE_RANGE },
-    freshness: { ...DEFAULT_SCORE_RANGE },
   },
   sort: "matchScore",
 };
-
-function parseSalary(salary: string): number {
-  const m = salary.match(/\$(\d+)k/);
-  return m ? Number(m[1]) : 0;
-}
 
 function inScoreRange(value: number, range: ScoreRange) {
   return value >= range.min && value <= range.max;
@@ -100,9 +86,6 @@ function matchesBaseFilters(job: Job, filters: JobSearchFilterState, includeStat
   const { scores } = job;
   if (!inScoreRange(scores.overall, filters.scores.overall)) return false;
   if (!inScoreRange(scores.skill, filters.scores.skill)) return false;
-  if (!inScoreRange(scores.salary, filters.scores.salary)) return false;
-  if (!inScoreRange(scores.bidEst, filters.scores.bidEst)) return false;
-  if (!inScoreRange(scores.freshness, filters.scores.freshness)) return false;
 
   return true;
 }
@@ -114,12 +97,6 @@ function sortJobs(jobs: Job[], sort: JobSortKey) {
         return b.postedAt.localeCompare(a.postedAt);
       case "matchScore":
         return b.scores.overall - a.scores.overall;
-      case "skill":
-        return b.scores.skill - a.scores.skill;
-      case "salary":
-        return parseSalary(b.salary) - parseSalary(a.salary);
-      case "freshness":
-        return b.scores.freshness - a.scores.freshness;
       case "title":
         return a.title.localeCompare(b.title);
       default:
@@ -200,9 +177,6 @@ export function clearScoreFilters(filters: JobSearchFilterState): JobSearchFilte
     scores: {
       overall: { ...DEFAULT_SCORE_RANGE },
       skill: { ...DEFAULT_SCORE_RANGE },
-      salary: { ...DEFAULT_SCORE_RANGE },
-      bidEst: { ...DEFAULT_SCORE_RANGE },
-      freshness: { ...DEFAULT_SCORE_RANGE },
     },
   };
 }
@@ -280,9 +254,6 @@ export function getActiveFilterChips(filters: JobSearchFilterState): ActiveFilte
   const scoreLabels: Record<keyof JobScoreFilters, string> = {
     overall: "Overall",
     skill: "Skill",
-    salary: "Salary",
-    bidEst: "Bid",
-    freshness: "Fresh",
   };
 
   for (const key of Object.keys(filters.scores) as (keyof JobScoreFilters)[]) {
@@ -342,7 +313,7 @@ export function jobSearchFilterFn(job: Job, query: string) {
 }
 
 export function exportJobsCsv(jobs: Job[]): string {
-  const header = "Title,Company,Location,Status,Overall,Skill,Salary Score,Bid Est,Freshness,Posted,Salary,Source";
+  const header = "Title,Company,Location,Status,Match,Skill,Posted,Salary,Source";
   const rows = jobs.map((j) =>
     [
       j.title,
@@ -351,9 +322,6 @@ export function exportJobsCsv(jobs: Job[]): string {
       j.status,
       j.scores.overall,
       j.scores.skill,
-      j.scores.salary,
-      j.scores.bidEst,
-      j.scores.freshness,
       j.postedAt,
       j.salary,
       j.source,

@@ -10,15 +10,6 @@ function readScore(doc: Record<string, unknown>, ...keys: string[]): number | nu
   return null;
 }
 
-function freshnessFromPosted(doc: Record<string, unknown>): number {
-  const postedRaw = String(doc.postedAt || doc._createdAt || "");
-  if (!postedRaw) return 50;
-  const postedMs = new Date(postedRaw).getTime();
-  if (Number.isNaN(postedMs)) return 50;
-  const ageDays = Math.max(0, (Date.now() - postedMs) / 86400000);
-  return Math.max(0, Math.min(100, Math.round(100 - Math.min(ageDays, 30) * 3)));
-}
-
 export function normalizeId(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "object" && value !== null && "$oid" in value) {
@@ -90,9 +81,6 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
 
   const skill = readScore(doc, "scoreSkill", "matchScore", "skillScore") ?? 0;
   const overall = readScore(doc, "_score", "scoreOverall") ?? skill;
-  const salaryScore = readScore(doc, "scoreSalary") ?? 0;
-  const bidEst = readScore(doc, "scoreApplicant") ?? 0;
-  const freshness = readScore(doc, "scoreFreshness") ?? freshnessFromPosted(doc);
 
   const bestResumeTechStack =
     typeof doc.bestResumeTechStack === "string" && doc.bestResumeTechStack.trim()
@@ -134,9 +122,6 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     scores: {
       overall,
       skill,
-      salary: salaryScore,
-      bidEst,
-      freshness,
     },
     matchScore: overall,
     posted,
@@ -174,8 +159,5 @@ export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
 export const SORT_TO_API: Record<string, string> = {
   newest: "postedAt_desc",
   matchScore: "recommended",
-  skill: "scoreSkill_desc",
-  salary: "salary_desc",
-  freshness: "postedAt_desc",
-  title: "postedAt_desc",
+  title: "title_asc",
 };

@@ -36,9 +36,6 @@ const STATUS_TABS: {
 const SORT_OPTIONS = [
   { value: "newest", label: "Newest" },
   { value: "matchScore", label: "Best match" },
-  { value: "skill", label: "Skill fit" },
-  { value: "salary", label: "Salary" },
-  { value: "freshness", label: "Freshness" },
   { value: "title", label: "Title A–Z" },
 ];
 
