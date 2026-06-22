@@ -67,4 +67,5 @@ export interface JobView {
   meta: RunMeta;
   resumeMatch: ResumeMatch | null;
   result?: string;
+  usage?: RunUsage | null;
 }

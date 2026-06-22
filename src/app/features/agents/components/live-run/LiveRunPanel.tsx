@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ActiveRun, LogEntry, RunDone, RunJob } from "../../../../types/agent";
 import { PHASES } from "../../lib/constants";
+import { sumRunUsage } from "../../lib/runUsage";
 import { useLiveRunEvents, emptyJob } from "../../hooks/useLiveRunEvents";
 import { LiveRunHeader } from "./LiveRunHeader";
 import { LiveRunBatchProgress } from "./LiveRunBatchProgress";
@@ -35,6 +36,12 @@ export function LiveRunPanel({ run, onClose, onLog }: {
 
   const selectJob = (i: number) => setPinned(i === state.currentIndex ? null : i);
 
+  const selectedUsage = selJob.usage ?? null;
+  const batchUsage = sumRunUsage(state.jobs.map((j) => j.usage));
+  const jobLabel = isBatch
+    ? `Job ${selectedIndex + 1}${selJob.title || selJob.company ? ` · ${[selJob.title, selJob.company].filter(Boolean).join(" @ ")}` : ""}`
+    : undefined;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
@@ -59,15 +66,20 @@ export function LiveRunPanel({ run, onClose, onLog }: {
           />
         )}
         <LiveRunPhaseRail status={selJob.status} done={selDone} phaseIdx={phaseIdx} />
-        {state.paused && !state.done && <LiveRunHandoff runId={run.runId} reason={state.paused.reason} />}
+        {state.paused && !state.done && <LiveRunHandoff runId={run.runId} reason={state.paused.reason} approval={state.approval} />}
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 min-h-0">
           <LiveRunActivityFeed steps={selJob.steps} isReview={state.isReview} />
           <LiveRunBrowserPanel
             shot={selJob.shot}
             resumeMatch={selJob.resumeMatch}
             fields={selJob.fields}
-            usage={state.usage}
+            usage={selectedUsage}
             meta={selJob.meta}
+            jobLabel={jobLabel}
+            jobs={state.jobs}
+            selectedIndex={selectedIndex}
+            batchUsage={batchUsage}
+            isBatch={isBatch}
           />
         </div>
         <LiveRunFooter done={state.done} isReview={state.isReview} status={curJob.status} onClose={onClose} runId={run.runId} paused={!!state.paused} />

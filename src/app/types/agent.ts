@@ -118,6 +118,8 @@ export interface DeployOptions {
   source: string;
   startIndex: number;
   endIndex: number;
+  mode?: "turbo" | "plan";
+  autoApprove?: boolean;
 }
 
 export interface ModelOption {
@@ -209,4 +211,5 @@ export interface JobView {
   meta: RunMeta;
   resumeMatch: ResumeMatch | null;
   result?: string;
+  usage?: RunUsage | null;
 }

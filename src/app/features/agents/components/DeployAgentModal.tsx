@@ -173,6 +173,41 @@ export function DeployAgentModal({
             rangeCount={form.rangeCount}
           />
 
+          <div className="rounded-xl border border-border px-4 py-3">
+            <div className="text-sm font-semibold text-foreground mb-2">Engine</div>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ["plan", "Plan", "~$0.01–0.02/job · LLM plans each page, runs commands deterministically"],
+                ["turbo", "Turbo", "codex drives every step · ~$0.10–0.30/job"],
+              ] as const).map(([val, label, desc]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => form.setMode(val)}
+                  className={`text-left rounded-lg border px-3 py-2 ${form.mode === val ? "border-primary bg-primary/5" : "border-border hover:bg-secondary"}`}
+                >
+                  <div className="text-sm font-semibold text-foreground">{label}</div>
+                  <div className="text-[11px] text-muted-foreground leading-tight">{desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {form.mode === "plan" && (
+            <label className="flex items-center justify-between rounded-xl border border-border px-4 py-3 cursor-pointer">
+              <div>
+                <div className="text-sm font-semibold text-foreground">Auto-approve plans</div>
+                <div className="text-xs text-muted-foreground">Run unattended (off = approve each page's plan & commands)</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={form.autoApprove}
+                onChange={() => form.setAutoApprove((v) => !v)}
+                className="w-4 h-4 accent-primary"
+              />
+            </label>
+          )}
+
           <label className="flex items-center justify-between rounded-xl border border-border px-4 py-3 cursor-pointer">
             <div>
               <div className="text-sm font-semibold text-foreground">Auto-submit applications</div>

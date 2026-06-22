@@ -9,6 +9,8 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
 
   const [name, setName] = useState("");
   const [autoSubmit, setAutoSubmit] = useState(true);
+  const [mode, setMode] = useState<"turbo" | "plan">("plan");
+  const [autoApprove, setAutoApprove] = useState(true);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -73,6 +75,8 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
       await onDeploy({
         name: name.trim(),
         autoSubmit,
+        mode,
+        autoApprove,
         profileId,
         model,
         source,
@@ -90,6 +94,10 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
     setName,
     autoSubmit,
     setAutoSubmit,
+    mode,
+    setMode,
+    autoApprove,
+    setAutoApprove,
     loading,
     err,
     profileName: applier?.name || "",

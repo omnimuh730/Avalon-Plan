@@ -1,16 +1,21 @@
 import { Terminal } from "lucide-react";
-import type { ResumeMatch, RunField, RunMeta, RunUsage, Screenshot } from "./types";
+import type { JobView, ResumeMatch, RunField, RunMeta, RunUsage, Screenshot } from "./types";
 import { LiveRunScreenshot } from "./LiveRunScreenshot";
 import { LiveRunResumeMatch } from "./LiveRunResumeMatch";
 import { LiveRunFieldsList } from "./LiveRunFieldsList";
 import { LiveRunUsageCard } from "./LiveRunUsageCard";
 
-export function LiveRunBrowserPanel({ shot, resumeMatch, fields, usage, meta }: {
+export function LiveRunBrowserPanel({ shot, resumeMatch, fields, usage, meta, jobLabel, jobs, selectedIndex, batchUsage, isBatch }: {
   shot: Screenshot | null;
   resumeMatch: ResumeMatch | null;
   fields: RunField[];
   usage: RunUsage | null;
   meta: RunMeta;
+  jobLabel?: string;
+  jobs?: JobView[];
+  selectedIndex?: number;
+  batchUsage?: RunUsage | null;
+  isBatch?: boolean;
 }) {
   return (
     <div className="flex flex-col min-h-0">
@@ -22,7 +27,15 @@ export function LiveRunBrowserPanel({ shot, resumeMatch, fields, usage, meta }: 
         <LiveRunScreenshot shot={shot} />
         {resumeMatch && <LiveRunResumeMatch resumeMatch={resumeMatch} />}
         <LiveRunFieldsList fields={fields} />
-        {usage && <LiveRunUsageCard usage={usage} meta={meta} />}
+        <LiveRunUsageCard
+          usage={usage}
+          meta={meta}
+          jobLabel={jobLabel}
+          jobs={jobs}
+          selectedIndex={selectedIndex}
+          batchUsage={batchUsage}
+          isBatch={isBatch}
+        />
       </div>
     </div>
   );

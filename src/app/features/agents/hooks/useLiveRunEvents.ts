@@ -12,8 +12,18 @@ import type {
   RunBatch,
   RunDone,
   RunMeta,
-  RunUsage,
 } from "../../../types/agent";
+import { usageFromEvent } from "../lib/runUsage";
+
+export interface PlanStep { action: string; ref?: string; value?: string; label?: string; reveals?: boolean }
+export interface Approval {
+  kind: "plan" | "commands";
+  summary?: string;
+  next?: string;
+  steps?: PlanStep[];
+  commands?: string[];
+  flagged?: { field: string; why: string }[];
+}
 
 export function emptyJob(index: number, title = "", company = ""): JobView {
   return {
@@ -37,9 +47,9 @@ export function useLiveRunEvents(
   const [jobs, setJobs] = useState<JobView[]>([emptyJob(0)]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [batch, setBatch] = useState<RunBatch | null>(null);
-  const [usage, setUsage] = useState<RunUsage | null>(null);
   const [done, setDone] = useState<RunDone | null>(null);
   const [paused, setPaused] = useState<{ reason: string; jobIndex?: number } | null>(null);
+  const [approval, setApproval] = useState<Approval | null>(null);
   const [connected, setConnected] = useState(false);
   const currentRef = useRef(0);
   const logRef = useRef(onLog);
@@ -100,9 +110,17 @@ export function useLiveRunEvents(
           if (src) patchJob(cur, (j) => ({ ...j, shot: { label: e.label as string, dataUrl: src } }));
           break;
         }
+        case "plan":
+          setApproval({ kind: "plan", summary: e.summary as string, next: e.next as string,
+            steps: (e.steps as PlanStep[]) || [], flagged: (e.flagged as { field: string; why: string }[]) || [] });
+          break;
+        case "commands":
+          setApproval((prev) => ({ ...(prev || { kind: "commands" }), kind: prev?.kind || "commands", commands: (e.commands as string[]) || [] }));
+          break;
         case "status":
           patchJob(cur, (j) => ({ ...j, status: e.phase as string }));
           setPaused(null);
+          setApproval(null);
           break;
         case "paused": {
           const idx = (e.jobIndex as number | undefined) ?? cur;
@@ -115,17 +133,12 @@ export function useLiveRunEvents(
         case "meta":
           patchJob(cur, (j) => ({ ...j, meta: { ...j.meta, ...(e as RunMeta) } }));
           break;
-        case "usage":
-          setUsage({
-            model: e.model as string | undefined,
-            inputTokens: e.inputTokens as number,
-            cachedTokens: e.cachedTokens as number,
-            outputTokens: e.outputTokens as number,
-            totalTokens: e.totalTokens as number,
-            costUsd: e.costUsd as number,
-            costLabel: e.costLabel as string | undefined,
-          });
+        case "usage": {
+          const idx = (e.jobIndex as number | undefined) ?? cur;
+          const usage = usageFromEvent(e);
+          patchJob(idx, (j) => ({ ...j, usage }));
           break;
+        }
         case "resumeMatch": {
           const idx = (e.jobIndex as number | undefined) ?? cur;
           patchJob(idx, (j) => ({ ...j, resumeMatch: e as unknown as ResumeMatch }));
@@ -134,7 +147,8 @@ export function useLiveRunEvents(
         case "jobDone": {
           const idx = e.jobIndex as number;
           const result = e.result as string;
-          patchJob(idx, (j) => ({ ...j, result, status: result }));
+          const usage = e.usage ? usageFromEvent(e.usage as Record<string, unknown>) : undefined;
+          patchJob(idx, (j) => ({ ...j, result, status: result, ...(usage ? { usage } : {}) }));
           const lvl = (
             result === "submitted" ? "success" : result === "error" || result === "needs_correction" ? "error" : "info"
           ) as LogEntry["type"];
@@ -143,7 +157,7 @@ export function useLiveRunEvents(
         }
         case "done":
           setDone(e as unknown as RunDone);
-          if (e.usage) setUsage(e.usage as RunUsage);
+          setApproval(null);
           break;
       }
     },
@@ -176,5 +190,5 @@ export function useLiveRunEvents(
     return () => es.close();
   }, [run.runId, isReview, handleEvent]);
 
-  return { isReview, jobs, currentIndex, batch, usage, done, paused, connected };
+  return { isReview, jobs, currentIndex, batch, done, paused, approval, connected };
 }
