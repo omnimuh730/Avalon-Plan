@@ -1,7 +1,6 @@
 import {
 	jobsCollection,
 	userResumesCollection,
-	userKnowledgeGraphsCollection,
 } from '../../db/mongo.js';
 import { isQdrantReady } from '../vectorStore/qdrantClient.js';
 import {
@@ -11,9 +10,6 @@ import {
 import { applyScoreFilters, composeJobScores } from './scoreComposer.js';
 import { buildQdrantFilterFromBody } from './qdrantFilter.js';
 import { fetchVectorRankedPage } from './ringPagination.js';
-import { computeGraphBoost } from './graphRankBoost.js';
-import { PROFILE_GRAPH_ID } from '../userKnowledgeGraph/index.js';
-import { isNeo4jReady } from '../../db/neo4j.js';
 
 const PROFILE_VECTOR_CACHE_TTL_MS = 3 * 60 * 1000;
 const profileVectorCache = new Map();
@@ -58,40 +54,11 @@ async function getCachedProfileVector(applierName) {
 	return vector || null;
 }
 
-async function loadProfileGraphSkills(applierName) {
-	if (!userKnowledgeGraphsCollection) return [];
-	const name = String(applierName || '').trim();
-	if (!name) return [];
-
-	const graph = await userKnowledgeGraphsCollection.findOne({
-		applierName: name,
-		resumeId: PROFILE_GRAPH_ID,
-	});
-	return graph?.skills || [];
-}
-
-async function enrichPageRowsWithGraphBoost(pageRows, profileGraphSkills) {
-	if (!isNeo4jReady() || !profileGraphSkills.length || !pageRows.length) {
-		return pageRows.map((row) => ({ ...row, graphBoost: 0 }));
-	}
-
-	return Promise.all(
-		pageRows.map(async (row) => {
-			const jobSkills = Array.isArray(row.job?.skills) ? row.job.skills : [];
-			const graphBoost = jobSkills.length
-				? await computeGraphBoost(jobSkills, profileGraphSkills)
-				: 0;
-			return { ...row, graphBoost };
-		}),
-	);
-}
-
 function composePageDocs(pageRows) {
 	return pageRows.map((row) => ({
 		...row.job,
 		...composeJobScores(row.job, {
 			vectorScore: row.vectorScore,
-			graphBoost: row.graphBoost ?? 0,
 		}),
 		recommendationRanked: true,
 	}));
@@ -150,9 +117,7 @@ export async function recommendJobsForApplier({
 		};
 	}
 
-	const profileGraphSkills = await loadProfileGraphSkills(name);
-	const boostedRows = await enrichPageRowsWithGraphBoost(pageRows, profileGraphSkills);
-	let docs = composePageDocs(boostedRows);
+	let docs = composePageDocs(pageRows);
 	docs = applyScoreFilters(docs, scoreFilters);
 
 	const catalogTotal = mongoQuery && jobsCollection

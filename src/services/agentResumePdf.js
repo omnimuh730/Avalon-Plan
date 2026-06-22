@@ -75,9 +75,14 @@ export function sectionsToHtml(sections, identity, config) {
         const company = clean(e?.company), title = clean(e?.title), period = clean(e?.period), loc = clean(e?.location);
         const bullets = Array.isArray(e?.bullets) ? e.bullets.map(clean).filter(Boolean) : [];
         const rowCss = "display:flex;justify-content:space-between;gap:12px;align-items:baseline;";
-        return `<div style="margin-bottom:10px;break-inside:avoid;font-size:${bodySize}pt;">
-            <div style="${rowCss}"><span style="font-weight:700;">${esc(company)}</span>${metaSpan(loc, meta)}</div>
-            <div style="${rowCss}"><span style="font-weight:700;">${esc(title)}</span>${metaSpan(period, meta)}</div>
+        // Match the preview: the entry is NOT break-inside:avoid (a long role may span a page
+        // boundary — otherwise a tall entry leaves a big blank gap). Only the heading rows are
+        // kept together (break-after:avoid) and each bullet stays whole (break-inside:avoid).
+        return `<div style="margin-bottom:10px;font-size:${bodySize}pt;">
+            <div style="break-after:avoid;">
+              <div style="${rowCss}"><span style="font-weight:700;">${esc(company)}</span>${metaSpan(loc, meta)}</div>
+              <div style="${rowCss}"><span style="font-weight:700;">${esc(title)}</span>${metaSpan(period, meta)}</div>
+            </div>
             ${bullets.length ? `<ul style="list-style:disc;margin:2px 0 0;padding-left:18px;">${bullets.map((b) => `<li style="margin-bottom:1px;break-inside:avoid;text-align:justify;">${md(b)}</li>`).join("")}</ul>` : ""}
           </div>`;
       }).join("");

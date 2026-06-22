@@ -1,5 +1,4 @@
 const MAX_RESUME_TEXT = 8000;
-const MAX_JOB_DESCRIPTION = 6000;
 const MAX_SKILL_LINES = 30;
 
 function formatSkillProfile(skillProfile = []) {
@@ -42,18 +41,9 @@ export function buildProfileEmbeddingText(ownerName, skillProfile = []) {
 }
 
 export function buildJobEmbeddingText(jobDoc) {
-	const title = String(jobDoc?.title ?? '').trim();
 	const skills = Array.isArray(jobDoc?.skills)
 		? jobDoc.skills.map((s) => String(s).trim()).filter(Boolean)
 		: [];
-	const description = String(jobDoc?.description ?? '').trim();
-	const truncatedDesc = description.length > MAX_JOB_DESCRIPTION
-		? `${description.slice(0, MAX_JOB_DESCRIPTION)}\n[truncated]`
-		: description;
-
-	const parts = [];
-	if (title) parts.push(title);
-	if (skills.length) parts.push(`Required skills: ${skills.join(', ')}`);
-	if (truncatedDesc) parts.push(truncatedDesc);
-	return parts.join('\n\n').trim();
+	if (!skills.length) return '';
+	return `Required skills: ${skills.join(', ')}`;
 }

@@ -5,9 +5,6 @@ import { buildMongoCaseInsensitiveRegexFilter, buildSafeRegExp } from '../utils/
 const SCORE_DIMENSIONS = {
 	overall: 'overallScore',
 	skill: 'skillMatch',
-	salary: 'salaryScore',
-	bidEst: 'applicantScore',
-	freshness: 'postedDateScore',
 };
 
 function parseScoreBound(value) {
@@ -142,7 +139,6 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 	} = body;
 
 	const scoreFilters = extractScoreFilters(body);
-	const hasScoreFilters = Object.keys(scoreFilters).length > 0;
 
 	const applierId = applierName ? await resolveApplierId(applierName) : null;
 
@@ -238,7 +234,7 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 
 	finalizeQuery(query);
 
-	return { query, applierId, scoreFilters, hasScoreFilters };
+	return { query, applierId, scoreFilters };
 }
 
 /** Status tab keys aligned with the Athens frontend. */

@@ -7,7 +7,7 @@ import {
 	rulesCollection
 } from "../db/mongo.js";
 import { isJobBlocked, buildMongoQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
-import { attachStaticScoreFields, needsScorePipeline, runJobListAggregation } from '../services/jobListPipeline.js';
+import { attachStaticScoreFields } from '../services/jobListPipeline.js';
 import {
 	buildJobsListQuery,
 	STATUS_TABS,
@@ -268,7 +268,7 @@ export async function getJobs(req, res) {
 			countsOnly,
 		} = req.body;
 
-		const { query, scoreFilters, hasScoreFilters } = await buildJobsListQuery(req.body);
+		const { query, scoreFilters } = await buildJobsListQuery(req.body);
 
 		const pageNum = Math.max(1, parseInt(page, 10) || 1);
 		const limitNum = Math.max(1, Math.min(5000, parseInt(limit, 10) || 10));
@@ -296,7 +296,6 @@ export async function getJobs(req, res) {
 		let recommendationFallback = false;
 		let recommendationReason = null;
 		let catalogTotal = null;
-		const useScorePipeline = needsScorePipeline(sort, hasScoreFilters);
 		const useRecommendation = sort === 'recommended' && applierName;
 
 		if (useRecommendation) {
@@ -326,16 +325,6 @@ export async function getJobs(req, res) {
 					jobsCollection.countDocuments(query),
 				]);
 			}
-		} else if (useScorePipeline) {
-			// Aggregation computes the total in its $facet — no separate countDocuments needed.
-			const result = await runJobListAggregation(jobsCollection, query, {
-				sort,
-				skip,
-				limit: limitNum,
-				scoreFilters,
-			});
-			docs = result.docs;
-			total = result.total;
 		} else {
 			const sortOption = {};
 			if (sort && typeof sort === 'string') {
