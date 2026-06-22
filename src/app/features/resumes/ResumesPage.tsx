@@ -98,6 +98,7 @@ export function ResumesPage() {
             <ResumeGeneratorPanel
               key={historyKey}
               activeView="history"
+              onLoadIntoEditor={handleLoadFromHistory}
               onGenerated={() => setHistoryKey((k) => k + 1)}
             />
           )}

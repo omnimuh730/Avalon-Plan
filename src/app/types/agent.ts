@@ -121,6 +121,7 @@ export interface DeployOptions {
   mode?: "turbo" | "plan";
   autoApprove?: boolean;
   generateResumeByAi?: boolean;
+  provider?: "codex" | "claude-code";
 }
 
 export interface ModelOption {

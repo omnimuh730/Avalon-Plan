@@ -174,6 +174,27 @@ export function DeployAgentModal({
           />
 
           <div className="rounded-xl border border-border px-4 py-3">
+            <div className="text-sm font-semibold text-foreground mb-2">Provider</div>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ["codex", "Codex", "codex-rs drives the browser via playwright-cli"],
+                ["claude-code", "Claude Code", "claude CLI drives the browser via Playwright MCP + CLI"],
+              ] as const).map(([val, label, desc]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => form.setProvider(val)}
+                  className={`text-left rounded-lg border px-3 py-2 ${form.provider === val ? "border-primary bg-primary/5" : "border-border hover:bg-secondary"}`}
+                >
+                  <div className="text-sm font-semibold text-foreground">{label}</div>
+                  <div className="text-[11px] text-muted-foreground leading-tight">{desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {form.provider === "codex" && (
+          <div className="rounded-xl border border-border px-4 py-3">
             <div className="text-sm font-semibold text-foreground mb-2">Engine</div>
             <div className="grid grid-cols-2 gap-2">
               {([
@@ -192,8 +213,9 @@ export function DeployAgentModal({
               ))}
             </div>
           </div>
+          )}
 
-          {form.mode === "plan" && (
+          {form.provider === "codex" && form.mode === "plan" && (
             <label className="flex items-center justify-between rounded-xl border border-border px-4 py-3 cursor-pointer">
               <div>
                 <div className="text-sm font-semibold text-foreground">Auto-approve plans</div>

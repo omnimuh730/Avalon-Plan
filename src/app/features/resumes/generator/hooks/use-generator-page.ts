@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DropdownOption } from "../adapters/ui";
 import { useNotify } from "../adapters/notify";
 import { useApi } from "@/api/useApi";
@@ -32,6 +32,8 @@ import type {
   UsageBreakdown,
 } from "../types";
 import { PURPOSES, SECTION_LABEL } from "../types";
+import { applyHistoryRun } from "./load-history-run";
+import type { FullRun } from "../history/history-types";
 
 export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
 
@@ -58,6 +60,12 @@ export function useGeneratorPage() {
   const { theme, layout, steps } = config;
   const template = templateById(config.templateId);
   const [exporting, setExporting] = useState<null | "pdf" | "docx">(null);
+
+  // True once a history run has been explicitly loaded into the editor. The
+  // async DB-config restore below resolves after mount, so without this guard it
+  // would overwrite the just-loaded run. Reset on a genuine applier change so
+  // normal config restore still works after switching accounts.
+  const externalLoadRef = useRef(false);
 
   // Reference tokens a prompt can use, resolved from the JD + profile careers.
   // Mirrors the backend substitution in resumeGenController so the chip previews
@@ -164,6 +172,8 @@ export function useGeneratorPage() {
 
   // Restore saved config for this applier.
   useEffect(() => {
+    // A new applier means we're no longer pinned to a previously-loaded run.
+    externalLoadRef.current = false;
     try {
       const raw = localStorage.getItem(storageKey(applier?.name));
       if (raw) {
@@ -199,7 +209,8 @@ export function useGeneratorPage() {
     get(`/personal/resume-generator/config?applierName=${encodeURIComponent(applierName)}`)
       .then((raw) => {
         const dbConfig = (raw as { success?: boolean; config?: Partial<GeneratorConfig> | null })?.config;
-        if (cancelled || !dbConfig || typeof dbConfig !== "object") return;
+        // Don't clobber a history run the user just loaded into the editor.
+        if (cancelled || externalLoadRef.current || !dbConfig || typeof dbConfig !== "object") return;
         const base = defaultConfig();
         setConfig(
           ensurePurposes({
@@ -484,6 +495,13 @@ export function useGeneratorPage() {
     });
   }, []);
 
+  // Load a saved history run into the editor. Pinning externalLoadRef ensures the
+  // in-flight DB-config restore (started on mount) can't overwrite it afterwards.
+  const applyRun = useCallback((run: FullRun, opts?: { switchView?: boolean }) => {
+    externalLoadRef.current = true;
+    applyHistoryRun(run, setConfig, setGenerated, setUsage, opts?.switchView === false ? undefined : setView);
+  }, []);
+
   const handleGenerate = async () => {
     if (!applier?.name) {
       notify({ title: "Select an applier", description: "Choose your account in the sidebar.", tone: "warning" });
@@ -597,5 +615,6 @@ export function useGeneratorPage() {
     handleDownloadLog,
     handlePreviewEdit,
     handleGenerate,
+    applyRun,
   };
 }

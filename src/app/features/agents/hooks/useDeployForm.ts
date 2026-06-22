@@ -10,6 +10,7 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
   const [name, setName] = useState("");
   const [autoSubmit, setAutoSubmit] = useState(true);
   const [mode, setMode] = useState<"turbo" | "plan">("plan");
+  const [provider, setProvider] = useState<"codex" | "claude-code">("codex");
   const [autoApprove, setAutoApprove] = useState(true);
   const [generateResumeByAi, setGenerateResumeByAi] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -77,6 +78,7 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
         name: name.trim(),
         autoSubmit,
         mode,
+        provider,
         autoApprove,
         generateResumeByAi,
         profileId,
@@ -98,6 +100,8 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
     setAutoSubmit,
     mode,
     setMode,
+    provider,
+    setProvider,
     autoApprove,
     setAutoApprove,
     generateResumeByAi,

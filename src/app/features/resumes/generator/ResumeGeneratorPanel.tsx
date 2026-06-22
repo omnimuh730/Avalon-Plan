@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { Wand2, Loader2 } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { GenerationHistory } from "./history/generation-history";
-import { applyHistoryRun } from "./hooks/load-history-run";
 import { useGeneratorPage } from "./hooks/use-generator-page";
 import { GeneratorEditorView } from "./views/generator-editor-view";
 import { printCss } from "./preview/utils";
@@ -16,6 +15,14 @@ type ResumeGeneratorPanelProps = {
   pendingRun?: FullRun | null;
   onPendingRunConsumed?: () => void;
   onGenerated?: () => void;
+  /**
+   * Delegate "Load into editor" from the History view up to the parent. Needed
+   * when editor and history are separate mounts (Athens top-level tabs) that
+   * each own a different generator hook instance, so loading locally would have
+   * no effect on the editor and the forced `activeView` blocks an in-panel
+   * switch. When omitted (standalone generator page), the run loads in-place.
+   */
+  onLoadIntoEditor?: (run: FullRun) => void;
 };
 
 export function ResumeGeneratorPanel({
@@ -24,9 +31,10 @@ export function ResumeGeneratorPanel({
   pendingRun,
   onPendingRunConsumed,
   onGenerated,
+  onLoadIntoEditor,
 }: ResumeGeneratorPanelProps) {
   const vm = useGeneratorPage();
-  const { applier, theme, view, setView, generating, validation, handleGenerate, setConfig, setGenerated, setUsage } = vm;
+  const { applier, theme, view, setView, generating, validation, handleGenerate, setConfig, applyRun } = vm;
 
   const effectiveView = activeView ?? view;
 
@@ -41,9 +49,9 @@ export function ResumeGeneratorPanel({
 
   useEffect(() => {
     if (!pendingRun) return;
-    applyHistoryRun(pendingRun, setConfig, setGenerated, setUsage, activeView ? undefined : setView);
+    applyRun(pendingRun, { switchView: !activeView });
     onPendingRunConsumed?.();
-  }, [pendingRun, setConfig, setGenerated, setUsage, setView, activeView, onPendingRunConsumed]);
+  }, [pendingRun, applyRun, activeView, onPendingRunConsumed]);
 
   const onGenerate = async () => {
     await handleGenerate();
@@ -71,7 +79,7 @@ export function ResumeGeneratorPanel({
       {effectiveView === "history" ? (
         <GenerationHistory
           applierName={applier?.name ?? null}
-          onLoad={(run) => applyHistoryRun(run, setConfig, setGenerated, setUsage, setView)}
+          onLoad={onLoadIntoEditor ?? ((run) => applyRun(run))}
         />
       ) : (
         <GeneratorEditorView vm={vm} />

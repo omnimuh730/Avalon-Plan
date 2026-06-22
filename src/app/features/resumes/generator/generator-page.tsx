@@ -2,7 +2,6 @@ import { Wand2 } from "lucide-react";
 import { PageHeader } from "../../components/page-header";
 import { GenerationHistory } from "./history/generation-history";
 import { useGeneratorPage } from "./hooks/use-generator-page";
-import { applyHistoryRun } from "./hooks/load-history-run";
 import { GeneratorEditorView } from "./views/generator-editor-view";
 import { printCss } from "./preview/utils";
 
@@ -16,9 +15,7 @@ export function GeneratorPage() {
     generating,
     validation,
     handleGenerate,
-    setConfig,
-    setGenerated,
-    setUsage,
+    applyRun,
   } = vm;
 
   return (
@@ -60,7 +57,7 @@ export function GeneratorPage() {
       {view === "history" ? (
         <GenerationHistory
           applierName={applier?.name ?? null}
-          onLoad={(run) => applyHistoryRun(run, setConfig, setGenerated, setUsage, setView)}
+          onLoad={(run) => applyRun(run)}
         />
       ) : (
         <GeneratorEditorView vm={vm} />
