@@ -9,7 +9,7 @@ import { syncGeneratedResumeAfterRun } from "./generatedResumeService.js";
 import { analyzeGeneratedResumeSkills } from "./generatedResumeSkillAnalysis.js";
 import { defaultGeneratorConfig, stepsToPlan } from "../config/resumeGeneratorDefaults.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
-import { addUsage } from "./llm/llmService.js";
+import { addUsage, getProvider } from "./llm/llmService.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
 // Reuse the EXACT generation core the Resume Generator (Editor) uses, so the
@@ -197,15 +197,27 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   const plan = stepsToPlan(savedConfig.steps);
 
   // Use the SAME provider/model the Resume Generator (Editor) uses for this
-  // profile — straight from the saved config. We deliberately do NOT override
-  // with the auto-bid run's browser model: that override was the main reason the
-  // agent's résumé came out worse than the Editor's. (modelOverride is accepted
-  // for backward-compat but ignored.)
-  void modelOverride;
+  // profile — straight from the saved config, matching the Editor. We do NOT
+  // override with the run's browser model (that made the résumé worse).
+  //
+  // BUT guard against an invalid provider/model pairing: if the saved config pairs
+  // a provider with a model that provider can't serve (e.g. DeepSeek + the stale
+  // "gpt-3.5-turbo"), the API 400s on EVERY job. When the provider has a known
+  // model allowlist and the saved model isn't in it, fall back to the run's model
+  // (when valid) or the provider's first supported model.
+  const providerDef = getProvider(savedConfig.provider);
+  let resumeModel = savedConfig.model;
+  const allowed = Array.isArray(providerDef.models) ? providerDef.models : null;
+  if (allowed?.length && !allowed.includes(resumeModel)) {
+    resumeModel = allowed.includes(modelOverride) ? modelOverride : allowed[0];
+    console.warn(
+      `[agent-resume-gen] saved model "${savedConfig.model}" is not valid for provider "${savedConfig.provider}"; using "${resumeModel}" instead.`,
+    );
+  }
   const body = {
     applierName: name,
     provider: savedConfig.provider,
-    model: savedConfig.model,
+    model: resumeModel,
     reasoningEffort: savedConfig.reasoningEffort,
     templateId: savedConfig.templateId,
     theme: savedConfig.theme,

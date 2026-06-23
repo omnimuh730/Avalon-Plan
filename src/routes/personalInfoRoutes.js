@@ -21,6 +21,7 @@ import {
 	saveGeneratorConfig,
   listGenerations,
   getGeneration,
+  renderGenerationPdf,
   deleteGeneration,
   checkLlmKey,
 } from "../controllers/resumeGenController.js";
@@ -60,6 +61,7 @@ router.get('/personal/resume-generator/config', getGeneratorConfig);
 router.put('/personal/resume-generator/config', saveGeneratorConfig);
 router.get('/personal/resume-generations', listGenerations);
 router.get('/personal/resume-generations/:id', getGeneration);
+router.get('/personal/resume-generations/:id/pdf', renderGenerationPdf);
 router.delete('/personal/resume-generations/:id', deleteGeneration);
 router.post('/personal/llm-key-check', checkLlmKey);
 router.post('/personal/resume-pdf', renderResumePdf);

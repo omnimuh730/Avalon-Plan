@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import { accountInfoCollection, resumeGeneratorConfigCollection, resumeGenerationsCollection } from "../db/mongo.js";
 import { syncGeneratedResumeAfterRun, deleteGenerationRun } from "../services/generatedResumeService.js";
 import { analyzeGeneratedResumeSkills } from "../services/generatedResumeSkillAnalysis.js";
+import { renderAgentResumePdf } from "../services/agentResumePdf.js";
 import {
   PROVIDERS,
   getProvider,
@@ -668,6 +669,42 @@ export async function getGeneration(req, res) {
     return res.json({ success: true, run });
   } catch (err) {
     console.warn("GET /api/personal/resume-generations/:id error:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+/**
+ * GET /personal/resume-generations/:id/pdf — render the stored generation to a
+ * PDF and stream it inline. Lets the Agent history "View résumé" link open the
+ * exact résumé that was submitted for a job. Reuses the same renderer the agent
+ * used to upload it, so the PDF matches.
+ */
+export async function renderGenerationPdf(req, res) {
+  try {
+    const id = cleanString(req.params?.id);
+    if (!resumeGenerationsCollection || !id) return res.status(400).json({ success: false, error: "id is required" });
+    let _id;
+    try {
+      _id = new ObjectId(id);
+    } catch {
+      return res.status(400).json({ success: false, error: "invalid id" });
+    }
+    const run = await resumeGenerationsCollection.findOne({ _id });
+    if (!run || !run.sections) return res.status(404).json({ success: false, error: "Generated résumé not found" });
+
+    const { buffer } = await renderAgentResumePdf({
+      sections: run.sections,
+      identity: run.identity || {},
+      applierName: run.applierName || run.identity?.fullName || "Resume",
+      jobId: run.generate_parent_job_id || String(run._id),
+      config: run.config || {},
+    });
+    const safeName = String(run.identity?.fullName || run.applierName || "Resume").replace(/[^\w.\-()+ ]+/g, "_").trim() || "Resume";
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}.pdf"`);
+    return res.end(buffer);
+  } catch (err) {
+    console.warn("GET /api/personal/resume-generations/:id/pdf error:", err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 }
