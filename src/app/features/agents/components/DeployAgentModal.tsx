@@ -193,6 +193,28 @@ export function DeployAgentModal({
             </div>
           </div>
 
+          {form.provider === "claude-code" && (
+            <div className="rounded-xl border border-border px-4 py-3">
+              <div className="text-sm font-semibold text-foreground mb-2">Browser driver</div>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  ["cli", "Playwright CLI", "Cheaper — snapshots to files, smaller context per step"],
+                  ["mcp", "Playwright MCP", "Snapshots stream into context — higher token cost"],
+                ] as const).map(([val, label, desc]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => form.setClaudeEngine(val)}
+                    className={`text-left rounded-lg border px-3 py-2 ${form.claudeEngine === val ? "border-primary bg-primary/5" : "border-border hover:bg-secondary"}`}
+                  >
+                    <div className="text-sm font-semibold text-foreground">{label}</div>
+                    <div className="text-[11px] text-muted-foreground leading-tight">{desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {form.provider === "codex" && (
           <div className="rounded-xl border border-border px-4 py-3">
             <div className="text-sm font-semibold text-foreground mb-2">Engine</div>

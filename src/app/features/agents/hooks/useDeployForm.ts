@@ -11,6 +11,7 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
   const [autoSubmit, setAutoSubmit] = useState(true);
   const [mode, setMode] = useState<"turbo" | "plan">("plan");
   const [provider, setProvider] = useState<"codex" | "claude-code">("codex");
+  const [claudeEngine, setClaudeEngine] = useState<"cli" | "mcp">("cli");
   const [autoApprove, setAutoApprove] = useState(true);
   const [generateResumeByAi, setGenerateResumeByAi] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -79,6 +80,7 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
         autoSubmit,
         mode,
         provider,
+        claudeEngine,
         autoApprove,
         generateResumeByAi,
         profileId,
@@ -102,6 +104,8 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
     setMode,
     provider,
     setProvider,
+    claudeEngine,
+    setClaudeEngine,
     autoApprove,
     setAutoApprove,
     generateResumeByAi,

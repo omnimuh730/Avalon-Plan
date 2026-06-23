@@ -122,6 +122,7 @@ export interface DeployOptions {
   autoApprove?: boolean;
   generateResumeByAi?: boolean;
   provider?: "codex" | "claude-code";
+  claudeEngine?: "cli" | "mcp";
 }
 
 export interface ModelOption {
