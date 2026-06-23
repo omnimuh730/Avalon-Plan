@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { LayoutGrid, Loader2 } from "lucide-react";
+import { removeJobs } from "../../api/jobs";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { TabTransition } from "../../components/overlays";
@@ -76,13 +78,30 @@ export function JobSearchPage() {
     downloadJobsCsv(selectedJobs, `jobs-${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
-  const handleRemove = () => {
+  const handleRemove = async () => {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    // Optimistically hide, then permanently delete from the DB.
     setRemovedIds((prev) => {
       const next = new Set(prev);
-      selectedIds.forEach((id) => next.add(id));
+      ids.forEach((id) => next.add(id));
       return next;
     });
     clearSelection();
+    try {
+      const res = await removeJobs(ids);
+      if (!res?.success) throw new Error(res?.error || "Remove failed");
+      toast.success(`Removed ${res.deletedCount ?? ids.length} job${ids.length === 1 ? "" : "s"}`);
+      void refreshStatusCounts();
+    } catch (err) {
+      // Revert the optimistic hide so nothing silently disappears.
+      setRemovedIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      toast.error(err instanceof Error ? err.message : "Failed to remove jobs");
+    }
   };
 
   const toggleBookmark = (id: string) => {

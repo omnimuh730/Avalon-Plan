@@ -54,3 +54,13 @@ export async function unapplyFromJob(jobId: string, applierName: string): Promis
   });
   return parseJson(res);
 }
+
+/** Permanently delete jobs from the database. */
+export async function removeJobs(ids: string[]): Promise<{ success?: boolean; deletedCount?: number; error?: string }> {
+  const res = await fetch(`${API_BASE}/jobs/remove`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  return parseJson(res);
+}

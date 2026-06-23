@@ -68,6 +68,76 @@ export async function fetchJobSources(profileId: string): Promise<{ title: strin
   return data.sources || [];
 }
 
+export interface ChromeProfile {
+  dir: string;
+  name: string;
+  email: string;
+}
+
+/** Installed Google Chrome profiles on this machine (for the Deploy picker). */
+export async function fetchChromeProfiles(): Promise<ChromeProfile[]> {
+  const res = await fetch(`${API_BASE.replace(/\/$/, "")}/personal/chrome-profiles`);
+  const data = (await res.json().catch(() => ({}))) as { profiles?: ChromeProfile[] };
+  return data.profiles || [];
+}
+
+/** URL for a Chrome profile's avatar image (404s if none — caller falls back). */
+export function chromeProfileAvatarUrl(dir: string): string {
+  return `${API_BASE.replace(/\/$/, "")}/personal/chrome-profiles/avatar?dir=${encodeURIComponent(dir)}`;
+}
+
+/** Import a Chrome profile's logged-in session for an applicant (Chrome must be quit). */
+export async function importChromeSession(applierName: string, profileDir: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  const res = await fetch(`${API_BASE.replace(/\/$/, "")}/personal/chrome-profiles/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applierName, profileDir }),
+  });
+  return (await res.json().catch(() => ({ success: false, error: "request failed" }))) as { success: boolean; message?: string; error?: string };
+}
+
+export interface JobCandidate {
+  id: string;
+  title: string;
+  company: string;
+  url: string;
+  source: string;
+}
+
+/**
+ * Candidate jobs for the transfer list, in Job Search's **Best match** rank order
+ * (sort=recommended), posted (not-yet-applied) only — so the list matches what the
+ * user sees in Job Search. Hits the same /jobs/list endpoint Job Search uses.
+ */
+export async function fetchCandidateJobs(applierName: string, source: string, limit = 200): Promise<JobCandidate[]> {
+  const res = await fetch(`${API_BASE.replace(/\/$/, "")}/jobs/list`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sort: "recommended", // Best match
+      applied: false, // posted, not yet applied
+      applierName,
+      jobSources: source,
+      page: 1,
+      limit,
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as { data?: Record<string, unknown>[] };
+  const docs = Array.isArray(data.data) ? data.data : [];
+  return docs
+    .map((d) => {
+      const company = d.company as { name?: string } | undefined;
+      return {
+        id: String(d._id ?? d.id ?? ""),
+        title: String(d.title ?? ""),
+        company: String(company?.name ?? ""),
+        url: String(d.applyLink ?? d.url ?? ""),
+        source: String(d.source ?? source),
+      };
+    })
+    .filter((j) => j.id && /^https?:\/\//i.test(j.url));
+}
+
 export async function fetchRunEvents(runId: string): Promise<Record<string, unknown>[]> {
   const data = await json<{ events: Record<string, unknown>[] }>(`/runs/${encodeURIComponent(runId)}/events`);
   return data.events || [];
