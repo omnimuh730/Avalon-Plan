@@ -13,7 +13,7 @@ import type {
   RunDone,
   RunMeta,
 } from "../../../types/agent";
-import { usageFromEvent } from "../lib/runUsage";
+import { usageFromEvent, sumRunUsage } from "../lib/runUsage";
 
 export interface PlanStep { action: string; ref?: string; value?: string; label?: string; reveals?: boolean }
 export interface Approval {
@@ -134,9 +134,13 @@ export function useLiveRunEvents(
           patchJob(cur, (j) => ({ ...j, meta: { ...j.meta, ...(e as RunMeta) } }));
           break;
         case "usage": {
+          // A job can emit MULTIPLE usage events — the browser agent AND the
+          // résumé generator (source: "resumeGen") both bill the DeepSeek key.
+          // Accumulate them so the per-job (and batch) total reflects everything
+          // spent on the job, not just the last event.
           const idx = (e.jobIndex as number | undefined) ?? cur;
-          const usage = usageFromEvent(e);
-          patchJob(idx, (j) => ({ ...j, usage }));
+          const inc = usageFromEvent(e);
+          patchJob(idx, (j) => ({ ...j, usage: j.usage ? sumRunUsage([j.usage, inc]) ?? inc : inc }));
           break;
         }
         case "resumeMatch": {
@@ -147,8 +151,11 @@ export function useLiveRunEvents(
         case "jobDone": {
           const idx = e.jobIndex as number;
           const result = e.result as string;
+          // jobDone carries the agent's final usage, which the agent already sent
+          // as a separate "usage" event (accumulated above). Only use it as a
+          // fallback when no usage was recorded — otherwise we'd double-count it.
           const usage = e.usage ? usageFromEvent(e.usage as Record<string, unknown>) : undefined;
-          patchJob(idx, (j) => ({ ...j, result, status: result, ...(usage ? { usage } : {}) }));
+          patchJob(idx, (j) => ({ ...j, result, status: result, ...(usage && !j.usage ? { usage } : {}) }));
           const lvl = (
             result === "submitted" ? "success" : result === "error" || result === "needs_correction" ? "error" : "info"
           ) as LogEntry["type"];
