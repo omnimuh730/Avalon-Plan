@@ -48,6 +48,10 @@ export interface ResumeMatch {
   bestResume?: { name: string; scorePercent: number };
   topResumes?: { name: string; scorePercent: number }[];
   resumeStack?: string;
+  aiGenerated?: boolean;
+  // Set when the résumé was AI-generated for this job — links to its PDF.
+  generationId?: string | null;
+  resumeId?: string | null;
 }
 
 export interface Screenshot {

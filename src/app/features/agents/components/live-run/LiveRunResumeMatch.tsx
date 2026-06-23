@@ -1,5 +1,6 @@
-import { Zap } from "lucide-react";
+import { Zap, FileText } from "lucide-react";
 import { mono } from "../../lib/constants";
+import { API_BASE } from "@/lib/api-base";
 import type { ResumeMatch } from "./types";
 
 export function LiveRunResumeMatch({ resumeMatch }: { resumeMatch: ResumeMatch }) {
@@ -54,6 +55,19 @@ export function LiveRunResumeMatch({ resumeMatch }: { resumeMatch: ResumeMatch }
             {resumeMatch.topResumes.slice(1).map(r => (
               <span key={r.name} className="text-xs text-muted-foreground bg-secondary rounded-md px-1.5 py-0.5">{r.name} · {r.scorePercent}%</span>
             ))}
+          </div>
+        )}
+        {resumeMatch.generationId && (
+          <div className="px-3.5 py-2 border-t border-border">
+            <a
+              href={`${API_BASE.replace(/\/$/, "")}/personal/resume-generations/${resumeMatch.generationId}/pdf`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 hover:text-violet-900 hover:underline"
+            >
+              <FileText size={12} />
+              View résumé (PDF)
+            </a>
           </div>
         )}
       </div>
