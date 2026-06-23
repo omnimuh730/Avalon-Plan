@@ -130,7 +130,9 @@ function buildContextBlock(identity) {
 }
 
 // Validate + resolve a generation request. Returns { ok, ... } or { ok:false, status, error }.
-async function prepareGeneration(body) {
+// Exported so the auto-bid agent path (agentResumeGenService) runs the SAME core
+// as the Editor — one implementation, no drift.
+export async function prepareGeneration(body) {
   const providerId = PROVIDERS[body.provider] ? body.provider : "openai";
   const model = String(body.model || "").trim();
   const steps = Array.isArray(body.steps) ? body.steps : [];
@@ -160,7 +162,7 @@ async function prepareGeneration(body) {
  * cacheKey), each step appends a turn, and final steps return JSON for a section.
  * `onStep` is invoked after every step for live progress streaming.
  */
-async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, reasoningEffort }, onStep) {
+export async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, reasoningEffort }, onStep) {
   // Substitute reference tokens in any prompt with real values:
   //   {job_description}                          → the JD text the user typed
   //   {career}                                   → all roles, one per line

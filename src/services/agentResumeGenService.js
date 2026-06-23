@@ -9,15 +9,12 @@ import { syncGeneratedResumeAfterRun } from "./generatedResumeService.js";
 import { analyzeGeneratedResumeSkills } from "./generatedResumeSkillAnalysis.js";
 import { defaultGeneratorConfig, stepsToPlan } from "../config/resumeGeneratorDefaults.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
-import {
-  PROVIDERS,
-  getProvider,
-  chatCompletion,
-  addUsage,
-  EMPTY_USAGE,
-} from "./llm/llmService.js";
+import { addUsage } from "./llm/llmService.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
+// Reuse the EXACT generation core the Resume Generator (Editor) uses, so the
+// auto-bid agent produces the same quality output — no drifted duplicate.
+import { prepareGeneration, runGeneration } from "../controllers/resumeGenController.js";
 
 /** Render the generated sections to a PDF (best-effort) for agent upload + human review. */
 async function renderPdfForAgent(sections, identity, savedConfig, applierName, jobId) {
@@ -34,7 +31,6 @@ async function renderPdfForAgent(sections, identity, savedConfig, applierName, j
 }
 
 const cleanString = (v) => String(v ?? "").trim();
-const PURPOSES = new Set(["summary", "skills", "experience"]);
 
 async function findProfile(applierNameRaw) {
   const name = cleanString(applierNameRaw);
@@ -61,57 +57,6 @@ async function findResumeCatalog(applierNameRaw) {
   return catalog && typeof catalog === "object" && !Array.isArray(catalog) ? catalog : null;
 }
 
-function apiKeyFor(profile, providerId) {
-  const provider = getProvider(providerId);
-  return String(profile?.[provider.keyField] || "").trim();
-}
-
-function parseJsonLoose(text) {
-  const raw = String(text ?? "").trim();
-  try {
-    return JSON.parse(raw);
-  } catch {
-    /* fall through */
-  }
-  const fenced = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-  try {
-    return JSON.parse(fenced);
-  } catch {
-    /* fall through */
-  }
-  const first = fenced.indexOf("{");
-  const last = fenced.lastIndexOf("}");
-  if (first !== -1 && last > first) return JSON.parse(fenced.slice(first, last + 1));
-  throw new Error("No JSON object found in model response.");
-}
-
-function buildTokenMap(identity, jobDescription) {
-  const careers = Array.isArray(identity?.careers) ? identity.careers : [];
-  const field = (v) => cleanString(v);
-  const map = {
-    job_description: cleanString(jobDescription),
-    career: careers
-      .map((c) => [field(c?.title), field(c?.company), field(c?.period)].filter(Boolean).join(" | "))
-      .filter(Boolean)
-      .join("\n"),
-  };
-  careers.forEach((c, i) => {
-    const n = i + 1;
-    map[`company${n}_name`] = field(c?.company);
-    map[`company${n}_title`] = field(c?.title);
-    map[`company${n}_duration`] = field(c?.period);
-  });
-  return map;
-}
-
-function buildContextBlock(identity) {
-  return `CANDIDATE PROFILE — these are authoritative facts. Do not invent employers, dates, schools, or credentials.\n\n${JSON.stringify(
-    identity ?? {},
-    null,
-    2,
-  )}`;
-}
-
 async function loadGeneratorConfig(applierName) {
   if (!resumeGeneratorConfigCollection) return defaultGeneratorConfig();
   const doc = await resumeGeneratorConfigCollection.findOne({ applierName });
@@ -125,77 +70,6 @@ async function loadGeneratorConfig(applierName) {
     layout: Array.isArray(saved.layout) && saved.layout.length ? saved.layout : base.layout,
     steps: Array.isArray(saved.steps) && saved.steps.length ? saved.steps : base.steps,
   };
-}
-
-async function prepareGeneration(body) {
-  const providerId = PROVIDERS[body.provider] ? body.provider : "openai";
-  const model = String(body.model || "").trim();
-  const steps = Array.isArray(body.steps) ? body.steps : [];
-  if (!model) return { ok: false, status: 400, error: "model is required" };
-  if (!steps.length) return { ok: false, status: 400, error: "steps are required" };
-
-  const profile = await findProfile(body.applierName);
-  const apiKey = apiKeyFor(profile, providerId);
-  if (!apiKey) {
-    return { ok: false, status: 400, error: `No ${getProvider(providerId).label} API key configured in profile.` };
-  }
-
-  const finalsByPurpose = {};
-  for (const s of steps) {
-    if (s?.kind === "final" && PURPOSES.has(s.purpose)) finalsByPurpose[s.purpose] = (finalsByPurpose[s.purpose] || 0) + 1;
-  }
-  const bad = Object.entries(finalsByPurpose).find(([, n]) => n !== 1);
-  if (bad) return { ok: false, status: 400, error: `${bad[0]} must have exactly one final step (found ${bad[1]}).` };
-
-  return { ok: true, providerId, model, steps, apiKey };
-}
-
-async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, reasoningEffort }) {
-  const tokenMap = buildTokenMap(identity, jobDescription);
-  const applyTokens = (text) =>
-    String(text ?? "").replace(/\{[a-z0-9_]+\}/gi, (match) => {
-      const key = match.slice(1, -1).toLowerCase();
-      return Object.prototype.hasOwnProperty.call(tokenMap, key) ? tokenMap[key] : match;
-    });
-
-  const messages = [
-    { role: "system", content: applyTokens(systemInstruction || "You are an expert resume writer.") },
-    { role: "user", content: buildContextBlock(identity) },
-  ];
-  const sections = {};
-  const perStep = [];
-  let usage = EMPTY_USAGE();
-
-  for (let i = 0; i < steps.length; i += 1) {
-    const step = steps[i] || {};
-    const isFinal = step.kind === "final";
-    let userContent = applyTokens(step.prompt || "");
-    if (isFinal && step.schema) {
-      userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
-    }
-    messages.push({ role: "user", content: userContent });
-
-    const { content, usage: stepUsage } = await chatCompletion({
-      provider: providerId,
-      apiKey,
-      model,
-      messages,
-      jsonMode: isFinal,
-      cacheKey: `resume-${applierName || "anon"}`,
-      reasoningEffort,
-    });
-    messages.push({ role: "assistant", content });
-    usage = addUsage(usage, stepUsage);
-
-    let output = content;
-    if (isFinal) {
-      output = parseJsonLoose(content);
-      if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
-    }
-    perStep.push({ index: i + 1, name: step.name || `Step ${i + 1}`, purpose: step.purpose, kind: step.kind, usage: stepUsage, output });
-  }
-
-  return { sections, perStep, usage };
 }
 
 function configSnapshot(body) {
@@ -322,13 +196,16 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
 
   const plan = stepsToPlan(savedConfig.steps);
 
-  // The agent runs on DeepSeek; use it for résumé generation too (its OpenAI key is often
-  // out of quota). modelOverride (the run's model) wins; provider is derived from it.
-  const useDeepseek = /^deepseek/i.test(cleanString(modelOverride));
+  // Use the SAME provider/model the Resume Generator (Editor) uses for this
+  // profile — straight from the saved config. We deliberately do NOT override
+  // with the auto-bid run's browser model: that override was the main reason the
+  // agent's résumé came out worse than the Editor's. (modelOverride is accepted
+  // for backward-compat but ignored.)
+  void modelOverride;
   const body = {
     applierName: name,
-    provider: useDeepseek ? "deepseek" : savedConfig.provider,
-    model: cleanString(modelOverride) || savedConfig.model,
+    provider: savedConfig.provider,
+    model: savedConfig.model,
     reasoningEffort: savedConfig.reasoningEffort,
     templateId: savedConfig.templateId,
     theme: savedConfig.theme,
