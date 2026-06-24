@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--isolated"]
+    },
+    "gmail": {
+      "command": "python3",
+      "args": ["../mcp-servers/gmail/server.py"],
+      "env": {
+        "GMAIL_ADDRESS": "${GMAIL_ADDRESS}",
+        "GMAIL_APP_PASSWORD": "${GMAIL_APP_PASSWORD}"
+      }
+    }
+  }
+}
