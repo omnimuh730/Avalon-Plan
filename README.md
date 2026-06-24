@@ -137,10 +137,19 @@ This repo is a **monorepo** that contains former independent git projects as **s
 
 | Prefix | Upstream remote | Branch |
 |--------|-----------------|--------|
-| `Athens/` | `https://github.com/omnimuh730/Athens.git` | `master` |
-| `Athens-server/` | `https://github.com/omnimuh730/Athens-server.git` | `master` |
-| `codex/` | *(local — no published remote)* | `main` |
-| `claude-code/` | *(local — no published remote)* | `main` |
+| `Athens/` | `https://github.com/omnimuh730/Athens.git` (`athens-upstream`) | `master` |
+| `Athens-server/` | `https://github.com/omnimuh730/Athens-server.git` (`athens-server-upstream`) | `master` |
+| `Extension/` | `https://github.com/omnimuh730/Extension.git` | `master` |
+| `packages/` | *(local repo — add remote when published)* | `main` |
+| `unified-ai-server/` | *(local repo — add remote when published)* | `main` |
+| `connector/` | *(local repo — add remote when published)* | `main` |
+| `mcp-servers/` | *(local repo — add remote when published)* | `main` |
+| `codex/` | *(local repo — no published remote)* | `main` |
+| `claude-code/` | *(local repo — no published remote)* | `main` |
+
+Each prefix is a **separate git history** merged via `git subtree add`. New services (`packages`, `unified-ai-server`, `connector`, `mcp-servers`) have their own repos and are **not** flat commits in the monorepo shell.
+
+Re-run setup after cloning: `bash scripts/setup-subtrees.sh` (or pull individual subtrees — see below).
 
 ### Push subtree changes back to upstream
 
