@@ -47,3 +47,45 @@ export async function backfillMissingJobSourceFields(jobsCollection) {
 	if (updated) console.log(`[job_market] backfilled source on ${updated} job(s)`);
 	return { updated };
 }
+
+/**
+ * Remove duplicate jobs sharing the same `applyLink`, keeping only the latest
+ * one per link (by postedAt, then _createdAt, then _id). Jobs without a
+ * non-empty string `applyLink` are left untouched.
+ */
+export async function dedupeJobMarketByApplyLink(jobsCollection) {
+	if (!jobsCollection) return { removed: 0 };
+
+	const groups = await jobsCollection
+		.aggregate(
+			[
+				{ $match: { applyLink: { $type: 'string', $ne: '' } } },
+				// latest first, so $first below is the one we keep
+				{ $sort: { postedAt: -1, _createdAt: -1, _id: -1 } },
+				{
+					$group: {
+						_id: '$applyLink',
+						keepId: { $first: '$_id' },
+						ids: { $push: '$_id' },
+					},
+				},
+				// only groups with more than one document
+				{ $match: { 'ids.1': { $exists: true } } },
+			],
+			{ allowDiskUse: true },
+		)
+		.toArray();
+
+	const idsToRemove = [];
+	for (const g of groups) {
+		for (const id of g.ids) {
+			if (!id.equals(g.keepId)) idsToRemove.push(id);
+		}
+	}
+
+	if (!idsToRemove.length) return { removed: 0 };
+
+	const result = await jobsCollection.deleteMany({ _id: { $in: idsToRemove } });
+	console.log(`[job_market] removed ${result.deletedCount} duplicate applyLink job(s)`);
+	return { removed: result.deletedCount };
+}

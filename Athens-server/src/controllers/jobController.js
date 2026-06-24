@@ -102,6 +102,18 @@ export async function createJob(req, res) {
 			}
 		}
 
+		// Prevent duplicate apply links entirely — only one job per applyLink.
+		if (job.applyLink && typeof job.applyLink === 'string') {
+			const existingByLink = await jobsCollection.findOne({ applyLink: job.applyLink });
+			if (existingByLink) {
+				return res.status(200).json({
+					success: false,
+					created: false,
+					reason: 'Job with this applyLink already exists',
+				});
+			}
+		}
+
 		job._createdAt = createdAt;
 		job.postedAt = postedAt;
 		job.modelVersion = '1.12.8';

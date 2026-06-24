@@ -169,46 +169,75 @@ export function useLiveRunEvents(
   );
 
   useEffect(() => {
-    if (isReview) {
-      setConnected(true);
-      fetchRunEvents(run.runId)
-        .then((events) => {
-          for (const e of events) handleEvent(e);
-        })
-        .catch(() => setDone({ result: "error", message: "Could not load run." }));
-      return;
-    }
+    let cancelled = false;
     let socket: Socket | null = null;
     let es: EventSource | null = null;
+    // Highest event seq applied so far — lets us (a) replay persisted history on
+    // (re)open and (b) ignore duplicate/older events the live socket replays,
+    // so reopening a running OR finished run always shows the full timeline.
+    const seenSeq = { current: 0 };
 
-    try {
-      socket = io(connectorSocketUrl(), { transports: ["websocket", "polling"] });
-      socket.on("connect", () => {
-        setConnected(true);
-        socket?.emit("subscribe", { runId: run.runId });
+    const apply = (e: Record<string, unknown>) => {
+      const seq = typeof e.seq === "number" ? e.seq : null;
+      if (seq !== null) {
+        if (seq <= seenSeq.current) return; // already applied (history/dupe)
+        seenSeq.current = seq;
+      }
+      handleEvent(e);
+    };
+
+    // 1) Always replay persisted history first — this is what was missing when
+    //    reopening a live run (the socket only streams FUTURE events).
+    const replayHistory = fetchRunEvents(run.runId)
+      .then((events) => {
+        if (cancelled) return;
+        for (const e of events) apply(e);
+      })
+      .catch(() => {
+        if (!cancelled && isReview) setDone({ result: "error", message: "Could not load run." });
       });
-      socket.on("disconnect", () => setConnected(false));
-      socket.on("run:event", (e: Record<string, unknown>) => {
-        handleEvent(e);
-        if (e.type === "done") socket?.disconnect();
-      });
-    } catch {
-      es = new EventSource(agentStreamUrl(run.runId));
-      es.onopen = () => setConnected(true);
-      es.onerror = () => setConnected(false);
-      es.onmessage = (ev) => {
-        let e: Record<string, unknown>;
-        try {
-          e = JSON.parse(ev.data);
-        } catch {
-          return;
-        }
-        handleEvent(e);
-        if (e.type === "done") es?.close();
-      };
+
+    if (isReview) {
+      setConnected(true);
+      return () => { cancelled = true; };
     }
 
+    // 2) For a live run, attach the realtime stream AFTER history is loaded, then
+    //    re-fetch any gap (events between the history snapshot and socket attach).
+    const attachLive = () => {
+      if (cancelled) return;
+      try {
+        socket = io(connectorSocketUrl(), { transports: ["websocket", "polling"] });
+        socket.on("connect", () => {
+          setConnected(true);
+          socket?.emit("subscribe", { runId: run.runId });
+          // Fill any gap created between the history fetch and this subscribe.
+          fetchRunEvents(run.runId)
+            .then((events) => { if (!cancelled) for (const e of events) apply(e); })
+            .catch(() => undefined);
+        });
+        socket.on("disconnect", () => setConnected(false));
+        socket.on("run:event", (e: Record<string, unknown>) => {
+          apply(e);
+          if (e.type === "done") socket?.disconnect();
+        });
+      } catch {
+        es = new EventSource(agentStreamUrl(run.runId));
+        es.onopen = () => setConnected(true);
+        es.onerror = () => setConnected(false);
+        es.onmessage = (ev) => {
+          let e: Record<string, unknown>;
+          try { e = JSON.parse(ev.data); } catch { return; }
+          apply(e);
+          if (e.type === "done") es?.close();
+        };
+      }
+    };
+
+    void replayHistory.then(attachLive);
+
     return () => {
+      cancelled = true;
       socket?.emit("unsubscribe", { runId: run.runId });
       socket?.disconnect();
       es?.close();

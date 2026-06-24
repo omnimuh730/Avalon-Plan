@@ -107,6 +107,29 @@ async function uploadResumeFile(session, file) {
   return { ok: !!info.ok, info };
 }
 
+// Slim the a11y snapshot to the lines a form-planner actually needs. Greenhouse/Workday/
+// Ashby etc. put a [ref=…] on EVERY node (incl. job-description prose in `paragraph`/`text`
+// and structural `generic` containers), so a "has ref" rule keeps everything. Instead we
+// ALLOWLIST interactive/labelled roles (the actual form controls + headings + alerts) and
+// drop prose/structure even when it carries a ref. This is the single biggest cache-MISS
+// cost per page and typically shrinks a form page ~3–6× (a JD page far more).
+const KEEP_ROLE = /\b(textbox|combobox|listbox|option|checkbox|radio|switch|button|menuitem|menuitemcheckbox|menuitemradio|tab|tablist|slider|spinbutton|searchbox|heading|alert|status|dialog|form|link)\b/i;
+function leanSnapshot(tree) {
+  if (!tree) return tree;
+  const lines = tree.split("\n");
+  if (lines.length < 60) return tree; // already small — don't bother
+  const kept = [];
+  for (const line of lines) {
+    // Keep only lines that expose an interactive/labelled control, a heading, or an
+    // alert/validation message. Everything else (generic/paragraph/img/text/list noise)
+    // is dropped — the planner targets controls by ref, so structural prose isn't needed.
+    if (KEEP_ROLE.test(line)) kept.push(line);
+  }
+  const out = kept.join("\n");
+  // If filtering nuked almost everything (unexpected format / empty tree), keep the raw tree.
+  return out.length > 120 ? out : tree;
+}
+
 async function snapshotPage(session, runDir, n) {
   const file = path.join(runDir, `${String(n).padStart(2, "0")}-snap.yml`);
   let tree = "";
@@ -121,10 +144,10 @@ async function snapshotPage(session, runDir, n) {
     try { if (fs.existsSync(file)) tree = fs.readFileSync(file, "utf8"); } catch {}
     if (tree.length > 300 && /ref=|textbox|combobox|button|heading|link/i.test(tree)) break;
     const dom = await domFallbackSnapshot(session).catch(() => "");
-    if (dom) return dom.slice(0, 14000);
+    if (dom) return dom.slice(0, 12000);
     await new Promise((res) => setTimeout(res, 3000));
   }
-  return tree.slice(0, 14000);
+  return leanSnapshot(tree).slice(0, 12000);
 }
 
 /** Map one plan step → a playwright-cli argv. Returns null for non-browser actions. */
@@ -187,16 +210,28 @@ const PLAN_RULES = `Rules:
 
 async function planPage({ model, apiKey, snapshot, profile, job, autoSubmit, resumePath, history }) {
   const cfg = llmConfig(model, apiKey);
-  const sys = "You are a job-application form planner. Given an accessibility snapshot of the current page and the applicant profile, output a precise, minimal plan of browser actions to fill THIS page, as strict JSON. Do not chat.";
-  const user = [
+  // CACHE-OPTIMIZED MESSAGE LAYOUT — DeepSeek/OpenAI cache the longest IDENTICAL
+  // prefix of the request, billing those tokens ~50× cheaper (DeepSeek hit vs miss).
+  // So we order from most-stable → most-variable:
+  //   [system]  instructions + rules + schema  → identical every call & every job (cached globally)
+  //   [user]    job + profile context          → identical across all pages of THIS job (cached after page 1)
+  //   [user]    history + page snapshot         → the ONLY cache-MISS tokens each page
+  // Previously rules/schema sat AFTER the variable snapshot, so they were a full-price
+  // miss on every page. This layout turns the bulk of the prompt into cache hits.
+  const sys = [
+    "You are a job-application form planner. Given an accessibility snapshot of the current page and the applicant profile, output a precise, minimal plan of browser actions to fill THIS page, as strict JSON. Do not chat.",
+    PLAN_RULES,
+    PLAN_SCHEMA,
+  ].join("\n\n");
+  const jobContext = [
     `JOB: ${job?.title || ""}${job?.company ? " @ " + job.company : ""}`,
     `AUTO_SUBMIT: ${autoSubmit ? "yes" : "no"}`,
     `RESUME FILE: ${resumePath || "(none)"}`,
     `APPLICANT PROFILE (only source of truth):\n${JSON.stringify(profileForPrompt(profile))}`,
+  ].join("\n");
+  const pageContext = [
     history?.length ? `ALREADY DONE (don't repeat): ${history.slice(-8).join("; ")}` : "",
     `ACCESSIBILITY SNAPSHOT (refs like e12 are how you target elements):\n${snapshot}`,
-    PLAN_RULES,
-    PLAN_SCHEMA,
   ].filter(Boolean).join("\n\n");
 
   // DeepSeek occasionally returns a transient network error / empty body. Retry a few times
@@ -213,7 +248,11 @@ async function planPage({ model, apiKey, snapshot, profile, job, autoSubmit, res
           model: cfg.model,
           temperature: 0,
           response_format: { type: "json_object" },
-          messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+          messages: [
+            { role: "system", content: sys },
+            { role: "user", content: jobContext },
+            { role: "user", content: pageContext },
+          ],
         }),
       });
       if (!res.ok) { lastErr = `planner ${res.status}: ${(await res.text().catch(() => "")).slice(0, 160)}`; continue; }

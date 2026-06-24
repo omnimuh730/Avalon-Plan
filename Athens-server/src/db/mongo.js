@@ -1,6 +1,6 @@
 
 import { MongoClient } from "mongodb";
-import { ensureJobMarketIndexes, backfillMissingJobSourceFields } from "../services/jobMarketIndexes.js";
+import { ensureJobMarketIndexes, backfillMissingJobSourceFields, dedupeJobMarketByApplyLink } from "../services/jobMarketIndexes.js";
 
 let mongoClient;
 let mongoCloudClient;
@@ -113,6 +113,18 @@ async function initMongo() {
 	await ensureJobMarketIndexes(jobsCollection);
 	await ensureSkillCollectionsIndexes();
 	await ensureMailCollectionsIndexes();
+	// Remove pre-existing duplicate applyLink jobs, then enforce uniqueness so
+	// no duplicate links can be inserted afterward. Index creation must run only
+	// after the cleanup completes, otherwise it would fail on existing dupes.
+	try {
+		await dedupeJobMarketByApplyLink(jobsCollection);
+		await jobsCollection.createIndex(
+			{ applyLink: 1 },
+			{ unique: true, partialFilterExpression: { applyLink: { $type: 'string' } } },
+		);
+	} catch (err) {
+		console.warn('[job_market] applyLink dedupe/index failed', err.message);
+	}
 	void backfillMissingJobSourceFields(jobsCollection).catch((err) => {
 		console.warn('[job_market] source field backfill failed', err.message);
 	});
