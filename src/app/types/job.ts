@@ -32,6 +32,9 @@ export interface SkillAnalysis {
 export interface JobScores {
   overall: number;
   skill: number;
+  /** Skills covered vs required (Best Match containment). */
+  skillsCovered?: number;
+  skillsRequired?: number;
 }
 
 export interface Job {

@@ -222,8 +222,7 @@ export function JobSkillMatchPanel({
 
         <div className="flex flex-wrap gap-2 text-[11px] shrink-0">
           {[
-            { label: "Direct", value: data.summary.direct, className: "text-emerald-700 bg-emerald-50 border-emerald-200" },
-            { label: "Graph", value: data.summary.graph, className: "text-violet-700 bg-violet-50 border-violet-200" },
+            { label: "Covered", value: data.summary.direct, className: "text-emerald-700 bg-emerald-50 border-emerald-200" },
             { label: "Missing", value: data.summary.missing, className: "text-muted-foreground bg-secondary border-border" },
           ].map((chip) => (
             <span
@@ -235,12 +234,6 @@ export function JobSkillMatchPanel({
           ))}
         </div>
       </div>
-
-      {!data.neo4jReady ? (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Neo4j is offline — only direct skill matches are shown. Start Neo4j for graph-bridged comparisons.
-        </p>
-      ) : null}
 
       {data.skillAnalysisStatus && data.skillAnalysisStatus !== "analyzed" ? (
         <p className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">

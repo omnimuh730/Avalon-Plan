@@ -73,11 +73,12 @@ function InfoChip({ children }: { children: React.ReactNode }) {
   return <Badge v="subtle">{children}</Badge>;
 }
 
-function MiniScore({ label, value }: { label: string; value: number }) {
+function MiniScore({ label, value, hint }: { label: string; value: number; hint?: string }) {
   return (
     <div className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg bg-secondary/60 border border-border/60 min-w-[52px]">
       <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</span>
       <span className="text-xs font-bold text-foreground tabular-nums">{value}</span>
+      {hint ? <span className="text-[9px] text-muted-foreground">{hint}</span> : null}
     </div>
   );
 }
@@ -161,7 +162,15 @@ export function JobCard({
 
         {showScores && (
           <div className="flex flex-wrap gap-2">
-            <MiniScore label="Skill" value={job.scores.skill} />
+            <MiniScore
+              label="Skill"
+              value={job.scores.skill}
+              hint={
+                job.scores.skillsRequired
+                  ? `${job.scores.skillsCovered ?? 0}/${job.scores.skillsRequired} skills`
+                  : undefined
+              }
+            />
             <MiniScore label="Salary" value={job.scores.salary} />
             <MiniScore label="Bid" value={job.scores.bidEst} />
             <MiniScore label="Fresh" value={job.scores.freshness} />

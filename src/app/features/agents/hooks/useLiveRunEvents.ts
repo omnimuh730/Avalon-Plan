@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  agentScreenshotUrl,
-  agentStreamUrl,
-  fetchRunEvents,
-} from "../../../services/agentApi";
+import { io, type Socket } from "socket.io-client";
+import { connectorSocketUrl, agentStreamUrl, fetchRunEvents } from "../../../services/agentApi";
 import type {
   ActiveRun,
   JobView,
@@ -181,20 +178,41 @@ export function useLiveRunEvents(
         .catch(() => setDone({ result: "error", message: "Could not load run." }));
       return;
     }
-    const es = new EventSource(agentStreamUrl(run.runId));
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
-    es.onmessage = (ev) => {
-      let e: Record<string, unknown>;
-      try {
-        e = JSON.parse(ev.data);
-      } catch {
-        return;
-      }
-      handleEvent(e);
-      if (e.type === "done") es.close();
+    let socket: Socket | null = null;
+    let es: EventSource | null = null;
+
+    try {
+      socket = io(connectorSocketUrl(), { transports: ["websocket", "polling"] });
+      socket.on("connect", () => {
+        setConnected(true);
+        socket?.emit("subscribe", { runId: run.runId });
+      });
+      socket.on("disconnect", () => setConnected(false));
+      socket.on("run:event", (e: Record<string, unknown>) => {
+        handleEvent(e);
+        if (e.type === "done") socket?.disconnect();
+      });
+    } catch {
+      es = new EventSource(agentStreamUrl(run.runId));
+      es.onopen = () => setConnected(true);
+      es.onerror = () => setConnected(false);
+      es.onmessage = (ev) => {
+        let e: Record<string, unknown>;
+        try {
+          e = JSON.parse(ev.data);
+        } catch {
+          return;
+        }
+        handleEvent(e);
+        if (e.type === "done") es?.close();
+      };
+    }
+
+    return () => {
+      socket?.emit("unsubscribe", { runId: run.runId });
+      socket?.disconnect();
+      es?.close();
     };
-    return () => es.close();
   }, [run.runId, isReview, handleEvent]);
 
   return { isReview, jobs, currentIndex, batch, done, paused, approval, connected };

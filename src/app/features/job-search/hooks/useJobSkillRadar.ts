@@ -28,7 +28,6 @@ export type JobSkillRadarData = {
   availableResumes: AvailableResume[];
   recommendedResumeId: string | null;
   recommendedResumeTechStack?: string | null;
-  neo4jReady: boolean;
   skillAnalysisStatus?: string;
 };
 
@@ -173,7 +172,7 @@ export function useJobSkillRadar(
             availableResumes: available,
             recommendedResumeId: recommended,
             recommendedResumeTechStack: res.recommendedResumeTechStack ?? null,
-            neo4jReady: Boolean(res.neo4jReady),
+            skillAnalysisStatus: res.skillAnalysisStatus,
           });
 
           if (activeId) {

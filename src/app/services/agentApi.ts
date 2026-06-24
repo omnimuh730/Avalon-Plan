@@ -32,6 +32,11 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
+export function connectorSocketUrl() {
+  const base = import.meta.env.VITE_CONNECTOR_URL || "http://127.0.0.1:8781";
+  return base.replace(/\/$/, "");
+}
+
 export function agentStreamUrl(runId: string) {
   return `${AGENTS_BASE}/stream/${encodeURIComponent(runId)}`;
 }

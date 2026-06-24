@@ -81,6 +81,8 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
 
   const skill = readScore(doc, "scoreSkill", "matchScore", "skillScore") ?? 0;
   const overall = readScore(doc, "_score", "scoreOverall") ?? skill;
+  const skillsCovered = readScore(doc, "skillsCovered") ?? undefined;
+  const skillsRequired = readScore(doc, "skillsRequired") ?? undefined;
 
   const bestResumeTechStack =
     typeof doc.bestResumeTechStack === "string" && doc.bestResumeTechStack.trim()
@@ -122,6 +124,8 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     scores: {
       overall,
       skill,
+      skillsCovered: skillsCovered ?? undefined,
+      skillsRequired: skillsRequired ?? undefined,
     },
     matchScore: overall,
     posted,
