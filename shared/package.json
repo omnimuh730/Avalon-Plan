@@ -1,0 +1,15 @@
+{
+  "name": "@nextoffer/shared",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./pricing": "./src/pricing.js",
+    "./models": "./src/models.js",
+    "./skill-normalize": "./src/skill-normalize.js",
+    "./score": "./src/score.js",
+    "./types": "./src/types.d.ts"
+  },
+  "types": "./src/types.d.ts"
+}
