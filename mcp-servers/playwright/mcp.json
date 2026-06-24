@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--isolated"]
+    }
+  },
+  "playwrightCli": {
+    "cwd": "../agent-runtime",
+    "sessionEnv": "PLAYWRIGHT_CLI_SESSION"
+  }
+}
