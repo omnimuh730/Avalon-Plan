@@ -1,0 +1,8 @@
+# NextOffer codex provider — point at unified-ai-server
+model_provider = "unified_ai"
+
+[model_providers.unified_ai]
+name = "Unified AI"
+base_url = "http://127.0.0.1:8790/v1"
+wire_api = "responses"
+env_key = "CODEX_API_KEY"
