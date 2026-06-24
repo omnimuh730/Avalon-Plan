@@ -37,6 +37,10 @@ __pycache__/
 # Docker volumes (local only)
 .local/
 
+# Subtree setup artifacts (local only)
+.bare/
+.staging/
+
 # OS
 Thumbs.db
 
