@@ -1,0 +1,167 @@
+import { inferJobSource } from '@/app/data/jobs/pub';
+import type { ApplierAccount } from "@/context/applier-context";
+import type { Job, JobStatus, WorkMode } from "../types/job";
+
+function readScore(doc: Record<string, unknown>, ...keys: string[]): number | null {
+  for (const key of keys) {
+    const v = doc[key];
+    if (typeof v === "number" && !Number.isNaN(v)) return Math.round(v);
+  }
+  return null;
+}
+
+export function normalizeId(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "object" && value !== null && "$oid" in value) {
+    return String((value as { $oid: string }).$oid);
+  }
+  return String(value);
+}
+
+function resolveStatusForApplier(
+  statusArr: unknown[] | undefined,
+  applierId: string | null,
+): "applied" | "scheduled" | "declined" | "none" {
+  if (!Array.isArray(statusArr) || !applierId) return "none";
+  for (const s of statusArr) {
+    if (!s || typeof s !== "object") continue;
+    const row = s as Record<string, unknown>;
+    if (normalizeId(row.applier) !== applierId) continue;
+    if (row.declinedDate) return "declined";
+    if (row.scheduledDate) return "scheduled";
+    if (row.appliedDate) return "applied";
+  }
+  return "none";
+}
+
+function mapApiStatusToJob(st: "applied" | "scheduled" | "declined" | "none"): JobStatus {
+  if (st === "declined") return "declined";
+  if (st === "scheduled") return "scheduled";
+  if (st === "applied") return "applied";
+  return "posted";
+}
+
+function parseWorkMode(remote: string): WorkMode {
+  const r = remote.toLowerCase();
+  if (r.includes("remote")) return "remote";
+  if (r.includes("hybrid")) return "hybrid";
+  return "onsite";
+}
+
+export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccount | null): Job {
+  const backendId = normalizeId(doc._id);
+  const company = (doc.company as { name?: string; tags?: string[]; logo?: string } | undefined) || {};
+  const details = (doc.details as Record<string, string | undefined> | undefined) || {};
+  const title = String(doc.title || "Untitled role");
+
+  const rawLogo = typeof company.logo === "string" ? company.logo.trim() : "";
+  let logoUrl: string | undefined;
+  if (/^https?:\/\//i.test(rawLogo)) logoUrl = rawLogo;
+  else if (rawLogo.startsWith("//")) logoUrl = `https:${rawLogo}`;
+
+  const companyLinkRaw = typeof doc.companyLink === "string" ? doc.companyLink.trim() : "";
+  const companyUrl = /^https?:\/\//i.test(companyLinkRaw) ? companyLinkRaw : "#";
+
+  const industries = Array.isArray(company.tags) ? company.tags.map(String) : ["General"];
+  const applierId = applier?._id != null ? normalizeId(applier._id) : null;
+  const st = resolveStatusForApplier(doc.status as unknown[] | undefined, applierId);
+  const status = mapApiStatusToJob(st);
+
+  const location = String(details.position || "—");
+  const workMode = parseWorkMode(String(details.remote || ""));
+  const type = String(details.time || "Full-time");
+  const seniority = String(details.seniority || "—");
+  const salary = String(details.money || "Undisclosed");
+  const postedRaw = String(doc.postedAt || doc._createdAt || "");
+  const postedAt = postedRaw ? postedRaw.slice(0, 10) : "";
+  const posted = postedRaw ? new Date(postedRaw).toLocaleString() : "—";
+  const applyUrl = String(doc.applyLink || "#");
+  const source =
+    typeof doc.source === "string" && doc.source ? doc.source : inferJobSource(String(doc.applyLink || ""));
+
+  const skill = readScore(doc, "scoreSkill", "matchScore", "skillScore") ?? 0;
+  const overall = readScore(doc, "_score", "scoreOverall") ?? skill;
+  const skillsCovered = readScore(doc, "skillsCovered") ?? undefined;
+  const skillsRequired = readScore(doc, "skillsRequired") ?? undefined;
+
+  const bestResumeTechStack =
+    typeof doc.bestResumeTechStack === "string" && doc.bestResumeTechStack.trim()
+      ? doc.bestResumeTechStack.trim()
+      : undefined;
+
+  const bestResumeId =
+    typeof doc.bestResumeId === "string" && doc.bestResumeId.trim()
+      ? doc.bestResumeId.trim()
+      : undefined;
+
+  const skillAnalysis =
+    doc.skillAnalysis && typeof doc.skillAnalysis === "object"
+      ? (doc.skillAnalysis as Job["skillAnalysis"])
+      : undefined;
+
+  const skills = Array.isArray(doc.skills) ? doc.skills.map(String).filter(Boolean) : [];
+  const tags = Array.isArray(doc.tags) ? doc.tags.map(String).filter(Boolean) : [];
+  const applicantsObj = doc.applicants as { text?: string; count?: number } | undefined;
+  const applicantsText =
+    typeof applicantsObj?.text === "string" && applicantsObj.text.trim()
+      ? applicantsObj.text.trim()
+      : tags.find((t) => /applicant/i.test(t));
+
+  return {
+    id: backendId,
+    backendId,
+    title,
+    company: String(company.name || "Unknown"),
+    companyUrl,
+    logoUrl,
+    location,
+    workMode,
+    type,
+    seniority,
+    experience: String(details.date || "").trim() || undefined,
+    industries,
+    status,
+    scores: {
+      overall,
+      skill,
+      skillsCovered: skillsCovered ?? undefined,
+      skillsRequired: skillsRequired ?? undefined,
+    },
+    matchScore: overall,
+    posted,
+    postedAt,
+    postedAgo: typeof doc.postedAgo === "string" ? doc.postedAgo : undefined,
+    salary,
+    source,
+    jobDescription: String(doc.description || `${title} at ${company.name || "company"}.`),
+    skills,
+    tags,
+    applicantsText,
+    applyUrl,
+    skillAnalysis,
+    bestResumeTechStack,
+    bestResumeId,
+  };
+}
+
+/** Preserve list-time scores and recommendation metadata when detail fetch lacks them. */
+export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
+  const preferListScores =
+    listJob.scores.overall > detailJob.scores.overall ||
+    (listJob.scores.overall === detailJob.scores.overall &&
+      listJob.scores.skill > detailJob.scores.skill);
+
+  return {
+    ...detailJob,
+    scores: preferListScores ? listJob.scores : detailJob.scores,
+    matchScore: preferListScores ? listJob.matchScore : detailJob.matchScore,
+    bestResumeTechStack: listJob.bestResumeTechStack ?? detailJob.bestResumeTechStack,
+    bestResumeId: listJob.bestResumeId ?? detailJob.bestResumeId,
+  };
+}
+
+export const SORT_TO_API: Record<string, string> = {
+  newest: "postedAt_desc",
+  matchScore: "recommended",
+  title: "title_asc",
+};
