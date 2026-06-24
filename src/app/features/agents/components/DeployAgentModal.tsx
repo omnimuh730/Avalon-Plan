@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import {
-  Loader2, X, Zap, ArrowRight, ArrowLeft, Plus, User, Briefcase, Rocket, Check, MonitorSmartphone,
+  Loader2, X, Zap, ArrowRight, ArrowLeft, Plus, User, Briefcase, Rocket, Check, Chrome,
 } from "lucide-react";
 import type { DeployOptions } from "../../../types/agent";
 import type { JobCandidate } from "../../../services/agentApi";
@@ -87,6 +87,7 @@ const STEPS = [
   { key: "basics", label: "Basics", icon: User },
   { key: "jobs", label: "Jobs", icon: Briefcase },
   { key: "engine", label: "Engine", icon: Rocket },
+  { key: "browser", label: "Browser", icon: Chrome },
 ] as const;
 
 export function DeployAgentModal({
@@ -100,9 +101,10 @@ export function DeployAgentModal({
   const [step, setStep] = useState(0);
 
   const stepValid = [
-    form.name.trim().length > 0 && !!form.model && form.applierReady,
-    form.queue.length > 0,
-    form.valid,
+    form.name.trim().length > 0 && !!form.model && form.applierReady, // Basics
+    form.queue.length > 0, // Jobs
+    true, // Engine (provider always set)
+    form.valid, // Browser → Deploy
   ];
   const canNext = stepValid[step];
 
@@ -263,62 +265,14 @@ export function DeployAgentModal({
               </div>
 
               {form.provider === "claude-code" ? (
-                <>
-                  <div>
-                    <div className="text-xs font-semibold text-foreground mb-1.5">Browser driver</div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <SelectCard active={form.claudeEngine === "cli"} onClick={() => form.setClaudeEngine("cli")} title="Playwright CLI" desc="Snapshots to files — cheaper" />
-                      <SelectCard active={form.claudeEngine === "mcp"} onClick={() => form.setClaudeEngine("mcp")} title="Playwright MCP" desc="Snapshots in context — pricier" />
-                      <SelectCard active={form.claudeEngine === "plan"} onClick={() => form.setClaudeEngine("plan")} title="Plan & Execute" desc="1 call/page, verify→replan — cheapest" />
-                    </div>
+                <div>
+                  <div className="text-xs font-semibold text-foreground mb-1.5">Browser driver</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <SelectCard active={form.claudeEngine === "cli"} onClick={() => form.setClaudeEngine("cli")} title="Playwright CLI" desc="Snapshots to files — cheaper" />
+                    <SelectCard active={form.claudeEngine === "mcp"} onClick={() => form.setClaudeEngine("mcp")} title="Playwright MCP" desc="Snapshots in context — pricier" />
+                    <SelectCard active={form.claudeEngine === "plan"} onClick={() => form.setClaudeEngine("plan")} title="Plan & Execute" desc="1 call/page, verify→replan — cheapest" />
                   </div>
-
-                  <div>
-                    <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground mb-1.5">
-                      <MonitorSmartphone size={13} /> Chrome profile <span className="text-muted-foreground font-normal">— optional, MCP driver · launches a real Chrome window</span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 max-h-44 overflow-auto p-0.5">
-                      <button
-                        type="button"
-                        onClick={() => form.setChromeProfile("")}
-                        className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${!form.chromeProfile ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border hover:bg-secondary"}`}
-                      >
-                        <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center"><Plus size={16} className="text-muted-foreground" /></div>
-                        <span className="text-xs font-medium text-foreground text-left leading-tight">Fresh<br />browser</span>
-                      </button>
-                      {form.chromeProfiles.map((p) => (
-                        <button
-                          key={p.dir}
-                          type="button"
-                          onClick={() => form.setChromeProfile(p.dir)}
-                          title={p.email}
-                          className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 min-w-0 ${form.chromeProfile === p.dir ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border hover:bg-secondary"}`}
-                        >
-                          <ProfileAvatar dir={p.dir} name={p.name} />
-                          <div className="min-w-0 text-left">
-                            <div className="text-xs font-medium text-foreground truncate">{p.name}</div>
-                            <div className="text-[10px] text-muted-foreground truncate">{p.email}</div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                    {form.chromeProfile && (
-                      <div className="flex items-center gap-2 mt-2">
-                        <button
-                          type="button"
-                          onClick={() => void form.importSession()}
-                          disabled={form.importStatus === "importing"}
-                          className="rounded-xl border border-border px-3 py-1.5 text-xs font-semibold hover:bg-secondary disabled:opacity-50"
-                        >
-                          {form.importStatus === "importing" ? "Importing…" : form.importStatus === "done" ? "Re-import session" : "Import session"}
-                        </button>
-                        <span className={`text-[11px] ${form.importStatus === "error" ? "text-rose-600" : form.importStatus === "done" ? "text-emerald-600" : "text-muted-foreground"}`}>
-                          {form.importMessage || "Quit Chrome first — agents reuse the session concurrently, no re-login."}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </>
+                </div>
               ) : (
                 <div>
                   <div className="text-xs font-semibold text-foreground mb-1.5">Engine</div>
@@ -336,6 +290,68 @@ export function DeployAgentModal({
                 <Toggle checked={form.generateResumeByAi} onChange={() => form.setGenerateResumeByAi((v) => !v)} title="Generate resume by AI" desc="Tailor a résumé per job from the JD" />
                 <Toggle checked={form.autoSubmit} onChange={() => form.setAutoSubmit((v) => !v)} title="Auto-submit" desc="Click Submit (off = stop at review)" />
               </div>
+            </div>
+          )}
+
+          {/* STEP 4 — Browser (Chrome Profile Manager style) */}
+          {step === 3 && (
+            <div className="space-y-4">
+              <div className="text-center">
+                <div className="text-sm font-semibold text-foreground">Which browser session?</div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  Pick a Chrome profile to <span className="font-medium text-foreground">duplicate its signed-in session</span> for the agent — it applies already-logged-in, no re-verify. Optional.
+                </div>
+              </div>
+
+              <div className="grid grid-cols-4 gap-3 max-h-[330px] overflow-auto p-1">
+                <button
+                  type="button"
+                  onClick={() => form.setChromeProfile("")}
+                  className={`flex flex-col items-center gap-2 rounded-2xl border p-3 transition-colors ${!form.chromeProfile ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border hover:bg-secondary"}`}
+                >
+                  <div className="w-14 h-14 rounded-full bg-secondary flex items-center justify-center"><Plus size={22} className="text-muted-foreground" /></div>
+                  <span className="text-xs font-semibold text-foreground">Fresh browser</span>
+                  <span className="text-[10px] text-muted-foreground -mt-1">no profile</span>
+                </button>
+                {form.chromeProfiles.map((p) => {
+                  const active = form.chromeProfile === p.dir;
+                  return (
+                    <button
+                      key={p.dir}
+                      type="button"
+                      onClick={() => form.setChromeProfile(p.dir)}
+                      title={p.email}
+                      className={`relative flex flex-col items-center gap-2 rounded-2xl border p-3 min-w-0 transition-colors ${active ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border hover:bg-secondary"}`}
+                    >
+                      {active && <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-primary text-white flex items-center justify-center"><Check size={11} /></span>}
+                      <ProfileAvatar dir={p.dir} name={p.name} size={56} />
+                      <span className="text-xs font-semibold text-foreground truncate max-w-full">{p.name}</span>
+                      <span className="text-[10px] text-muted-foreground truncate max-w-full -mt-1">{p.email}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {form.chromeProfile ? (
+                <div className="rounded-xl border border-border px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="text-xs text-muted-foreground">
+                    <span className={form.importStatus === "error" ? "text-rose-600" : form.importStatus === "done" ? "text-emerald-600" : ""}>
+                      {form.importMessage || "Quit Google Chrome, then import this profile's session once. Every agent then reuses a copy — concurrently, no re-login."}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void form.importSession()}
+                    disabled={form.importStatus === "importing"}
+                    className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-50"
+                  >
+                    {form.importStatus === "importing" ? <Loader2 size={12} className="animate-spin" /> : <Chrome size={12} />}
+                    {form.importStatus === "importing" ? "Importing…" : form.importStatus === "done" ? "Re-import session" : "Import session"}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center">A fresh browser logs in / solves OTP per run via the Gmail tools.</p>
+              )}
             </div>
           )}
 
