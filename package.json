@@ -1,0 +1,25 @@
+{
+  "name": "nextoffer",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "Athens-server",
+    "unified-ai-server",
+    "connector"
+  ],
+  "scripts": {
+    "prestart": "node scripts/prestart.mjs",
+    "start": "node scripts/dev-start.mjs",
+    "install:all": "npm install && npm install --prefix Athens && npm run build -w unified-ai-server",
+    "infra:up": "docker compose -f Athens-server/docker-compose.yml up -d mongodb redis",
+    "infra:down": "docker compose -f Athens-server/docker-compose.yml down",
+    "infra:logs": "docker compose -f Athens-server/docker-compose.yml logs -f mongodb redis",
+    "backfill-job-skills": "npm run backfill-job-skills -w Athens-server",
+    "build:ai": "npm run build -w unified-ai-server",
+    "test:shared": "node --test packages/shared/src/pricing.test.mjs",
+    "start:athens-server": "npm run start -w Athens-server",
+    "start:ai": "npm run start -w unified-ai-server",
+    "start:connector": "npm run start -w connector",
+    "start:ui": "npm run dev --prefix Athens"
+  }
+}
