@@ -1,0 +1,44 @@
+{
+	"name": "AIMS-backend",
+	"version": "1.0.0",
+	"main": "index.js",
+	"type": "module",
+	"license": "MIT",
+	"scripts": {
+		"start": "nodemon index.js",
+		"test:matching": "node --test ../packages/shared/src/pricing.test.mjs",
+		"migrate": "node src/db/migration.js",
+		"migrate-passwords": "node src/db/migratePasswords.js",
+		"backfill-job-embeddings": "node src/scripts/backfillJobEmbeddings.js",
+		"backfill-resume-embeddings": "node src/scripts/backfillResumeEmbeddings.js",
+		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
+		"ollama-pull-embed": "ollama pull mxbai-embed-large",
+		"qdrant:start": "bash scripts/start-qdrant.sh",
+		"qdrant:stop": "bash scripts/stop-qdrant.sh",
+		"qdrant:start-native": "bash scripts/start-qdrant-local.sh",
+		"qdrant:stop-native": "bash scripts/stop-qdrant-local.sh"
+	},
+	"dependencies": {
+		"@nextoffer/shared": "file:../packages/shared",
+		"bcrypt": "^5.1.1",
+		"cheerio": "^1.2.0",
+		"cors": "^2.8.5",
+		"docx": "^9.7.1",
+		"dotenv": "^17.2.1",
+		"express": "^5.1.0",
+		"googleapis": "^155.0.0",
+		"html-to-docx": "^1.8.0",
+		"imapflow": "^1.4.2",
+		"mailparser": "^3.9.11",
+		"mammoth": "^1.12.0",
+		"mongodb": "^6.19.0",
+		"nodemailer": "^9.0.1",
+		"pdf-parse": "^1.1.4",
+		"puppeteer": "^25.1.0",
+		"redis": "^4.7.0",
+		"socket.io": "^4.8.1"
+	},
+	"devDependencies": {
+		"nodemon": "^3.1.10"
+	}
+}
