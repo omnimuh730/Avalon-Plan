@@ -19,6 +19,7 @@ import { costFromUsage, formatUsd, emptyUsage, mergeUsage } from "../core/pricin
 import { PATHS } from "./config.mjs";
 import { awaitHumanResume, wasStopped, isAwaitingHuman } from "./human-handoff.mjs";
 import { sessionFileFor } from "./mcp-session.mjs";
+import { prepareForkedProfile, persistForkedProfile } from "./chrome-profile.mjs";
 
 const SECRET_FIELDS = ["openaiApiKey", "deepseekApiKey", "ecomagentApiKey", "gmailAppPassword", "defaultPassword"];
 const OTP_SCRIPT = PATHS.gmailOtp;
@@ -324,7 +325,7 @@ function fetchOtp({ profile, job }) {
  * Apply to one job via the plan→approve→execute→replan loop.
  * Emits dashboard events; gates on approval unless autoApprove.
  */
-export async function runApplicationPlan({ url, agentName, emit, autoSubmit, autoApprove, profile, model, apiKey, job, runId }) {
+export async function runApplicationPlan({ url, agentName, emit, autoSubmit, autoApprove, profile, model, apiKey, job, runId, forkedProfile = null }) {
   const step = (level, title, detail) => emit({ type: "step", level, title, detail });
   const session = sessionForRun(runId, agentName);
   const runDir = path.join(PATHS.agentRuntime, "logs", "runs", new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19));
@@ -358,10 +359,16 @@ export async function runApplicationPlan({ url, agentName, emit, autoSubmit, aut
   const mask = (v) => String(v ?? "").replace(/\$(PASSWORD|APPLICANT_PASSWORD)\b/g, "••••");
 
   emit({ type: "status", phase: "navigating", message: "Opening the page" });
-  // If the applicant connected a Chrome profile, seed its saved session BEFORE
-  // navigating (so the agent applies already-logged-in, same as the MCP driver).
+  // Open already-signed-in when possible:
+  //   1. A forked REAL Chrome profile → launch real Chrome (channel "chrome", NOT
+  //      "Chrome for Testing") from the per-run copy.
+  //   2. Else a legacy saved storage-state → state-load it.
+  //   3. Else a fresh browser.
   const savedSession = sessionFileFor(profile.fullName);
-  if (fs.existsSync(savedSession)) {
+  if (forkedProfile) {
+    await pw(session, ["open", url, "--browser", "chrome", "--persistent", "--profile", forkedProfile], { timeout: 120000 });
+    step("info", "Browser session", "Forked real Chrome profile — applying signed-in");
+  } else if (fs.existsSync(savedSession)) {
     await pw(session, ["open"], { timeout: 90000 });
     await pw(session, ["state-load", savedSession]).catch(() => {});
     await pw(session, ["goto", url], { timeout: 90000 });
@@ -487,6 +494,10 @@ export async function runBatchPlan(opts) {
   const session = sessionForRun(runId, agentName);
   const applierName = opts.profile.fullName || opts.profile.accountName;
   const resumeTempDir = path.join(os.tmpdir(), "nextoffer-runs", String(runId || "batch"));
+  // Fork the chosen REAL Chrome profile ONCE per batch (all jobs share one browser).
+  const forked = opts.chromeProfile
+    ? prepareForkedProfile({ applierName, chromeProfileDir: opts.chromeProfile, runId })
+    : null;
   try {
     emit({ type: "batch", total: jobs.length, source, agentName, generateResumeByAi: !!opts.generateResumeByAi });
     let submitted = 0;
@@ -544,6 +555,7 @@ export async function runBatchPlan(opts) {
         r = await runApplicationPlan({
           url: job.url, agentName, emit: jobEmit, autoSubmit: opts.autoSubmit, autoApprove,
           profile: jobProfile, model: opts.model, apiKey: opts.apiKey, job, runId,
+          forkedProfile: forked?.runProfile || null,
         });
       } catch (e) { jobEmit({ type: "done", result: "error", message: String(e?.message || e).slice(0, 200) }); r = { result: "error" }; }
       results.push({ jobId: job.id, title: job.title, result: r.result });
@@ -557,6 +569,8 @@ export async function runBatchPlan(opts) {
     }
     emit({ type: "done", result: "batch_complete", message: `Batch complete — ${submitted}/${jobs.length} submitted`, submitted, total: jobs.length, results });
   } finally {
+    // Carry any new logins back into the master, then tear the browser down.
+    if (forked) persistForkedProfile(forked);
     await closeBrowserSession(session);
   }
 }

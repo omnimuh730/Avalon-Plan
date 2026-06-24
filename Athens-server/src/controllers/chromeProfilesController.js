@@ -3,12 +3,23 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// claude-code/agent/connect-google.mjs (the import utility) — sibling of Athens-server.
-const CONNECT_SCRIPT = path.resolve(__dirname, "..", "..", "..", "claude-code", "agent", "connect-google.mjs");
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+
+/** Persistent per-applicant master user-data-dir — MUST match the connector's
+ *  mcp-session.masterProfileDir: <claudeCwd>/.sessions/<safeApplier>-chrome. */
+function safeApplier(name) {
+  return String(name || "").replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "applicant";
+}
+function masterProfileDir(applierName) {
+  const claudeCwd = process.env.CLAUDE_CODE_DIR || path.join(REPO_ROOT, "claude-code");
+  return path.join(claudeCwd, ".sessions", `${safeApplier(applierName)}-chrome`);
+}
+
+// Don't copy Chrome lock/socket files or the large regenerable caches when forking.
+const SKIP_RE = /^(Singleton.*|lockfile|.*\.lock|Cache|Code Cache|GPUCache|GrShaderCache|ShaderCache|GraphiteDawnCache|DawnCache|DawnGraphiteCache|DawnWebGPUCache|Service Worker|CacheStorage|Crashpad|Crash Reports|component_crx_cache|extensions_crx_cache|optimization_guide_model_store|Safe Browsing|segmentation_platform|BudgetDatabase|blob_storage)$/i;
 
 // User-data-dir locations by OS (the one containing `Local State`).
 const CHROME_DIRS = [
@@ -63,8 +74,11 @@ export async function chromeProfileAvatar(req, res) {
 
 /**
  * POST /personal/chrome-profiles/import { applierName, profileDir }
- * Imports the chosen Chrome profile's logged-in session into the applicant's
- * storage-state file (so MCP agents reuse it, concurrently). Chrome must be quit.
+ * Forks the chosen Chrome profile into the applicant's persistent master
+ * user-data-dir (<claudeCwd>/.sessions/<applier>-chrome/Default). Every agent run
+ * then launches REAL Chrome from a copy of it — already signed in, concurrently.
+ * Re-importing refreshes the master with the profile's current logins. Chrome must
+ * be quit so cookies / Login Data are readable.
  */
 export async function importChromeSession(req, res) {
   const applierName = String(req.body?.applierName || "").trim();
@@ -73,20 +87,27 @@ export async function importChromeSession(req, res) {
     return res.status(400).json({ success: false, error: "applierName and profileDir are required" });
   }
   try {
-    const child = spawn("node", [CONNECT_SCRIPT, "--applier", applierName, "--chrome-profile", profileDir], {
-      cwd: path.dirname(CONNECT_SCRIPT),
+    const base = chromeUserDataDir();
+    if (!base) return res.status(400).json({ success: false, error: "No local Google Chrome installation found." });
+    const src = path.join(base, path.basename(profileDir)); // guard against traversal
+    if (!fs.existsSync(src)) return res.status(404).json({ success: false, error: `Chrome profile "${profileDir}" not found.` });
+
+    const master = masterProfileDir(applierName);
+    // Re-import = fresh fork: drop the old master so stale logins don't linger.
+    try { if (fs.existsSync(master)) fs.rmSync(master, { recursive: true, force: true }); } catch {}
+    fs.mkdirSync(path.join(master, "Default"), { recursive: true });
+    fs.cpSync(src, path.join(master, "Default"), {
+      recursive: true,
+      force: true,
+      filter: (p) => !SKIP_RE.test(path.basename(p)),
     });
-    let out = "", err = "";
-    const t = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 90_000);
-    child.stdout.on("data", (d) => (out += String(d)));
-    child.stderr.on("data", (d) => (err += String(d)));
-    child.on("exit", (code) => {
-      clearTimeout(t);
-      if (code === 0) return res.json({ success: true, message: (out.trim().split("\n").pop() || "Session imported").trim() });
-      return res.status(500).json({ success: false, error: (err || out || "import failed").trim().slice(0, 300) });
-    });
-    child.on("error", (e) => { clearTimeout(t); res.status(500).json({ success: false, error: e.message }); });
+    try {
+      const localState = path.join(base, "Local State");
+      if (fs.existsSync(localState)) fs.copyFileSync(localState, path.join(master, "Local State"));
+    } catch { /* optional */ }
+
+    return res.json({ success: true, message: "Session imported — agents now launch your signed-in Chrome (a copy, concurrently)." });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: String(err?.message || err).slice(0, 300) });
   }
 }

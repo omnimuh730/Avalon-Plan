@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CONFIG } from "./config.mjs";
+import { seedMasterFromChromeProfile } from "./chrome-profile.mjs";
 
 /** Must match claude-code/agent/sessions.mjs `safeApplier`. */
 export function safeApplier(name) {
@@ -48,7 +49,14 @@ function copyProfile(from, to) {
  * Returns { dir, config, runProfile, master, seeded } — the caller persists the
  * run profile back to `master` after the run.
  */
-export function writeRunMcpConfig({ applierName, runId }) {
+export function writeRunMcpConfig({ applierName, runId, chromeProfileDir = "" }) {
+  // Seed the persistent master from the chosen REAL Chrome profile (first run only),
+  // so the MCP browser launches real Chrome already signed in — same fork the CLI
+  // engines use. No-op when no profile was chosen or the master already exists.
+  if (chromeProfileDir) {
+    try { seedMasterFromChromeProfile({ applierName, chromeProfileDir }); } catch { /* best-effort */ }
+  }
+
   const master = masterProfileDir(applierName);
   const runId2 = String(runId || Date.now().toString(36));
   const runProfile = path.join(os.tmpdir(), "nextoffer-mcp", runId2, "chrome-profile");

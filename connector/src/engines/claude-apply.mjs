@@ -17,7 +17,7 @@ import { writeRunMcpConfig, sessionFileFor, persistProfileBack } from "./mcp-ses
 /** Compose the (deliberately short) task prompt for Claude Code. The detailed
  *  operating rules (drive via `playwright-cli`, snapshot-to-file + grep, etc.)
  *  live in the workspace CLAUDE.md, which is auto-loaded — keep this lean. */
-export function buildClaudeApplyPrompt({ url, job, profile, resumePath, resumeGenerating, engine = "cli", savedSession }) {
+export function buildClaudeApplyPrompt({ url, job, profile, resumePath, resumeGenerating, engine = "cli", savedSession, forkedProfile }) {
   const driver = engine === "mcp"
     ? [
         "Apply to this job for me. Drive the browser with the Playwright MCP tools",
@@ -27,9 +27,13 @@ export function buildClaudeApplyPrompt({ url, job, profile, resumePath, resumeGe
         "Apply to this job for me. Drive the browser with the `playwright-cli` terminal command",
         "(snapshot to a file and grep — do NOT use the Playwright MCP tools), per CLAUDE.md.",
       ];
-  // CLI engine drives playwright-cli itself, so instruct it to restore the saved
-  // session first. (MCP engine gets it automatically via --storage-state.)
-  const sessionNote = engine !== "mcp" && savedSession
+  // CLI engine: a forked REAL Chrome profile wins — open real Chrome from the copy
+  // (already signed in, NOT "Chrome for Testing"). Else fall back to state-load.
+  // (MCP engine launches real Chrome from the forked --user-data-dir automatically.)
+  const openNote = engine !== "mcp" && forkedProfile
+    ? `FIRST open the applicant's REAL signed-in Chrome — run EXACTLY: \`playwright-cli open "${url}" --browser chrome --persistent --profile "${forkedProfile}"\`. This is real Google Chrome (NOT "Chrome for Testing") from a copy of their profile, so you're already logged in (Google + many ATS). Do NOT run a plain \`playwright-cli open\`, do NOT use \`state-load\`. Then \`playwright-cli snapshot\`.`
+    : "";
+  const sessionNote = engine !== "mcp" && !forkedProfile && savedSession
     ? `FIRST restore the saved login: run \`playwright-cli open\`, then \`playwright-cli state-load "${savedSession}"\`, then \`playwright-cli goto "${url}"\`. You'll be signed in already (Google + many ATS) — skip login/account-creation unless a page still asks.`
     : "";
   const lines = [
@@ -37,6 +41,7 @@ export function buildClaudeApplyPrompt({ url, job, profile, resumePath, resumeGe
     "",
     `Job: ${job?.title || "(role)"}${job?.company ? ` at ${job.company}` : ""}`,
     `URL: ${url}`,
+    openNote,
     sessionNote,
     "",
     "Applicant profile (JSON):",
@@ -103,6 +108,8 @@ export async function runApplicationClaude({
   claudeCwd,
   claudeMcpCwd,
   claudeEngine = "cli", // "cli" (playwright-cli) | "mcp" (Playwright MCP)
+  forkedProfile = null, // CLI engine: per-run forked real-Chrome user-data-dir
+  chromeProfile = "",   // MCP engine: real Chrome profile dir to seed the fork from
   // Accepted-but-unused (codex-specific) so the batch loop can pass one shape:
   autoSubmit, proxyUrl, codexPath, runId, images, resumeGenerating,
 }) {
@@ -118,7 +125,7 @@ export async function runApplicationClaude({
   let mcpConfig;
   let mcpBuilt = null;
   if (claudeEngine === "mcp") {
-    mcpBuilt = writeRunMcpConfig({ applierName: profile.fullName, runId });
+    mcpBuilt = writeRunMcpConfig({ applierName: profile.fullName, runId, chromeProfileDir: chromeProfile });
     cwd = mcpBuilt.dir;
     mcpConfig = mcpBuilt.config;
   }
@@ -191,6 +198,7 @@ export async function runApplicationClaude({
     prompt: buildClaudeApplyPrompt({
       url, job, profile, resumePath: profile.resumePath, resumeGenerating, engine: claudeEngine,
       savedSession: fs.existsSync(sessionFileFor(profile.fullName)) ? sessionFileFor(profile.fullName) : "",
+      forkedProfile,
     }),
     onEvent,
     signal,

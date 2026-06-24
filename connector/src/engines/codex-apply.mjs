@@ -31,6 +31,7 @@ import { PATHS } from "./config.mjs";
 import { spawn } from "node:child_process";
 import { awaitHumanResume, runSignal, wasManuallyPaused, wasStopped } from "./human-handoff.mjs";
 import { sessionFileFor } from "./mcp-session.mjs";
+import { prepareForkedProfile, persistForkedProfile } from "./chrome-profile.mjs";
 
 /** Deterministic playwright-cli session name for a run (server + agent agree). */
 export function sessionForRun(runId, agentName) {
@@ -93,8 +94,13 @@ export function parseResult(finalMessage) {
 }
 
 /** Compose the job-application task prompt fed to codex via stdin. */
-export function buildApplyPrompt({ url, job, profile, resumePath, autoSubmit, session, resumeGenerating, savedSession }) {
-  const sessionLine = savedSession
+export function buildApplyPrompt({ url, job, profile, resumePath, autoSubmit, session, resumeGenerating, savedSession, forkedProfile }) {
+  // A forked REAL Chrome profile takes priority: open real Chrome from the copy so
+  // the agent is already signed in (and it's NOT the "Chrome for Testing" build).
+  const openLine = forkedProfile
+    ? `\nOPEN THE BROWSER (REAL signed-in Chrome): your VERY FIRST command MUST be exactly:\n  playwright-cli open "${url}" --browser chrome --persistent --profile "${forkedProfile}"\nThis launches the applicant's real Google Chrome (NOT "Chrome for Testing") from a copy of their signed-in profile, so you start already logged in (Google + many ATS). Do NOT run a plain \`playwright-cli open\`, do NOT pass any other --profile, and do NOT use \`state-load\`. After it opens, go straight to \`playwright-cli snapshot\`.\n`
+    : "";
+  const sessionLine = (!forkedProfile && savedSession)
     ? `\nSAVED LOGIN SESSION — this applicant has a saved signed-in browser session. FIRST run \`playwright-cli open\`, then \`playwright-cli state-load "${savedSession}"\`, then \`playwright-cli goto "${url}"\` — you'll be already logged in (Google + many ATS), so skip account creation / login unless a page still asks. Do this once, before anything else.\n`
     : "";
   // OTP fetcher invocation with this application's context so the LLM inside the
@@ -112,7 +118,7 @@ HOW TO DRIVE THE FORM (use AI reasoning + plain playwright-cli verbs ONLY — no
 
 BROWSER ISOLATION (CRITICAL — other agents run at the same time): your browser is the dedicated playwright-cli session \`${session}\` (set via the PLAYWRIGHT_CLI_SESSION env var), so every playwright-cli command you run is already scoped to YOUR browser — use commands normally, no \`-s\` flag needed. You MUST NOT run \`playwright-cli close-all\` or \`playwright-cli kill-all\` — those close OTHER agents' browsers. SKIP any global close-all/kill-all preflight step suggested by AGENTS.md. If you ever need to reset, use \`playwright-cli close\` (it closes only your own session).
 
-${sessionLine}JOB URL: ${url}
+${openLine}${sessionLine}JOB URL: ${url}
 JOB: ${job?.title || "(role)"}${job?.company ? ` at ${job.company}` : ""}
 
 APPLICANT PROFILE (JSON) — the ONLY source of truth. Ignore config/profile.yaml and use this. Never invent facts; infer reasonably (e.g. years of experience from the work history). EEO / voluntary self-identification → decline / prefer not to say. Marketing / SMS consent → No.
@@ -181,6 +187,7 @@ export async function runApplicationCodex({
   signal,
   runId,
   resumeGenerating = false,
+  forkedProfile = null,
 }) {
   const step = (level, title, detail) => emit({ type: "step", level, title, detail });
   const deepseek = isDeepSeekModel(model);
@@ -280,6 +287,7 @@ export async function runApplicationCodex({
         : buildApplyPrompt({
             url, job, profile, resumePath: profile.resumePath, autoSubmit, session, resumeGenerating,
             savedSession: fs.existsSync(sessionFileFor(profile.fullName)) ? sessionFileFor(profile.fullName) : "",
+            forkedProfile,
           }),
       images: resuming ? undefined : images,
       threadId: resuming ? threadId : undefined,
@@ -356,11 +364,23 @@ function appendLog(rec) {
  * Picks the best uploaded resume per job from MongoDB using JD skills.
  */
 export async function runBatchCodex(opts) {
-  const { jobs, source, agentName, emit, markApplied, controller = null, codexPath, proxyUrl } = opts;
+  const { agentName } = opts;
   const session = sessionForRun(opts.runId, agentName);
+
+  // Fork the chosen REAL Chrome profile ONCE per batch (the whole batch shares one
+  // browser/session, so one forked user-data-dir carries logins across its jobs).
+  // The MCP engine seeds its own per-job profile in writeRunMcpConfig, so skip here.
+  const applierName = opts.profile?.fullName || opts.profile?.accountName;
+  let forked = null;
+  if (opts.chromeProfile && opts.claudeEngine !== "mcp") {
+    forked = prepareForkedProfile({ applierName, chromeProfileDir: opts.chromeProfile, runId: opts.runId });
+  }
+
   try {
-    return await runBatchCodexInner(opts, { session });
+    return await runBatchCodexInner(opts, { session, forkedProfile: forked?.runProfile || null });
   } finally {
+    // Carry any new logins/cookies from this run back into the applicant's master.
+    if (forked) persistForkedProfile(forked);
     // Crash-safe teardown: whenever the batch ends (done / error / stop), make sure
     // this run's browser is closed so a failed agent never leaks a Chrome window.
     // (A paused run never reaches here — it's parked awaiting Resume.)
@@ -368,7 +388,7 @@ export async function runBatchCodex(opts) {
   }
 }
 
-async function runBatchCodexInner(opts, { session }) {
+async function runBatchCodexInner(opts, { session, forkedProfile = null }) {
   const { jobs, source, agentName, emit, markApplied, controller = null, codexPath, proxyUrl } = opts;
   // Provider selection: codex (default) or claude-code. Both runApplication*
   // implementations share this signature, so the loop below is provider-agnostic.
@@ -489,6 +509,8 @@ async function runBatchCodexInner(opts, { session }) {
             runId: opts.runId,
             signal: controller?.signal,
             resumeGenerating: true,
+            forkedProfile,
+            chromeProfile: opts.chromeProfile,
           }),
           resumeGenPromise,
         ]);
@@ -606,6 +628,8 @@ async function runBatchCodexInner(opts, { session }) {
         job,
         runId: opts.runId,
         signal: controller?.signal,
+        forkedProfile,
+        chromeProfile: opts.chromeProfile,
       });
     } catch (e) {
       jobEmit({ type: "done", result: "error", message: String(e?.message || e).slice(0, 200) });

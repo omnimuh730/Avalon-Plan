@@ -463,6 +463,8 @@ const server = http.createServer(async (req, res) => {
     const claudeEngineRaw = (body.claudeEngine || "cli").trim();                        // claude-code browser driver
     const claudeEngine = ["mcp", "plan"].includes(claudeEngineRaw) ? claudeEngineRaw : "cli"; // "cli" | "mcp" | "plan"
     const autoApprove = body.autoApprove ?? true;          // plan mode: auto-approve gates
+    // Real Chrome profile to fork for this run (the Browser step). "" = fresh browser.
+    const chromeProfile = (body.chromeProfile || "").trim();
     const profileId = (body.profileId || "").trim();
     const model = (body.model || "").trim() || CONFIG.openaiModel;
     const source = (body.source || "").trim();
@@ -564,7 +566,7 @@ const server = http.createServer(async (req, res) => {
         if (claudeEngine === "plan") {
           await runBatchPlan({
             jobs, source: source || "Direct", agentName: name, autoSubmit, autoApprove: true,
-            generateResumeByAi, profile, model, apiKey,
+            generateResumeByAi, profile, model, apiKey, chromeProfile,
             applierId: profile.accountId, runId: run.id,
             markApplied: (jobId) => markJobApplied({ jobId, applierId: profile.accountId }),
             emit: (e) => emitTo(run, e),
@@ -576,7 +578,7 @@ const server = http.createServer(async (req, res) => {
         // Anthropic-compatible endpoint directly (no Responses proxy needed).
         await runBatchClaude({
           jobs, source: source || "Direct", agentName: name, autoSubmit, generateResumeByAi,
-          profile, model, apiKey,
+          profile, model, apiKey, chromeProfile,
           applierId: profile.accountId,
           runId: run.id,
           claudeBin: CONFIG.claudeBin,
@@ -594,7 +596,7 @@ const server = http.createServer(async (req, res) => {
         // playwright-cli commands (no LLM per command). ~10–20× cheaper than codex.
         await runBatchPlan({
           jobs, source: source || "Direct", agentName: name, autoSubmit, autoApprove,
-          generateResumeByAi,
+          generateResumeByAi, chromeProfile,
           profile, model, apiKey, applierId: profile.accountId, runId: run.id,
           markApplied: (jobId) => markJobApplied({ jobId, applierId: profile.accountId }),
           emit: (e) => emitTo(run, e),
@@ -604,7 +606,7 @@ const server = http.createServer(async (req, res) => {
       const proxyUrl = isDeepSeekModel(model) ? await ensureDeepSeekProxy() : undefined;
       await runBatchCodex({
         jobs, source: source || "Direct", agentName: name, autoSubmit, generateResumeByAi,
-        profile, model, apiKey,
+        profile, model, apiKey, chromeProfile,
         applierId: profile.accountId,
         runId: run.id,
         codexPath: CONFIG.codexBin,
