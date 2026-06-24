@@ -1,6 +1,6 @@
 import { userResumesCollection } from '../../db/mongo.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
-import { normalizeSkillSet } from '../../../../packages/shared/src/skill-normalize.js';
+import { normalizeSkillSet } from '@nextoffer/shared/skill-normalize';
 
 const PROFILE_CACHE_TTL_SEC = 180;
 const profileKey = (applierName) => `profile:skills:${String(applierName || '').trim()}`;
@@ -48,7 +48,7 @@ export async function loadProfileSkillSet(applierName) {
 
   if (isRedisReady() && skillSet.size) {
     const redis = getRedis();
-    await redis.setex(profileKey(name), PROFILE_CACHE_TTL_SEC, JSON.stringify([...skillSet]));
+    await redis.setEx(profileKey(name), PROFILE_CACHE_TTL_SEC, JSON.stringify([...skillSet]));
   }
 
   return skillSet;

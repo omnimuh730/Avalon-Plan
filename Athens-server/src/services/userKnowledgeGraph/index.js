@@ -1,4 +1,4 @@
-import { toCanonical } from '../../../../packages/shared/src/skill-normalize.js';
+import { toCanonical } from '@nextoffer/shared/skill-normalize';
 import {
 	userKnowledgeGraphsCollection,
 	personalInfoCollection,

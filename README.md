@@ -29,7 +29,7 @@ npm run install:all
 
 # 2. Copy env templates
 cp .env.example Athens-server/.env
-cp .env.example connector/.env
+cp connector/.env.example connector/.env
 # Edit Athens-server/.env — at minimum set OPENAI_API_KEY or DEEPSEEK_API_KEY if you use LLM features
 
 cp Athens/.env.example Athens/.env
@@ -38,8 +38,18 @@ cp Athens/.env.example Athens/.env
 
 ## Start everything (one command)
 
+**Start Docker Desktop first** (whale icon in the menu bar → wait until "Running"), then:
+
 ```bash
 npm start
+```
+
+If you use **Homebrew MongoDB + Redis** instead of Docker:
+
+```bash
+brew services start mongodb-community
+brew services start redis
+SKIP_DOCKER=1 npm start
 ```
 
 `npm start` automatically:
@@ -170,7 +180,9 @@ Remotes are registered as `athens-upstream` and `athens-server-upstream` (see `s
 
 ## Troubleshooting
 
-**`docker: command not found`** — Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and ensure it is running.
+**`docker.sock: no such file or directory`** — Docker Desktop is not running. Open Docker Desktop, wait until it is fully started, then run `npm start` again. Or use Homebrew Mongo/Redis with `SKIP_DOCKER=1 npm start` (see above).
+
+**`docker: command not found`** — Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) or use the Homebrew path above.
 
 **`Timed out waiting for MongoDB`** — Run `npm run infra:logs`. First Mongo start can take 30–60s.
 

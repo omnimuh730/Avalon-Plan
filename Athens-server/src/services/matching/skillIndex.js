@@ -1,6 +1,6 @@
 import { jobsCollection } from '../../db/mongo.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
-import { normalizeSkillSet, toCanonical } from '../../../../packages/shared/src/skill-normalize.js';
+import { normalizeSkillSet, toCanonical } from '@nextoffer/shared/skill-normalize';
 
 const SKILL_INDEX_PREFIX = 'skill:';
 const JOB_SKILLS_PREFIX = 'job:skills:';

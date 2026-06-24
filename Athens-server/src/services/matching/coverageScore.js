@@ -1,5 +1,5 @@
-import { normalizeSkillSet } from '../../../../packages/shared/src/skill-normalize.js';
-import { clampScore } from '../../../../packages/shared/src/score.js';
+import { normalizeSkillSet } from '@nextoffer/shared/skill-normalize';
+import { clampScore } from '@nextoffer/shared/score';
 
 export { clampScore };
 

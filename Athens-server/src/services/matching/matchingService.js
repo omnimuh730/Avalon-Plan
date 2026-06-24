@@ -9,7 +9,7 @@ import {
   normalizeJobSkills,
 } from './skillIndex.js';
 import { computeCoverageScore, composeJobScores, applyScoreFilters } from './coverageScore.js';
-import { normalizeSkillSet } from '../../../../packages/shared/src/skill-normalize.js';
+import { normalizeSkillSet } from '@nextoffer/shared/skill-normalize';
 
 const MAX_CANDIDATES = 50000;
 
@@ -53,7 +53,7 @@ export async function matchJobsForApplier({
 
       const jobs = await jobsCollection
         .find({ $and: [mongoQuery || {}, { _id: { $in: objectIds } }] })
-        .project({ ...JOB_LIST_PROJECTION, skillsNormalized: 1, skills: 1 })
+        .project(JOB_LIST_PROJECTION)
         .toArray();
 
       for (const job of jobs) {
@@ -141,7 +141,7 @@ async function scoreViaMongoScan({ mongoQuery, profileSkills, maxScan }) {
         },
       ],
     })
-    .project({ ...JOB_LIST_PROJECTION, skillsNormalized: 1, skills: 1 })
+    .project(JOB_LIST_PROJECTION)
     .sort({ postedAt: -1 })
     .limit(maxScan);
 

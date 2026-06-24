@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
  * Wait until MongoDB and Redis accept TCP connections.
+ * Also exports probe() for prestart infra checks.
  */
 import net from 'node:net';
 
-const targets = [
+export const targets = [
   { host: process.env.MONGO_HOST || '127.0.0.1', port: Number(process.env.MONGO_PORT || 27017), label: 'MongoDB' },
   { host: process.env.REDIS_HOST || '127.0.0.1', port: Number(process.env.REDIS_PORT || 6379), label: 'Redis' },
 ];
@@ -12,7 +13,7 @@ const targets = [
 const timeoutMs = Number(process.env.INFRA_WAIT_TIMEOUT_MS || 120_000);
 const intervalMs = 1_000;
 
-function probe(host, port) {
+export function probe(host, port) {
   return new Promise((resolve) => {
     const socket = net.connect({ host, port });
     socket.setTimeout(2_000);
@@ -28,6 +29,13 @@ function probe(host, port) {
   });
 }
 
+export async function allPortsReady(list = targets) {
+  for (const t of list) {
+    if (!(await probe(t.host, t.port))) return false;
+  }
+  return true;
+}
+
 async function waitFor(target) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -40,6 +48,10 @@ async function waitFor(target) {
   throw new Error(`[infra] Timed out waiting for ${target.label} on ${target.host}:${target.port}`);
 }
 
-for (const t of targets) {
-  await waitFor(t);
+/** Only run wait loop when executed directly: node scripts/wait-for-ports.mjs */
+const isMain = process.argv[1]?.endsWith('wait-for-ports.mjs');
+if (isMain) {
+  for (const t of targets) {
+    await waitFor(t);
+  }
 }
