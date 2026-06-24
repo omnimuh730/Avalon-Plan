@@ -6,8 +6,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-NEW_REPOS=(packages unified-ai-server connector mcp-servers)
-ALL_SUBTREES=(Athens Athens-server codex claude-code Extension packages unified-ai-server connector mcp-servers)
+NEW_REPOS=(packages unified-ai-server connector mcp-servers agent-runtime)
+ALL_SUBTREES=(Athens Athens-server codex claude-code Extension packages unified-ai-server connector mcp-servers agent-runtime)
 
 echo "== Step 1: init git in new sub-repos =="
 for d in "${NEW_REPOS[@]}"; do
@@ -45,7 +45,7 @@ subtree_branch() {
   case "$1" in
     Athens) echo master ;;
     Athens-server) echo cursor/dev-setup-readme-and-npm-start ;;
-    codex|claude-code|packages|unified-ai-server|connector|mcp-servers) echo main ;;
+    codex|claude-code|packages|unified-ai-server|connector|mcp-servers|agent-runtime) echo main ;;
     Extension) echo master ;;
     *) echo main ;;
   esac

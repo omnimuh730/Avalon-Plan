@@ -144,10 +144,11 @@ This repo is a **monorepo** that contains former independent git projects as **s
 | `unified-ai-server/` | *(local repo — add remote when published)* | `main` |
 | `connector/` | *(local repo — add remote when published)* | `main` |
 | `mcp-servers/` | *(local repo — add remote when published)* | `main` |
+| `agent-runtime/` | *(local repo — add remote when published)* | `main` |
 | `codex/` | *(local repo — no published remote)* | `main` |
 | `claude-code/` | *(local repo — no published remote)* | `main` |
 
-Each prefix is a **separate git history** merged via `git subtree add`. New services (`packages`, `unified-ai-server`, `connector`, `mcp-servers`) have their own repos and are **not** flat commits in the monorepo shell.
+Each prefix is a **separate git history** merged via `git subtree add`. New services (`packages`, `unified-ai-server`, `connector`, `mcp-servers`, `agent-runtime`) have their own repos and are **not** flat commits in the monorepo shell.
 
 Re-run setup after cloning: `bash scripts/setup-subtrees.sh` (or pull individual subtrees — see below).
 
