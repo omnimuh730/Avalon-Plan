@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "browser-use": {
+      "command": "npx",
+      "args": ["-y", "browser-use-mcp"],
+      "comment": "Install browser-use MCP when available; falls back to playwright MCP"
+    }
+  }
+}
