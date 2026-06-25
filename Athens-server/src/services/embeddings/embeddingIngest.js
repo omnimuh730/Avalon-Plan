@@ -7,6 +7,7 @@ import {
 	buildProfileEmbeddingText,
 	buildResumeEmbeddingText,
 } from '../embeddings/embeddingText.js';
+import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
 import { embedText } from '../embeddings/embeddingService.js';
 import {
 	deleteJobVector,
@@ -21,15 +22,18 @@ import {
 
 async function aggregateProfileSkills(ownerName) {
 	const name = String(ownerName || '').trim();
-	if (!name || !userResumesCollection) return [];
+	if (!name || !userResumesCollection) return { skillProfile: [], primaryStacks: [] };
 
 	const analyzed = await userResumesCollection
 		.find({ ownerName: name, analyzed: true })
-		.project({ skillProfile: 1 })
+		.project({ skillProfile: 1, techStack: 1 })
 		.toArray();
 
 	const strengthByKey = new Map();
+	const stackSet = new Set();
 	for (const resume of analyzed) {
+		const stack = String(resume?.techStack ?? '').trim();
+		if (stack) stackSet.add(stack);
 		for (const entry of resume.skillProfile || []) {
 			const skillName = String(entry?.name ?? '').trim();
 			if (!skillName) continue;
@@ -44,7 +48,10 @@ async function aggregateProfileSkills(ownerName) {
 			}
 		}
 	}
-	return [...strengthByKey.values()];
+	return {
+		skillProfile: [...strengthByKey.values()],
+		primaryStacks: [...stackSet].slice(0, 20),
+	};
 }
 
 export async function upsertJobEmbedding(jobId, { applierName } = {}) {
@@ -60,14 +67,15 @@ export async function upsertJobEmbedding(jobId, { applierName } = {}) {
 	const job = await jobsCollection.findOne({ _id: objectId });
 	if (!job) return { skipped: true, reason: 'not_found' };
 
-	const text = buildJobEmbeddingText(job);
+	const enriched = enrichJobSkillsFromTitle(job);
+	const text = buildJobEmbeddingText({ ...job, skills: enriched.skills });
 	if (!text) return { skipped: true, reason: 'empty_text' };
 
 	try {
 		const { vector, textHash, model } = await embedText(text, { applierName, role: 'document' });
 		await upsertJobVector(String(job._id), vector, {
 			title: job.title || '',
-			skills: (job.skills || []).slice(0, 50),
+			skills: enriched.skills.slice(0, 50),
 			source: job.source || 'Other',
 			postedAt: job.postedAt ? String(job.postedAt).slice(0, 10) : '',
 		});
@@ -157,13 +165,13 @@ export async function upsertProfileEmbedding(ownerName, { applierName } = {}) {
 	const name = String(ownerName || '').trim();
 	if (!name) return { skipped: true, reason: 'no_owner' };
 
-	const skillProfile = await aggregateProfileSkills(name);
+	const { skillProfile, primaryStacks } = await aggregateProfileSkills(name);
 	if (!skillProfile.length) {
 		await deleteProfileVector(name);
 		return { skipped: true, reason: 'no_analyzed_skills' };
 	}
 
-	const text = buildProfileEmbeddingText(name, skillProfile);
+	const text = buildProfileEmbeddingText(name, skillProfile, { primaryStacks });
 	if (!text) return { skipped: true, reason: 'empty_text' };
 
 	try {

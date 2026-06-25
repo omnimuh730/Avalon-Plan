@@ -15,7 +15,9 @@ import { Button } from "../../../components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
+  DialogTitle,
 } from "../../../components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
 import { Separator } from "../../../components/ui/separator";
@@ -27,6 +29,7 @@ import { useJobDetail } from "../hooks/useJobDetail";
 import { useJobResumeRank, useJobSkillRadar } from "../hooks/useJobSkillRadar";
 import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
 import { JobStatusActions } from "./JobStatusActions";
+import { RequiredSkillsMatch } from "./RequiredSkillsMatch";
 
 const WORK_MODE_LABELS: Record<WorkMode, string> = {
   remote: "Remote",
@@ -174,8 +177,13 @@ export function JobDescriptionDialog({
             <CompanyLogo job={j} />
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-lg font-bold leading-snug text-foreground">{j.title}</h2>
+                <div className="min-w-0 flex-1 pr-2">
+                  <DialogTitle className="text-lg font-bold leading-snug text-foreground">
+                    {j.title}
+                  </DialogTitle>
+                  <DialogDescription className="sr-only">
+                    {j.company} job details, required skills, and how they match your profile
+                  </DialogDescription>
                   <a
                     href={j.companyUrl}
                     target="_blank"
@@ -228,21 +236,7 @@ export function JobDescriptionDialog({
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 subtle-scroll space-y-6">
-          {j.skills.length > 0 ? (
-            <section>
-              <div className="mb-3 flex items-center gap-2">
-                <Sparkles className="size-4 text-primary" />
-                <h3 className="text-sm font-bold text-foreground">Required skills</h3>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {j.skills.map((skill) => (
-                  <Badge key={skill} v="violet">
-                    {skill}
-                  </Badge>
-                ))}
-              </div>
-            </section>
-          ) : null}
+          <RequiredSkillsMatch job={j} />
 
           {j.industries.length > 0 ? (
             <section>
@@ -304,6 +298,9 @@ export function JobDescriptionDialog({
           <div className="hidden sm:flex flex-wrap gap-2 text-[11px] text-muted-foreground">
             <span className={cn("rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40")}>
               Skill {j.scores.skill}
+              {j.scores.skillsRequired
+                ? ` (${j.scores.skillsCovered ?? 0}/${j.scores.skillsRequired})`
+                : ""}
             </span>
             <span className="rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40">
               Salary {j.scores.salary}

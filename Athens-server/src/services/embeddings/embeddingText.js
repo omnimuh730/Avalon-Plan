@@ -1,16 +1,23 @@
 const MAX_RESUME_TEXT = 8000;
-const MAX_SKILL_LINES = 30;
+const MAX_SKILL_LINES = 80;
+
+function sortSkillProfile(skillProfile = []) {
+	return [...skillProfile]
+		.map((item) => {
+			const name = String(item?.name ?? item?.skill ?? '').trim();
+			let strength = Number(item?.strength ?? item?.score ?? 0);
+			if (!Number.isFinite(strength)) strength = 5;
+			strength = Math.max(0, Math.min(10, strength));
+			return { name, strength };
+		})
+		.filter((item) => item.name && item.strength > 0)
+		.sort((a, b) => b.strength - a.strength);
+}
 
 function formatSkillProfile(skillProfile = []) {
 	const lines = [];
-	for (const item of skillProfile.slice(0, MAX_SKILL_LINES)) {
-		const name = String(item?.name ?? item?.skill ?? '').trim();
-		if (!name) continue;
-		let strength = Number(item?.strength ?? item?.score ?? 0);
-		if (!Number.isFinite(strength)) strength = 5;
-		strength = Math.max(0, Math.min(10, strength));
-		if (strength <= 0) continue;
-		lines.push(`${name} (${strength}/10)`);
+	for (const item of sortSkillProfile(skillProfile).slice(0, MAX_SKILL_LINES)) {
+		lines.push(`${item.name} (${item.strength}/10)`);
 	}
 	return lines.join(', ');
 }
@@ -30,12 +37,17 @@ export function buildResumeEmbeddingText(resumeDoc) {
 	return parts.join('\n\n').trim();
 }
 
-/** Aggregated profile embedding text (max-strength skills across analyzed resumes). */
-export function buildProfileEmbeddingText(ownerName, skillProfile = []) {
+/**
+ * Aggregated profile embedding text — driven by this user's resumes, not global role rules.
+ */
+export function buildProfileEmbeddingText(ownerName, skillProfile = [], { primaryStacks = [] } = {}) {
 	const name = String(ownerName || '').trim();
 	const skillLine = formatSkillProfile(skillProfile);
+	const stacks = (primaryStacks || []).map((s) => String(s).trim()).filter(Boolean);
+
 	const parts = [];
 	if (name) parts.push(`Professional profile: ${name}`);
+	if (stacks.length) parts.push(`Primary stacks: ${stacks.join(', ')}`);
 	if (skillLine) parts.push(`Skills: ${skillLine}`);
 	return parts.join('\n\n').trim();
 }
@@ -43,14 +55,15 @@ export function buildProfileEmbeddingText(ownerName, skillProfile = []) {
 const MAX_JOB_DESCRIPTION = 4000;
 
 export function buildJobEmbeddingText(jobDoc) {
-	const skills = Array.isArray(jobDoc?.skills)
-		? jobDoc.skills.map((s) => String(s).trim()).filter(Boolean)
-		: [];
-	const tags = Array.isArray(jobDoc?.tags)
-		? jobDoc.tags.map((t) => String(t).trim()).filter(Boolean)
+	const enriched = jobDoc?.skills?.length
+		? jobDoc
+		: { ...jobDoc, skills: [] };
+	const skills = Array.isArray(enriched.skills)
+		? enriched.skills.map((s) => String(s).trim()).filter(Boolean)
 		: [];
 	const title = String(jobDoc?.title ?? '').trim();
 	const company = String(jobDoc?.company?.name ?? jobDoc?.company ?? '').trim();
+	const seniority = String(jobDoc?.details?.seniority ?? '').trim();
 	const description = String(jobDoc?.description ?? '').trim();
 	const truncatedDescription = description.length > MAX_JOB_DESCRIPTION
 		? `${description.slice(0, MAX_JOB_DESCRIPTION)}\n[truncated]`
@@ -59,8 +72,8 @@ export function buildJobEmbeddingText(jobDoc) {
 	const parts = [];
 	if (title) parts.push(`Title: ${title}`);
 	if (company) parts.push(`Company: ${company}`);
+	if (seniority) parts.push(`Seniority: ${seniority}`);
 	if (skills.length) parts.push(`Required skills: ${skills.join(', ')}`);
-	if (tags.length) parts.push(`Tags: ${tags.join(', ')}`);
 	if (truncatedDescription) parts.push(`Description: ${truncatedDescription}`);
 	return parts.join('\n\n').trim();
 }

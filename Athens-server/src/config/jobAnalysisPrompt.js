@@ -18,9 +18,11 @@ The goal is NOT to list every technology mentioned. Most JDs mention many tools;
 
 5. **Identify the role's center of gravity**, then score relative to it.
 
-6. **Group when helpful**, but keep concrete names when they are hiring signals.
+6. **Always include title/platform skills.** If the job title names a technology, platform, or domain (e.g. Salesforce, SAP, React, Marketing Automation), that name MUST appear in the output skill list even when the JD body only mentions generic skills.
 
-7. **Score 0–2 (or omit)** unless the role clearly centers on soft skills or generic cloud experience.
+7. **Group when helpful**, but keep concrete names when they are hiring signals.
+
+8. **Score 0–2 (or omit)** unless the role clearly centers on soft skills or generic cloud experience.
 
 ---
 

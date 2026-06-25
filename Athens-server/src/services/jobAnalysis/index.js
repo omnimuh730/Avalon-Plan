@@ -2,7 +2,8 @@ import { ObjectId } from 'mongodb';
 import { jobsCollection } from '../../db/mongo.js';
 import { attachStaticScoreFields } from '../jobListPipeline.js';
 import { upsertJobEmbeddingAsync } from '../embeddings/embeddingIngest.js';
-import { normalizeJobSkills, indexJobInRedis } from '../matching/skillIndex.js';
+import { indexJobInRedis } from '../matching/skillIndex.js';
+import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
 
 const TERMINAL = new Set(['analyzed']);
 const WORKER_INTERVAL_MS = Number(process.env.SKILL_JOB_ANALYSIS_INTERVAL_MS || 5000);
@@ -94,10 +95,9 @@ async function claimQueuedJobs(limit = 2) {
 }
 
 async function runJobAnalysis(job) {
-	const skills = Array.isArray(job.skills) ? job.skills.map((s) => String(s).trim()).filter(Boolean) : [];
+	const { skills, skillsNormalized } = enrichJobSkillsFromTitle(job);
 	const applierName = job.skillAnalysis?.applierName || null;
 	const jobId = String(job._id);
-	const skillsNormalized = normalizeJobSkills(skills);
 	const staticScores = attachStaticScoreFields({ ...job, skills, skillsNormalized });
 	const now = new Date().toISOString();
 
@@ -106,6 +106,7 @@ async function runJobAnalysis(job) {
 		{
 			$set: {
 				...staticScores,
+				skills,
 				skillsNormalized,
 				skillAnalysis: {
 					status: 'analyzed',

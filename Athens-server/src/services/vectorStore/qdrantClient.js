@@ -113,6 +113,20 @@ export function isQdrantReady() {
 	return collectionsReady && isQdrantConfigured();
 }
 
+/** Drop and recreate the job vectors collection (maintenance / reset). */
+export async function deleteJobVectorsCollection() {
+	if (!isQdrantConfigured()) throw new Error('QDRANT_URL not set');
+	try {
+		await qdrantFetch(`/collections/${encodeURIComponent(JOB_VECTORS_COLLECTION)}`, {
+			method: 'DELETE',
+		});
+	} catch (err) {
+		const msg = String(err.message || err);
+		if (!msg.includes('404') && !msg.includes('Not found')) throw err;
+	}
+	collectionsReady = false;
+}
+
 export async function upsertJobVector(jobId, vector, payload = {}) {
 	if (!isQdrantReady()) return false;
 

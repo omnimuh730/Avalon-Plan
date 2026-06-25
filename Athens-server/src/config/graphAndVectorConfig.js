@@ -158,6 +158,14 @@ export function getJobListScoreWeights() {
 	};
 }
 
+/** Hybrid Best Match: skill containment + profile/job vector similarity (per-user, no role hardcoding). */
+export function getHybridMatchWeights() {
+	return {
+		skill: envFloat('RECOMMENDATION_HYBRID_SKILL_WEIGHT', 0.55),
+		vector: envFloat('RECOMMENDATION_HYBRID_VECTOR_WEIGHT', 0.45),
+	};
+}
+
 export function getMatchScoreWeights() {
 	return {
 		vector: envFloat('RECOMMENDATION_MATCH_VECTOR_WEIGHT', 0.55),

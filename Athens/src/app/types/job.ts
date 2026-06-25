@@ -35,6 +35,8 @@ export interface JobScores {
   /** Skills covered vs required (Best Match containment). */
   skillsCovered?: number;
   skillsRequired?: number;
+  /** Semantic similarity component when hybrid ranking is active. */
+  vector?: number | null;
 }
 
 export interface Job {
@@ -71,6 +73,5 @@ export interface Job {
   skillAnalysis?: SkillAnalysis;
   /** Tech stack of the resume that best matched this job (recommendation API). */
   bestResumeTechStack?: string;
-  /** Resume id used for best-fit recommendation (Mongo _id or __profile__). */
-  bestResumeId?: string;
-}
+  /** Per-skill match flags for UI (from list-time Best Match scoring). */
+  skillHighlights?: { name: string; matched: boolean }[];

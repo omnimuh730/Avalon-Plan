@@ -83,6 +83,16 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
   const overall = readScore(doc, "_score", "scoreOverall") ?? skill;
   const skillsCovered = readScore(doc, "skillsCovered") ?? undefined;
   const skillsRequired = readScore(doc, "skillsRequired") ?? undefined;
+  const scoreVector = readScore(doc, "scoreVector");
+
+  const skillHighlights = Array.isArray(doc.skillHighlights)
+    ? (doc.skillHighlights as { name?: unknown; matched?: unknown }[])
+        .map((row) => ({
+          name: String(row?.name ?? "").trim(),
+          matched: Boolean(row?.matched),
+        }))
+        .filter((row) => row.name)
+    : undefined;
 
   const bestResumeTechStack =
     typeof doc.bestResumeTechStack === "string" && doc.bestResumeTechStack.trim()
@@ -124,6 +134,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     scores: {
       overall,
       skill,
+      vector: scoreVector ?? undefined,
       skillsCovered: skillsCovered ?? undefined,
       skillsRequired: skillsRequired ?? undefined,
     },
@@ -141,6 +152,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     skillAnalysis,
     bestResumeTechStack,
     bestResumeId,
+    skillHighlights,
   };
 }
 
@@ -157,6 +169,7 @@ export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
     matchScore: preferListScores ? listJob.matchScore : detailJob.matchScore,
     bestResumeTechStack: listJob.bestResumeTechStack ?? detailJob.bestResumeTechStack,
     bestResumeId: listJob.bestResumeId ?? detailJob.bestResumeId,
+    skillHighlights: listJob.skillHighlights?.length ? listJob.skillHighlights : detailJob.skillHighlights,
   };
 }
 

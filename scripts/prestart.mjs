@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Mandatory bootstrap before `npm start`:
- * 1. Ensure MongoDB + Redis are running (Docker if needed, or skip if already up)
+ * 1. Ensure MongoDB + Redis + Qdrant are running (Docker if needed, or skip if already up)
  * 2. Wait until ports are open
  * 3. Backfill jobs.skillsNormalized + Redis skill index
  */
@@ -33,7 +33,7 @@ function printInfraHelp(reason) {
   console.error(`
 [prestart] ${reason}
 
-MongoDB and Redis must be reachable (${ports}) before NextOffer can start.
+MongoDB, Redis, and Qdrant must be reachable (${ports}) before NextOffer can start.
 
 Option A — Docker Desktop (recommended)
   1. Open Docker Desktop and wait until it says "Running"
@@ -43,6 +43,7 @@ Option B — Homebrew (no Docker)
   brew install mongodb-community redis
   brew services start mongodb-community
   brew services start redis
+  cd Athens-server && npm run qdrant:start
   SKIP_DOCKER=1 npm start
 
 Option C — Start Docker containers manually
@@ -56,12 +57,12 @@ If databases are already running elsewhere, use:
 
 async function ensureInfra() {
   if (await allPortsReady()) {
-    console.log('[prestart] MongoDB + Redis already running — skipping Docker');
+    console.log('[prestart] MongoDB + Redis + Qdrant already running — skipping Docker');
     return;
   }
 
   if (skipDocker) {
-    console.log('[prestart] SKIP_DOCKER set — waiting for existing MongoDB + Redis…');
+    console.log('[prestart] SKIP_DOCKER set — waiting for existing MongoDB + Redis + Qdrant…');
     run('node', [path.join(ROOT, 'scripts', 'wait-for-ports.mjs')]);
     return;
   }
@@ -71,14 +72,14 @@ async function ensureInfra() {
     process.exit(1);
   }
 
-  console.log('[prestart] Starting infrastructure (MongoDB + Redis) via Docker…');
+  console.log('[prestart] Starting infrastructure (MongoDB + Redis + Qdrant) via Docker…');
   const up = spawnSync(
     'docker',
-    ['compose', '-f', composeFile, 'up', '-d', 'mongodb', 'redis'],
+    ['compose', '-f', composeFile, 'up', '-d', 'mongodb', 'redis', 'qdrant'],
     { stdio: 'inherit', cwd: ROOT },
   );
   if (up.status !== 0) {
-    printInfraHelp('docker compose failed to start MongoDB/Redis');
+    printInfraHelp('docker compose failed to start MongoDB/Redis/Qdrant');
     process.exit(up.status ?? 1);
   }
 

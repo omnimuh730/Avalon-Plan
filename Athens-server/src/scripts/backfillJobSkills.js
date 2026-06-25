@@ -7,7 +7,8 @@ dotenv.config();
 
 import { initMongo, jobsCollection, closeMongo } from '../db/mongo.js';
 import { initRedis, closeRedis, isRedisReady } from '../db/redis.js';
-import { normalizeJobSkills, indexJobInRedis } from '../services/matching/skillIndex.js';
+import { indexJobInRedis } from '../services/matching/skillIndex.js';
+import { enrichJobSkillsFromTitle } from '../services/matching/jobSkillExtraction.js';
 
 async function main() {
   await initMongo();
@@ -15,19 +16,20 @@ async function main() {
 
   if (!jobsCollection) throw new Error('MongoDB not ready');
 
-  const cursor = jobsCollection.find({}, { projection: { skills: 1, skillsNormalized: 1 } });
+  const cursor = jobsCollection.find({}, { projection: { title: 1, skills: 1, skillsNormalized: 1 } });
   let updated = 0;
   let indexed = 0;
 
   for await (const doc of cursor) {
-    const skills = Array.isArray(doc.skills) ? doc.skills : [];
-    const skillsNormalized = normalizeJobSkills(skills);
+    const { skills, skillsNormalized } = enrichJobSkillsFromTitle(doc);
+    const prevSkills = JSON.stringify(doc.skills || []);
+    const nextSkills = JSON.stringify(skills);
     const prev = JSON.stringify(doc.skillsNormalized || []);
     const next = JSON.stringify(skillsNormalized);
-    if (prev !== next) {
+    if (prevSkills !== nextSkills || prev !== next) {
       await jobsCollection.updateOne(
         { _id: doc._id },
-        { $set: { skillsNormalized } },
+        { $set: { skills, skillsNormalized } },
       );
       updated += 1;
     }
