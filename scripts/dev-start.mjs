@@ -46,7 +46,7 @@ process.on('SIGTERM', () => shutdown(0));
 console.log(`
 NextOffer is running:
   Frontend       → http://localhost:5173
-  Athens-server  → http://localhost:7979
+  Athens-server  → http://localhost:8979
   Unified AI     → http://localhost:8790
   Connector      → http://localhost:8781
 Press Ctrl+C to stop all services.

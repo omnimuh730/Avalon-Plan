@@ -55,8 +55,12 @@ export const CONFIG = {
   unifiedAiUrl: PATHS.unifiedAi,
   autoSubmit: (env("AUTO_SUBMIT") || "true") !== "false",
   defaultMode: env("AGENT_DEFAULT_MODE", "plan"),
-  athensServerUrl: (env("ATHENS_SERVER_URL", "http://127.0.0.1:7979")).replace(/\/$/, ""),
+  athensServerUrl: (env("ATHENS_SERVER_URL", "http://127.0.0.1:8979")).replace(/\/$/, ""),
   maxTokensPerRun: Number(env("AI_MAX_TOKENS_PER_RUN", "500000")),
+  // How long a job may sit parked waiting for a human (CAPTCHA / ID check / account
+  // confirmation) before the runner auto-abandons it so the batch never hangs forever.
+  // 0 disables the timeout (wait indefinitely). Default 15 minutes.
+  handoffTimeoutMs: Number(env("AGENT_HANDOFF_TIMEOUT_MS", "900000")),
 };
 
 export function maskKey(k) {

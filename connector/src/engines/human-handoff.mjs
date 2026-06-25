@@ -68,10 +68,25 @@ export function wasStopped(runId) {
   return !!runs.get(runId)?.stopped;
 }
 
-/** Resolves (with a note) when the run is resumed or stopped. */
-export function awaitHumanResume(runId) {
+/**
+ * Resolves (with a note) when the run is resumed or stopped. Pass `timeoutMs` > 0
+ * to auto-resolve with "__timeout__" if no human acts in time — so a run parked on
+ * a CAPTCHA / ID check never hangs forever. The timer is cleared on resume/stop.
+ */
+export function awaitHumanResume(runId, { timeoutMs = 0 } = {}) {
   return new Promise((resolve) => {
-    rec(runId).resumeResolve = resolve;
+    const r = rec(runId);
+    let timer = null;
+    const done = (note) => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      resolve(note);
+    };
+    r.resumeResolve = done;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (r.resumeResolve === done) { r.resumeResolve = null; done("__timeout__"); }
+      }, timeoutMs);
+    }
   });
 }
 

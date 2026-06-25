@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { CONFIG } from "./config.mjs";
 import { formatUsd } from "../core/pricing.mjs";
 import { buildJdSkillProfileText } from "../core/resume-match.mjs";
+import { getAthensServerUrl } from "./athens-server.mjs";
 
 function emitResumeGenUsage(emit, result, jobIndex) {
   const u = result?.usage;
@@ -47,7 +47,8 @@ export async function ensureAgentJobResumeFile({ applierName, job, destFilePath,
     jobIndex,
   });
 
-  const url = `${CONFIG.athensServerUrl}/api/personal/resume-generate/for-agent-job`;
+  const base = await getAthensServerUrl();
+  const url = `${base}/api/personal/resume-generate/for-agent-job`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

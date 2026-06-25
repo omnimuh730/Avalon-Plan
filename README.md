@@ -63,7 +63,7 @@ SKIP_DOCKER=1 npm start
 | Service | URL |
 |---------|-----|
 | **Frontend** | http://localhost:5173 |
-| **Athens-server** | http://localhost:7979 |
+| **Athens-server** | http://localhost:8979 |
 | **Unified AI** | http://localhost:8790 |
 | **Connector** | http://localhost:8781 |
 
@@ -121,7 +121,7 @@ REDIS_URL=redis://127.0.0.1:6379
 npm run infra:up                    # Mongo + Redis
 npm run backfill-job-skills         # Skill index (also runs on every npm start)
 npm run start:ai                    # unified-ai-server :8790
-npm run start:athens-server         # Athens-server :7979
+npm run start:athens-server         # Athens-server :8979
 npm run start:connector             # connector :8781
 npm run start:ui                    # Athens Vite :5173
 ```

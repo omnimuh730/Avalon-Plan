@@ -36,7 +36,7 @@ import {
 } from "./src/controllers/personalInfoController.js";
 
 const app = express();
-const port = Number.parseInt(String(process.env.PORT || "7979"), 10) || 7979;
+const port = Number.parseInt(String(process.env.PORT || "8979"), 10) || 8979;
 const host = process.env.HOST !== undefined && process.env.HOST !== "" ? process.env.HOST : "0.0.0.0";
 
 app.use(express.json({ limit: '50mb' }));

@@ -12,12 +12,13 @@ import { runClaudeAgent } from "./claude-runner.mjs";
 import { usageToAgentForce, parseResult, runBatchCodex, sessionForRun } from "./codex-apply.mjs";
 import { formatUsd } from "../core/pricing.mjs";
 import fs from "node:fs";
-import { writeRunMcpConfig, sessionFileFor, persistProfileBack } from "./mcp-session.mjs";
+import { writeRunMcpConfig, sessionFileFor, persistProfileBack, stageResumeForMcp } from "./mcp-session.mjs";
+import { forkedOpenCommand } from "./chrome-profile.mjs";
 
 /** Compose the (deliberately short) task prompt for Claude Code. The detailed
  *  operating rules (drive via `playwright-cli`, snapshot-to-file + grep, etc.)
  *  live in the workspace CLAUDE.md, which is auto-loaded — keep this lean. */
-export function buildClaudeApplyPrompt({ url, job, profile, resumePath, resumeGenerating, engine = "cli", savedSession, forkedProfile }) {
+export function buildClaudeApplyPrompt({ url, job, profile, resumePath, resumeGenerating, engine = "cli", savedSession, forkedProfile, autoSubmit = false }) {
   const driver = engine === "mcp"
     ? [
         "Apply to this job for me. Drive the browser with the Playwright MCP tools",
@@ -31,10 +32,10 @@ export function buildClaudeApplyPrompt({ url, job, profile, resumePath, resumeGe
   // (already signed in, NOT "Chrome for Testing"). Else fall back to state-load.
   // (MCP engine launches real Chrome from the forked --user-data-dir automatically.)
   const openNote = engine !== "mcp" && forkedProfile
-    ? `FIRST open the applicant's REAL signed-in Chrome — run EXACTLY: \`playwright-cli open "${url}" --browser chrome --persistent --profile "${forkedProfile}"\`. This is real Google Chrome (NOT "Chrome for Testing") from a copy of their profile, so you're already logged in (Google + many ATS). Do NOT run a plain \`playwright-cli open\`, do NOT use \`state-load\`. Then \`playwright-cli snapshot\`.`
+    ? `FIRST open the applicant's REAL signed-in Chrome — run EXACTLY: \`${forkedOpenCommand(forkedProfile, url)}\`. This is real Google Chrome (NOT "Chrome for Testing") from a copy of their profile, so you're already logged in (Google + many ATS). Do NOT run a plain \`playwright-cli open\`, do NOT change --profile/--config, do NOT use \`state-load\`. Then \`playwright-cli snapshot\`.`
     : "";
   const sessionNote = engine !== "mcp" && !forkedProfile && savedSession
-    ? `FIRST restore the saved login: run \`playwright-cli open\`, then \`playwright-cli state-load "${savedSession}"\`, then \`playwright-cli goto "${url}"\`. You'll be signed in already (Google + many ATS) — skip login/account-creation unless a page still asks.`
+    ? `FIRST restore the saved login: run \`playwright-cli open --headed\`, then \`playwright-cli state-load "${savedSession}"\`, then \`playwright-cli goto "${url}"\`. You'll be signed in already (Google + many ATS) — skip login/account-creation unless a page still asks.`
     : "";
   const lines = [
     ...driver,
@@ -49,17 +50,24 @@ export function buildClaudeApplyPrompt({ url, job, profile, resumePath, resumeGe
     "",
     `Resume file to upload: ${resumePath || "(none)"}`,
     "Upload EXACTLY that file path for the resume/CV field — do NOT substitute, rename, or pick any other file.",
+    engine === "mcp" && resumePath
+      ? "That path is valid for browser_file_upload (staged in your MCP workspace or allowed via unrestricted file access)."
+      : "",
     resumeGenerating
       ? "That resume is being generated right now in parallel, so it may not exist yet when you reach the upload step. If the upload says the file is missing, wait ~5s and retry the SAME path a few times until it appears — never fall back to a different file."
       : "",
     "",
-    "Open the URL, fill the application from the profile, upload the resume, and submit.",
+    autoSubmit
+      ? "AUTO-SUBMIT is ON: after every required field is filled, click the real Submit button, then browser_snapshot to confirm a thank-you / application-received page BEFORE you emit RESULT: submitted. If Submit is still visible or validation errors show, fix them and retry — do NOT report submitted until the confirmation page is visible."
+      : "Fill everything but do NOT click the final Submit; end with RESULT: review_pending.",
     "",
     "DECIDE — is this the job's application?",
     "- A multi-step flow is NORMAL: a job-description page with an \"Apply\" / \"Apply Now\" / \"Start application\" button → CLICK it, then if asked choose \"Apply with résumé\" / \"Autofill\" (else \"Apply manually\") and fill the form. Workday/Greenhouse/iCIMS work this way — do NOT skip just because the form isn't shown yet.",
     "- ONLY end with `RESULT: skipped — <reason>` if the page truly has no way to apply to THIS job: a generic careers/listing page with no apply control, an expired/removed posting, a 404/error, or clearly the wrong page. (Skipped jobs are marked handled so they aren't retried.)",
     "- If clicking Apply makes no progress after ~2 tries, treat it as not reachable → skipped.",
     "- NEVER dump the whole page (no document.body.innerHTML / innerText of the full page) — read the snapshot; dumping blows the token limit.",
+    "Open the URL, fill the application from the profile, upload the resume, and submit.",
+    "",
     "When done, end with one line: RESULT: <submitted|review_pending|skipped|error> — <short reason>",
   ].filter(Boolean);
   return lines.join("\n");
@@ -129,6 +137,11 @@ export async function runApplicationClaude({
     cwd = mcpBuilt.dir;
     mcpConfig = mcpBuilt.config;
   }
+  let resumePath = profile.resumePath;
+  if (claudeEngine === "mcp" && resumePath) {
+    const staged = stageResumeForMcp(mcpBuilt?.dir, resumePath);
+    if (staged) resumePath = staged;
+  }
   step("info", "Engine", `claude-code → ${model} · ${claudeEngine === "mcp" ? `Playwright MCP · Chrome profile${mcpBuilt?.seeded ? " (reusing saved login)" : " (first run — verify once, then saved)"}` : "playwright-cli"}`);
 
   // Running total, accumulated from per-turn usage DELTAS emitted by the runner.
@@ -196,9 +209,10 @@ export async function runApplicationClaude({
     apiKey,
     env: gateEnv,
     prompt: buildClaudeApplyPrompt({
-      url, job, profile, resumePath: profile.resumePath, resumeGenerating, engine: claudeEngine,
+      url, job, profile, resumePath, resumeGenerating, engine: claudeEngine,
       savedSession: fs.existsSync(sessionFileFor(profile.fullName)) ? sessionFileFor(profile.fullName) : "",
       forkedProfile,
+      autoSubmit,
     }),
     onEvent,
     signal,

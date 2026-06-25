@@ -1,6 +1,6 @@
 # Athens-server
 
-Backend for **Athens** (NextOffer job search, resume analysis, skill graph, and multi-vector job recommendations). Default API base: `http://127.0.0.1:7979/api`.
+Backend for **Athens** (NextOffer job search, resume analysis, skill graph, and multi-vector job recommendations). Default API base: `http://127.0.0.1:8979/api`.
 
 ## Features
 
@@ -161,7 +161,7 @@ Copy from [`.env.example`](.env.example). Key groups:
 
 | Variable | Description |
 |----------|-------------|
-| `PORT`, `HOST` | HTTP server (default `7979`) |
+| `PORT`, `HOST` | HTTP server (default `8979`) |
 | `MONGO_URL`, `MONGO_DB` | Primary database |
 | `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` | Skill graph |
 | `QDRANT_URL` | Vector database |

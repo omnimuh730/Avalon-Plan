@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { connectorSocketUrl, agentStreamUrl, fetchRunEvents } from "../../../services/agentApi";
+import { connectorSocketUrl, agentStreamUrl, fetchRunEvents, agentScreenshotUrl } from "../../../services/agentApi";
 import type {
   ActiveRun,
   JobView,
@@ -100,11 +100,12 @@ export function useLiveRunEvents(
           }));
           break;
         case "screenshot": {
+          const idx = (e.jobIndex as number | undefined) ?? cur;
           const fileName = e.filePath ? String(e.filePath).split("/").pop() : null;
           const src =
             (e.dataUrl as string) ||
             (fileName ? agentScreenshotUrl(run.runId, fileName) : null);
-          if (src) patchJob(cur, (j) => ({ ...j, shot: { label: e.label as string, dataUrl: src } }));
+          if (src) patchJob(idx, (j) => ({ ...j, shot: { label: e.label as string, dataUrl: src } }));
           break;
         }
         case "plan":

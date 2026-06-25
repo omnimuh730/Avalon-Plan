@@ -116,6 +116,7 @@ function eventToSse(doc) {
   if (doc.type === "job" && doc.jobIndex != null) base.index = doc.jobIndex;
   if (doc.type === "jobDone" && doc.jobIndex != null) base.jobIndex = doc.jobIndex;
   if (doc.type === "resumeMatch" && doc.jobIndex != null) base.jobIndex = doc.jobIndex;
+  if (doc.type === "screenshot" && doc.jobIndex != null) base.jobIndex = doc.jobIndex;
   return base;
 }
 

@@ -13,7 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CONFIG } from "./config.mjs";
-import { seedMasterFromChromeProfile } from "./chrome-profile.mjs";
+import { seedMasterFromChromeProfile, KEYCHAIN_IGNORE_ARGS } from "./chrome-profile.mjs";
 
 /** Must match claude-code/agent/sessions.mjs `safeApplier`. */
 export function safeApplier(name) {
@@ -67,19 +67,54 @@ export function writeRunMcpConfig({ applierName, runId, chromeProfileDir = "" })
     else fs.mkdirSync(runProfile, { recursive: true });
   } catch { try { fs.mkdirSync(runProfile, { recursive: true }); } catch {} }
 
+  const dir = path.join(os.tmpdir(), "nextoffer-mcp", runId2);
+  fs.mkdirSync(dir, { recursive: true });
+
+  // Keep the real OS keychain so the forked profile's encrypted cookies (logins)
+  // decrypt — same reason as the CLI engines. @playwright/mcp reads this --config.
+  const pwConfigPath = path.join(dir, "playwright-mcp.json");
+  fs.writeFileSync(pwConfigPath, JSON.stringify({
+    browser: { launchOptions: { headless: false, ignoreDefaultArgs: KEYCHAIN_IGNORE_ARGS } },
+  }, null, 2));
+
   const gmailDir = path.join(CONFIG.claudeCwd, "mcps", "gmail");
   const config = {
     mcpServers: {
-      playwright: { command: "npx", args: ["-y", "@playwright/mcp@latest", "--browser", "chrome", "--user-data-dir", runProfile] },
+      // --allow-unrestricted-file-access: AI résumés land in /tmp/nextoffer-runs/… which is
+      // outside the MCP workspace; without this, browser_file_upload rejects the path.
+      playwright: {
+        command: "npx",
+        args: [
+          "-y", "@playwright/mcp@latest",
+          "--browser", "chrome",
+          "--user-data-dir", runProfile,
+          "--config", pwConfigPath,
+          "--allow-unrestricted-file-access",
+        ],
+      },
       gmail: { command: path.join(gmailDir, ".venv", "bin", "python"), args: [path.join(gmailDir, "server.py")] },
     },
   };
 
-  const dir = path.join(os.tmpdir(), "nextoffer-mcp", runId2);
-  fs.mkdirSync(dir, { recursive: true });
   const configPath = path.join(dir, ".mcp.json");
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   return { dir, config: configPath, runProfile, master, seeded };
+}
+
+/**
+ * Copy the résumé into the per-run MCP workspace so browser_file_upload can reach it
+ * even when unrestricted file access is unavailable. Returns the staged path.
+ */
+export function stageResumeForMcp(mcpDir, resumePath) {
+  if (!mcpDir || !resumePath) return null;
+  try {
+    if (!fs.existsSync(resumePath)) return null;
+    const dest = path.join(mcpDir, path.basename(resumePath));
+    fs.copyFileSync(resumePath, dest);
+    return dest;
+  } catch {
+    return null;
+  }
 }
 
 /** Save the finished run's profile back to the applicant's master (persist logins). */

@@ -4,6 +4,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { CONFIG, maskKey, PATHS } from "./config.mjs";
+import { getAthensServerUrl } from "./athens-server.mjs";
 import { initConnectorSocket, emitRunEvent } from "../socket-hub.mjs";
 import { runBatchCodex, sessionForRun, closeBrowserSession } from "./codex-apply.mjs";
 import { runBatchClaude } from "./claude-apply.mjs";
@@ -737,7 +738,12 @@ markInterruptedRuns()
       console.log(`  Socket.io    →  ws://localhost:${CONFIG.port}`);
       console.log(`  default mode →  ${CONFIG.defaultMode}`);
       console.log(`  AI gateway   →  ${CONFIG.unifiedAiUrl}`);
-      console.log(`  Athens API   →  ${CONFIG.athensServerUrl}`);
+      getAthensServerUrl().then((url) => {
+        const note = url !== CONFIG.athensServerUrl ? ` (env=${CONFIG.athensServerUrl})` : "";
+        console.log(`  Athens API   →  ${url}${note}`);
+      }).catch(() => {
+        console.log(`  Athens API   →  ${CONFIG.athensServerUrl}`);
+      });
       console.log(`  agent cwd    →  ${PATHS.agentRuntime}\n`);
       // No runs survive a restart, so any live browser session is an orphan from a
       // previous crash — sweep them so stale Chrome-for-Testing windows don't pile up.

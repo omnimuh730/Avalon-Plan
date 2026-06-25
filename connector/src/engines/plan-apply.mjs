@@ -16,10 +16,11 @@ import path from "node:path";
 import { sessionForRun, closeBrowserSession } from "./codex-apply.mjs";
 import { isDeepSeekModel, DEEPSEEK_BASE_URL } from "../core/models.mjs";
 import { costFromUsage, formatUsd, emptyUsage, mergeUsage } from "../core/pricing.mjs";
-import { PATHS } from "./config.mjs";
+import { PATHS, CONFIG } from "./config.mjs";
 import { awaitHumanResume, wasStopped, isAwaitingHuman } from "./human-handoff.mjs";
 import { sessionFileFor } from "./mcp-session.mjs";
-import { prepareForkedProfile, persistForkedProfile } from "./chrome-profile.mjs";
+import { prepareForkedProfile, persistForkedProfile, forkedOpenArgs } from "./chrome-profile.mjs";
+import { startBrowserMonitor } from "./browser-monitor.mjs";
 
 const SECRET_FIELDS = ["openaiApiKey", "deepseekApiKey", "ecomagentApiKey", "gmailAppPassword", "defaultPassword"];
 const OTP_SCRIPT = PATHS.gmailOtp;
@@ -93,6 +94,8 @@ async function domFallbackSnapshot(session) {
 // left forms stuck on "Missing required field: Resume"). Generic — not vendor-specific.
 async function uploadResumeFile(session, file) {
   if (!file) return { ok: false, info: "no résumé file" };
+  // Try setInputFiles on the hidden <input> first — works when NO native chooser is
+  // open (the common case) and never pops an OS dialog.
   const js = `async page => {
     const p = ${JSON.stringify(file)};
     let inputs = page.locator('input[type=file]');
@@ -105,7 +108,112 @@ async function uploadResumeFile(session, file) {
   const r = await pw(session, ["run-code", js, "--raw"], { timeout: 30000 });
   let info = {};
   try { info = JSON.parse((r.out || "").match(/\{[\s\S]*\}/)?.[0] || "{}"); } catch {}
-  return { ok: !!info.ok, info };
+  if (info.ok) return { ok: true, info };
+
+  // setInputFiles failed — usually because the agent clicked an Attach/Upload button
+  // and a file chooser is now PENDING (Playwright intercepts it; page.evaluate is
+  // blocked, so run-code returns nothing). `playwright-cli upload` fulfils exactly
+  // that pending chooser, so try it as the fallback.
+  const up = await pw(session, ["upload", file], { timeout: 30000 });
+  if (up.ok) return { ok: true, info: { via: "filechooser" } };
+  return { ok: false, info: info.error ? info : { error: (up.err || up.out || "upload failed").slice(0, 80) } };
+}
+
+// ROOT-CAUSE FIX (re-fill loops): the accessibility snapshot does NOT reliably expose the
+// COMMITTED value of a custom combobox (React-Select etc. render the chosen text in a
+// sibling node, and our lean filter drops non-control text). Blind to committed state, the
+// planner re-opens/re-fills fields it already set → infinite dropdown loops + wasted tokens.
+// This generic probe reads the LIVE value of every visible control (native value/checked/
+// selected option + the displayed text of custom select widgets) so we can tell the planner
+// exactly what is ALREADY SET. Not vendor-specific: it reads whatever the DOM exposes.
+const FIELD_VALUES_JS = `async page => { return await page.evaluate(() => {
+  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+  const vis = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const nameOf = (el) => {
+    let n = el.getAttribute('aria-label') || '';
+    if (!n && el.labels && el.labels[0]) n = el.labels[0].innerText;
+    if (!n) { const lb = el.getAttribute('aria-labelledby'); if (lb) n = lb.split(/\\s+/).map((id) => { const e = document.getElementById(id); return e ? e.innerText : ''; }).join(' '); }
+    if (!n) n = el.getAttribute('placeholder') || el.getAttribute('name') || '';
+    return norm(n).slice(0, 60);
+  };
+  const out = []; const seen = new Set();
+  const push = (name, val) => { name = norm(name); val = norm(val); if (!name || !val) return; const k = name + '=' + val; if (seen.has(k)) return; seen.add(k); out.push(name + ': ' + JSON.stringify(val.slice(0, 60))); };
+  for (const el of document.querySelectorAll('input,textarea,select')) {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || tag).toLowerCase();
+    if (type === 'hidden' || !vis(el)) continue;
+    if (tag === 'select') { const o = el.options[el.selectedIndex]; const v = o ? norm(o.text) : ''; if (v && !/^(select|choose|--)/i.test(v)) push(nameOf(el), v); continue; }
+    if (type === 'checkbox' || type === 'radio') { if (el.checked) push(nameOf(el), 'checked'); continue; }
+    if (type === 'file') { const f = el.files && el.files[0]; if (f) push(nameOf(el) || 'File', f.name); continue; }
+    const v = norm(el.value); if (v) push(nameOf(el), v);
+  }
+  // Custom select widgets: the chosen value is the displayed text inside the control. The
+  // de-facto convention across select libraries is a "*single-value*/*multi-value*" node;
+  // fall back to a short control innerText that is not a placeholder.
+  for (const el of document.querySelectorAll('[role=combobox],[aria-haspopup=listbox]')) {
+    if (!vis(el)) continue;
+    const host = el.closest('[class*="control"],[class*="container"],[class*="select"]') || el.parentElement || el;
+    let val = '';
+    const sv = host.querySelector && host.querySelector('[class*="singleValue"],[class*="single-value"],[class*="multiValue"],[class*="multi-value"]');
+    if (sv) val = norm(sv.innerText);
+    if (!val) { const t = norm(host.innerText); if (t && t.length <= 50 && !/^(select|choose|search|type|start typing|\\.\\.\\.)/i.test(t)) val = t; }
+    if (val) push(nameOf(el) || nameOf(host), val);
+  }
+  return out;
+}); }`;
+
+async function readFieldValues(session) {
+  const r = await pw(session, ["run-code", FIELD_VALUES_JS, "--raw"], { timeout: 15000 });
+  let list = [];
+  try { const m = (r.out || "").match(/\[[\s\S]*\]/); list = m ? JSON.parse(m[0]) : []; } catch {}
+  return Array.isArray(list) ? list : [];
+}
+
+// PARADIGM FIX (the #1 loop/cost sink): selecting a custom combobox used to cost the planner
+// click(reveal) → re-snapshot → click(option) — three LLM-bearing cycles per dropdown, and
+// the re-snapshot churn is exactly where the re-fill loops compounded. This deterministic
+// routine commits ANY single-choice control (native <select> OR custom listbox/React-Select)
+// in ONE zero-LLM action: open → (type to filter) → pick the best-matching visible option.
+// Generic: it matches options by visible text, no vendor selectors or hardcoded values.
+// The desired option text is passed as a real argument to page.evaluate (via JSON.stringify),
+// so no string interpolation can break the generated browser code or inject anything.
+function pickOptionJs(value) {
+  return `async page => { return await page.evaluate((want) => {
+  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  want = norm(want);
+  const vis = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const nodes = [...document.querySelectorAll('[role=option],li[role=option],[class*="option"],[class*="menu"] li,[class*="listbox"] li')].filter(vis);
+  if (!nodes.length) return { ok: false, reason: 'no visible options' };
+  let best = null, score = -1;
+  for (const o of nodes) {
+    const t = norm(o.innerText);
+    if (!t) continue;
+    let sc = 0;
+    if (t === want) sc = 4; else if (t.startsWith(want)) sc = 3; else if (want && t.includes(want)) sc = 2; else if (want && want.includes(t)) sc = 1;
+    if (sc > score) { score = sc; best = o; }
+  }
+  if (!best || score <= 0) return { ok: false, reason: 'no option matched' };
+  best.scrollIntoView({ block: 'center' });
+  best.click();
+  return { ok: true, picked: norm(best.innerText) };
+}, ${JSON.stringify(String(value ?? ""))}); }`;
+}
+
+async function selectCombobox(session, ref, value) {
+  if (!ref) return { ok: false, reason: "no ref" };
+  // Native <select> commits directly — no popup to drive.
+  const native = await pw(session, ["select", ref, String(value ?? "")], { timeout: 20000 });
+  if (native.ok) return { ok: true, picked: String(value), via: "native" };
+  // Custom widget: open it, type to filter the list, then click the matching option.
+  await pw(session, ["click", ref], { timeout: 20000 });
+  await pw(session, ["run-code", "--filename=scripts/wait_stable.js"]).catch(() => {});
+  await pw(session, ["type", String(value ?? "")], { timeout: 15000 }).catch(() => {});
+  await pw(session, ["run-code", "--filename=scripts/wait_stable.js"]).catch(() => {});
+  const r = await pw(session, ["run-code", pickOptionJs(value), "--raw"], { timeout: 15000 });
+  let info = {};
+  try { info = JSON.parse((r.out || "").match(/\{[\s\S]*\}/)?.[0] || "{}"); } catch {}
+  if (!info.ok) { await pw(session, ["press", "Escape"]).catch(() => {}); } // close stray popup so it doesn't block other fields
+  return info;
 }
 
 // Slim the a11y snapshot to the lines a form-planner actually needs. Greenhouse/Workday/
@@ -157,6 +265,10 @@ function stepToArgs(step, { resumePath }) {
   switch (step.action) {
     case "fill": return ["fill", ref, String(step.value ?? "")];
     case "select": return ["select", ref, String(step.value ?? "")];
+    // Atomic single-choice commit (native <select> OR custom listbox/React-Select). Handled
+    // by selectCombobox in the executor — this marker just lets the step survive filtering
+    // and render in the approval/preview as a single command.
+    case "selectOption": return ["selectOption", ref, String(step.value ?? "")];
     case "check": return ["check", ref];
     case "uncheck": return ["uncheck", ref];
     case "click": return ["click", ref];
@@ -182,7 +294,7 @@ const PLAN_SCHEMA = `Return ONLY a JSON object:
 {
   "summary": "<one line: what this page/section is>",
   "steps": [
-    {"action":"fill|select|check|uncheck|click|type|press|upload","ref":"<exact ref from the snapshot, e.g. e23>","value":"<value if needed>","label":"<field name>","reveals":<true if this action opens a dropdown / adds rows / mutates the DOM>}
+    {"action":"fill|selectOption|check|uncheck|click|type|press|upload","ref":"<exact ref from the snapshot, e.g. e23>","value":"<value if needed>","label":"<field name>","reveals":<true ONLY for a click that adds rows / opens a non-dropdown section that needs a re-snapshot>}
   ],
   "next": "resnapshot | submit | done | human | otp | skip | login",
   "otp_refs": ["<refs of the security/verification code boxes, only when next=otp>"],
@@ -194,10 +306,9 @@ const PLAN_SCHEMA = `Return ONLY a JSON object:
 
 const PLAN_RULES = `Rules:
 - Use ONLY refs that appear in the snapshot. Plan ONLY actions valid on the CURRENT snapshot.
-- A reveal action (custom dropdown/combobox that shows options on click, "add another") MUST be the LAST step with "reveals":true and "next":"resnapshot" — you'll see the options after we re-snapshot.
-- Custom comboboxes (React-Select etc.): click the control (reveals=true) → next resnapshot → then click the option's ref.
-- Native <select> → action "select" with the option label. Checkbox/radio → "check".
-- Resume upload: action "upload" with "file":"resume".
+- FIELDS ALREADY SET (CRITICAL — the #1 cause of failure is re-touching set fields): the prompt includes a "FIELDS ALREADY SET" list of controls whose committed value was read live from the page. NEVER re-fill, re-select, or re-open any field whose value there already matches what you'd enter. Act ONLY on fields that are still empty, required-and-blank, or showing an error. If everything required is already set, go straight to submit/done — do NOT re-issue fills you already did.
+- DROPDOWNS / COMBOBOXES — ONE action, no reveal cycle: for ANY single-choice control (native <select> OR a custom combobox/listbox/React-Select), emit a SINGLE step {"action":"selectOption","ref":"<the combobox/select ref>","value":"<exact option label>","label":"<field>"}. The runner opens it, filters, and clicks the matching option deterministically — so do NOT click to reveal, do NOT set "reveals", and do NOT plan a separate re-snapshot just to pick the option. One selectOption per dropdown. Checkbox/radio → "check".
+- Resume upload: use action "upload" with "file":"resume" — this attaches the file directly to the hidden input. Do NOT click/​press the "Attach"/"Upload"/"Choose file"/"Add résumé" button yourself: clicking it opens a file-chooser that blocks the page. If a file-chooser is already open (a prior step clicked such a button), still just emit the "upload" action with "file":"resume" — the runner fulfils the open chooser.
 - EEO / voluntary self-id → choose decline / "prefer not to say". Marketing/SMS consent → No. Never invent data; if a value isn't derivable, omit the step and add it to "flagged".
 - COOKIE / PRIVACY CONSENT BANNER FIRST: if the page shows a cookie / privacy / consent banner or dialog (text like "This website stores cookies", "We use cookies", "Privacy"), your FIRST step must be to dismiss it — click its "Accept" / "Accept All" / "Agree" / "I Accept" / "Got it" / "Allow all" control (it may be a button or link). A consent overlay blocks clicks on the real page (e.g. the Apply button), so it must be cleared before anything else. Then "next":"resnapshot".
 - START APPLICATION / APPLY MENU: if this is a job DESCRIPTION page (not the form yet) with an "Apply" / "Apply Now" / "Start Your Application" button, click it ONCE → "next":"resnapshot". Clicking Apply often reveals an application-method choice (e.g. "Autofill with Resume", "Apply Manually", "Use My Last Application") or a sign-in. ALWAYS PREFER "Autofill with Resume" / "Apply with Resume" / "Use a résumé" when offered (common on Workday): select it, then upload the résumé (action "upload", file "resume") so the form auto-populates, then review/fill anything missing. Only "Apply Manually" if no autofill/résumé option exists.
@@ -205,11 +316,11 @@ const PLAN_RULES = `Rules:
 - SIGN-IN / CREATE-ACCOUNT page (email + password fields, common on Workday/iCIMS): fill the email field with the applicant's email (in the profile), and fill the password field with the LITERAL token "$PASSWORD" (NEVER a real password — the runner substitutes it). Use the same email+password to register or sign in. After clicking the sign-in/register button, "next":"resnapshot". If it's a brand-new signup that will require email confirmation you can't do, set "next":"login" and "needs_account_creation":true.
 - EXPIRED / UNAVAILABLE / ERROR / WRONG PAGE: set "next":"skip" with a short "skip_reason" and fill nothing — when the posting is gone ("no longer accepting applications", "position closed", 404, "job not found") OR the page is NOT this job's application and offers no path to it (a generic careers/job-listing page, a marketing/landing page, the wrong page). BUT a job-description page that HAS an Apply / Apply Now / Start-application button is NOT this case — click Apply and continue (see the START APPLICATION rule). Skipped jobs are marked handled and won't be retried.
 - AUTO-SUBMIT: when AUTO_SUBMIT is "yes" and every required field on the page is filled (or already filled from a prior step), you MUST locate the real submit control in the snapshot (a button named "Submit application" / "Submit" / "Apply" / "Send application") and return "next":"submit" with a CLICK on that button as the LAST step. Do NOT return "done" while AUTO_SUBMIT is "yes" unless a REQUIRED field genuinely can't be filled (then "flagged" it). Optional EEO / voluntary self-id are NOT a reason to stop — decline them and submit. If the submit button isn't visible yet (e.g. revealed after the last field), set "next":"resnapshot" to continue. When AUTO_SUBMIT is "no", fill everything then "next":"done".
-- FIX VALIDATION ERRORS BEFORE RE-SUBMIT: if the snapshot shows a validation/error banner (e.g. "Your form needs corrections", "Missing entry for required field: X", a field marked required/invalid) OR the Submit button is still present after a submit attempt, the form did NOT submit. Find the offending field and fix it — a custom combobox (Current location, Country) often needs the click→type→click-option flow, not a plain fill; a required upload needs the résumé attached. Fix it, then "next":"submit" again. Do NOT report done.
+- FIX VALIDATION ERRORS BEFORE RE-SUBMIT: if the snapshot shows a validation/error banner (e.g. "Your form needs corrections", "Missing entry for required field: X", a field marked required/invalid) OR the Submit button is still present after a submit attempt, the form did NOT submit. Find ONLY the offending/errored field and fix it — for a dropdown use one "selectOption" (not a plain fill); a required upload needs the résumé attached. Do NOT re-do fields already in "FIELDS ALREADY SET". Fix the error, then "next":"submit" again. Do NOT report done.
 - Security/verification CODE field (8 boxes etc.): "next":"otp" and put the box refs in "otp_refs".
 - Interactive image CAPTCHA / government-id you cannot solve: "next":"human" with "human_reason".`;
 
-async function planPage({ model, apiKey, snapshot, profile, job, autoSubmit, resumePath, history }) {
+async function planPage({ model, apiKey, snapshot, fieldValues = [], profile, job, autoSubmit, resumePath, history }) {
   const cfg = llmConfig(model, apiKey);
   // CACHE-OPTIMIZED MESSAGE LAYOUT — DeepSeek/OpenAI cache the longest IDENTICAL
   // prefix of the request, billing those tokens ~50× cheaper (DeepSeek hit vs miss).
@@ -232,6 +343,9 @@ async function planPage({ model, apiKey, snapshot, profile, job, autoSubmit, res
   ].join("\n");
   const pageContext = [
     history?.length ? `ALREADY DONE (don't repeat): ${history.slice(-8).join("; ")}` : "",
+    fieldValues?.length
+      ? `FIELDS ALREADY SET (committed values read live from the page — do NOT re-fill, re-select, or re-open any of these; act ONLY on empty / required / errored fields):\n${fieldValues.map((v) => `- ${v}`).join("\n")}`
+      : "",
     `ACCESSIBILITY SNAPSHOT (refs like e12 are how you target elements):\n${snapshot}`,
   ].filter(Boolean).join("\n\n");
 
@@ -366,27 +480,34 @@ export async function runApplicationPlan({ url, agentName, emit, autoSubmit, aut
   //   3. Else a fresh browser.
   const savedSession = sessionFileFor(profile.fullName);
   if (forkedProfile) {
-    await pw(session, ["open", url, "--browser", "chrome", "--persistent", "--profile", forkedProfile], { timeout: 120000 });
+    await pw(session, forkedOpenArgs(forkedProfile, url), { timeout: 120000 });
     step("info", "Browser session", "Forked real Chrome profile — applying signed-in");
   } else if (fs.existsSync(savedSession)) {
-    await pw(session, ["open"], { timeout: 90000 });
+    await pw(session, ["open", "--headed"], { timeout: 90000 });
     await pw(session, ["state-load", savedSession]).catch(() => {});
     await pw(session, ["goto", url], { timeout: 90000 });
     step("info", "Browser session", "Loaded saved Chrome session — applying logged-in");
   } else {
-    await pw(session, ["open", url], { timeout: 90000 });
+    await pw(session, ["open", url, "--headed"], { timeout: 90000 });
   }
 
   let submitAttempts = 0;
+  let doneNudges = 0;
+  let stall = 0;
+  let lastFingerprint = "\u0000";
   for (let page = 0; page < MAX_PAGES; page++) {
     if (wasStopped(runId)) return finish("stopped", "Stopped by user");
 
     emit({ type: "status", phase: "planning", message: `Reading & planning page ${page + 1}` });
     const snapshot = await snapshotPage(session, runDir, page);
+    // Read the COMMITTED value of every control so the planner can avoid re-touching
+    // already-set fields (the root cause of the dropdown re-fill loops). One zero-LLM probe
+    // per page, reused for both the planner context and the stall fingerprint below.
+    const fieldValues = await readFieldValues(session);
 
     let plan, usage;
     try {
-      ({ plan, usage } = await planPage({ model, apiKey, snapshot, profile, job, autoSubmit, resumePath: profile.resumePath, history }));
+      ({ plan, usage } = await planPage({ model, apiKey, snapshot, fieldValues, profile, job, autoSubmit, resumePath: profile.resumePath, history }));
     } catch (e) {
       return finish("error", `Planner failed: ${String(e?.message || e).slice(0, 160)}`);
     }
@@ -419,21 +540,39 @@ export async function runApplicationPlan({ url, agentName, emit, autoSubmit, aut
     if (plan.next === "login" && plan.needs_account_creation) {
       step("warn", "Account creation needed", "Sign-up requires email confirmation — a human must create the account, then resume.");
       emit({ type: "paused", reason: "Create the account in the open browser (it needs email confirmation), then resume." });
-      const note = await awaitHumanResume(runId);
+      const note = await awaitHumanResume(runId, { timeoutMs: CONFIG.handoffTimeoutMs });
       if (wasStopped(runId) || note === "__stopped__") return finish("stopped", "Stopped by user");
+      if (note === "__timeout__") return finish("skipped", `Auto-abandoned: no human created the account within ${Math.round(CONFIG.handoffTimeoutMs / 60000)}m`);
       history.push("human created the account");
       continue;
     }
     if (plan.next === "human") {
       step("warn", "Human action needed", plan.human_reason || "Manual step required");
       emit({ type: "paused", reason: plan.human_reason || "A human must complete a step in the browser" });
-      const note = await awaitHumanResume(runId);
+      const note = await awaitHumanResume(runId, { timeoutMs: CONFIG.handoffTimeoutMs });
       if (wasStopped(runId) || note === "__stopped__") return finish("stopped", "Stopped by user");
+      if (note === "__timeout__") return finish("skipped", `Auto-abandoned: no human action within ${Math.round(CONFIG.handoffTimeoutMs / 60000)}m (e.g. CAPTCHA/ID check)`);
       history.push("human completed a manual step");
       continue;
     }
 
-    const steps = (plan.steps || []).filter((s) => stepToArgs(s, { resumePath: profile.resumePath }));
+    // Convergence guard: if the COMMITTED field state stops changing across consecutive
+    // planning cycles while the planner keeps asking to re-snapshot, we're in a loop (e.g. a
+    // dropdown that never commits). Bail instead of burning every page of MAX_PAGES.
+    const fingerprint = fieldValues.join("||");
+    if (fingerprint === lastFingerprint && plan.next === "resnapshot") stall++; else stall = 0;
+    lastFingerprint = fingerprint;
+    if (stall >= 3) {
+      step("warn", "No progress", "Committed form state stopped changing across cycles — stopping to avoid a loop.");
+      return finish(
+        fieldValues.length ? "review_pending" : "skipped",
+        fieldValues.length
+          ? "Stuck: a required field could not be committed after several attempts — left for human review."
+          : "Stuck: the page never produced a fillable form.",
+      );
+    }
+
+    const steps = (plan.steps || []).filter((s) => (s.action === "selectOption" ? !!(s.ref || s.selector) : stepToArgs(s, { resumePath: profile.resumePath })));
     if (!(await gate("plan", { steps, summary: plan.summary, next: plan.next, page: page + 1, flagged: plan.flagged || [] }))) {
       return finish("stopped", "Stopped by user");
     }
@@ -452,6 +591,14 @@ export async function runApplicationPlan({ url, agentName, emit, autoSubmit, aut
         const file = s.file === "resume" ? profile.resumePath : (s.file || profile.resumePath);
         r = await uploadResumeFile(session, file);
         step(r.ok ? "success" : "warn", "upload résumé", r.ok ? `attached ${path.basename(file)}` : `failed: ${JSON.stringify(r.info).slice(0, 80)}`);
+      } else if (s.action === "selectOption") {
+        // Deterministic open→filter→pick — commits the dropdown without any LLM re-snapshot.
+        const info = await selectCombobox(session, s.ref, subst(String(s.value ?? "")));
+        r = { ok: !!info.ok };
+        step(info.ok ? "action" : "warn", "playwright", `selectOption ${s.ref}="${mask(s.value).slice(0, 30)}"${info.ok ? ` → ${info.picked || "ok"}` : ` → ${(info.reason || "failed").slice(0, 60)}`}`);
+        // A committed selectOption does NOT need a reveal/replan — the value is already set.
+        history.push(`selectOption ${s.label || s.ref}=${mask(s.value).slice(0, 30)}${info.ok ? " (committed)" : " (FAILED)"}`);
+        continue;
       } else {
         r = await pw(session, args.map(subst));            // real creds only at exec time
         step(r.ok ? "action" : "warn", "playwright", `${args.map(mask).join(" ").slice(0, 120)}${r.ok ? "" : " → " + (r.err || r.out || "failed").slice(0, 80)}`);
@@ -480,7 +627,26 @@ export async function runApplicationPlan({ url, agentName, emit, autoSubmit, aut
       history.push(`SUBMIT attempt ${submitAttempts} did NOT go through — likely a required field is missing/invalid; check the form for errors and fix before submitting again`);
       continue;
     }
-    if (plan.next === "done") return finish("review_pending", "Form filled; stopped before submit");
+    if (plan.next === "done") {
+      // The planner thinks the job is finished. With auto-submit ON, "done" should mean a
+      // real confirmation page — VERIFY it rather than blindly reporting review_pending (the
+      // old bug that mislabelled confirmed Greenhouse submits). When auto-submit is OFF,
+      // "done" legitimately means "form filled, awaiting human submit".
+      if (!autoSubmit) return finish("review_pending", "Form filled; stopped before submit");
+      emit({ type: "status", phase: "verifying", message: "Verifying the page" });
+      const after = await snapshotPage(session, runDir, `${page}-done`);
+      const v = await verifySubmission({ model, apiKey, snapshot: after, job });
+      if (v.submitted) {
+        step("success", "Submission confirmed", String(v.reason || "").slice(0, 140));
+        return finish("submitted", `Submitted — confirmed: ${String(v.reason || "").slice(0, 120)}`);
+      }
+      // auto-submit but no confirmation: the planner stopped early. Nudge it to find and click
+      // the real Submit (bounded, and the stall guard above is the ultimate backstop).
+      doneNudges++;
+      if (doneNudges >= 2) return finish("review_pending", `Planner reported done but no confirmation page: ${String(v.reason || "").slice(0, 100)}`);
+      history.push("You returned next=done, but AUTO_SUBMIT is ON and this is NOT a confirmation page — locate the real Submit button and submit, or flag the exact required field you cannot fill.");
+      continue;
+    }
     // next === resnapshot → loop again
   }
   return finish("error", `Gave up after ${MAX_PAGES} pages`);
@@ -498,6 +664,8 @@ export async function runBatchPlan(opts) {
   const forked = opts.chromeProfile
     ? prepareForkedProfile({ applierName, chromeProfileDir: opts.chromeProfile, runId })
     : null;
+  const jobIndexRef = { current: 0 };
+  const monitor = startBrowserMonitor({ runId, session, emit, getJobIndex: () => jobIndexRef.current });
   try {
     emit({ type: "batch", total: jobs.length, source, agentName, generateResumeByAi: !!opts.generateResumeByAi });
     let submitted = 0;
@@ -505,10 +673,11 @@ export async function runBatchPlan(opts) {
     for (let i = 0; i < jobs.length; i++) {
       if (wasStopped(runId)) { emit({ type: "done", result: "stopped", message: `Stopped after ${i}/${jobs.length}`, submitted, total: jobs.length }); return; }
       const job = jobs[i];
+      jobIndexRef.current = i;
       emit({ type: "job", index: i, total: jobs.length, jobId: job.id, title: job.title, company: job.company, url: job.url, source: job.source });
       const jobEmit = (e) => {
         if (e.type === "done") return emit({ ...e, type: "jobDone", jobIndex: i });
-        if (e.type === "paused" || e.type === "usage" || e.type === "step") return emit({ ...e, jobIndex: i });
+        if (e.type === "paused" || e.type === "usage" || e.type === "step" || e.type === "screenshot") return emit({ ...e, jobIndex: i });
         return emit(e);
       };
 
@@ -555,7 +724,7 @@ export async function runBatchPlan(opts) {
         r = await runApplicationPlan({
           url: job.url, agentName, emit: jobEmit, autoSubmit: opts.autoSubmit, autoApprove,
           profile: jobProfile, model: opts.model, apiKey: opts.apiKey, job, runId,
-          forkedProfile: forked?.runProfile || null,
+          forkedProfile: forked || null,
         });
       } catch (e) { jobEmit({ type: "done", result: "error", message: String(e?.message || e).slice(0, 200) }); r = { result: "error" }; }
       results.push({ jobId: job.id, title: job.title, result: r.result });
@@ -569,6 +738,7 @@ export async function runBatchPlan(opts) {
     }
     emit({ type: "done", result: "batch_complete", message: `Batch complete — ${submitted}/${jobs.length} submitted`, submitted, total: jobs.length, results });
   } finally {
+    monitor.stop();
     // Carry any new logins back into the master, then tear the browser down.
     if (forked) persistForkedProfile(forked);
     await closeBrowserSession(session);

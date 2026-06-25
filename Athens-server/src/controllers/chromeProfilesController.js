@@ -93,18 +93,22 @@ export async function importChromeSession(req, res) {
     if (!fs.existsSync(src)) return res.status(404).json({ success: false, error: `Chrome profile "${profileDir}" not found.` });
 
     const master = masterProfileDir(applierName);
+    const profileDirName = path.basename(profileDir);
+    const ls = JSON.parse(fs.readFileSync(path.join(base, "Local State"), "utf8"));
+    const profileInfo = ls?.profile?.info_cache?.[profileDirName] || { name: profileDirName, user_name: "" };
+
     // Re-import = fresh fork: drop the old master so stale logins don't linger.
     try { if (fs.existsSync(master)) fs.rmSync(master, { recursive: true, force: true }); } catch {}
-    fs.mkdirSync(path.join(master, "Default"), { recursive: true });
-    fs.cpSync(src, path.join(master, "Default"), {
+    fs.mkdirSync(master, { recursive: true });
+    fs.cpSync(src, path.join(master, profileDirName), {
       recursive: true,
       force: true,
       filter: (p) => !SKIP_RE.test(path.basename(p)),
     });
-    try {
-      const localState = path.join(base, "Local State");
-      if (fs.existsSync(localState)) fs.copyFileSync(localState, path.join(master, "Local State"));
-    } catch { /* optional */ }
+    fs.writeFileSync(path.join(master, "Local State"), JSON.stringify({
+      profile: { info_cache: { [profileDirName]: profileInfo }, last_used: profileDirName },
+    }));
+    fs.writeFileSync(path.join(master, ".seeded-profile"), profileDirName);
 
     return res.json({ success: true, message: "Session imported — agents now launch your signed-in Chrome (a copy, concurrently)." });
   } catch (err) {

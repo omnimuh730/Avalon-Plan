@@ -16,7 +16,7 @@ function normalizeConfiguredApiBase(raw: string): string {
 
 /**
  * REST base including `/api` suffix.
- * - `SERVER_API_URL` / `VITE_API_URL`: full URL to Athens-server, e.g. `http://127.0.0.1:7979/api`
+ * - `SERVER_API_URL` / `VITE_API_URL`: full URL to Athens-server, e.g. `http://127.0.0.1:8979/api`
  * - Dev proxy: set `VITE_DEV_RELATIVE_API=1` and use same-origin `/api` (see vite.config.ts)
  */
 export function resolveApiBase(): string {
@@ -30,7 +30,7 @@ export function resolveApiBase(): string {
     return "/api";
   }
   if (import.meta.env.DEV) {
-    const port = import.meta.env.VITE_BACKEND_PORT ?? "7979";
+    const port = import.meta.env.VITE_BACKEND_PORT ?? "8979";
     return `http://127.0.0.1:${port}/api`;
   }
   return "/api";
