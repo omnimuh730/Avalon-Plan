@@ -92,7 +92,7 @@ export function AgentsPage() {
           <div>
             <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
               <Bot className="w-5 h-5 text-violet-600" />
-              AI Agents
+              {"AI\u200b Agents"}
             </h2>
             <p className="text-sm text-muted-foreground">Deploy codex agents to auto-apply to posted jobs</p>
           </div>

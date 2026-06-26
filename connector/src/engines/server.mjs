@@ -8,6 +8,7 @@ import { getAthensServerUrl } from "./athens-server.mjs";
 import { initConnectorSocket, emitRunEvent } from "../socket-hub.mjs";
 import { runBatchCodex, sessionForRun, closeBrowserSession } from "./codex-apply.mjs";
 import { runBatchClaude } from "./claude-apply.mjs";
+import { runBatchHermes } from "./hermes-apply.mjs";
 import { runBatchPlan } from "./plan-apply.mjs";
 import { ensureDeepSeekProxy } from "./proxy-control.mjs";
 import {
@@ -560,6 +561,21 @@ const server = http.createServer(async (req, res) => {
       checkpoint() { if (wasStopped(run.id)) throw new Error("stopped"); },
     };
     (async () => {
+      if (provider === "hermes") {
+        // Hermes IS the agent: it drives the browser via its OWN Playwright + Gmail
+        // MCP and job-apply skills (loaded from the hermes-agent repo), reached over
+        // its ACP stdio server. Model/provider is Hermes' own (~/.hermes) config.
+        await runBatchHermes({
+          jobs, source: source || "Direct", agentName: name, autoSubmit, generateResumeByAi,
+          profile, model, apiKey, chromeProfile,
+          applierId: profile.accountId, runId: run.id,
+          hermesPython: CONFIG.hermesPython, hermesCwd: CONFIG.hermesCwd, hermesEnvVars: CONFIG.hermesEnvVars,
+          controller,
+          markApplied: (jobId) => markJobApplied({ jobId, applierId: profile.accountId }),
+          emit: (e) => emitTo(run, e),
+        });
+        return;
+      }
       if (provider === "claude-code") {
         // "Plan & Execute" driver → the deterministic plan→execute→verify→replan
         // loop (1 LLM call/page on DeepSeek + playwright-cli, no conversational

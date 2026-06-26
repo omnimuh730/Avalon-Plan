@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +14,7 @@ export const PATHS = {
   agentRuntime: path.resolve(ROOT, "agent-runtime"),
   mcpServers: path.resolve(ROOT, "mcp-servers"),
   claudeCode: path.resolve(ROOT, "claude-code"),
+  hermesAgent: path.resolve(ROOT, "hermes-agent"),
   unifiedAi: (process.env.UNIFIED_AI_URL || "http://127.0.0.1:8790").replace(/\/$/, ""),
   codexBin: path.resolve(ROOT, "codex/codex-rs/target/release/codex"),
   gmailOtp: path.resolve(ROOT, "mcp-servers/gmail/otp_fetch.py"),
@@ -52,6 +54,18 @@ export const CONFIG = {
   codexBin: env("CODEX_BIN") || PATHS.codexBin,
   claudeBin: env("CLAUDE_BIN", "claude"),
   claudeCwd: env("CLAUDE_CODE_DIR") || PATHS.claudeCode,
+  // Hermes provider: drive Hermes' ACP server (`python -m acp_adapter`) from the
+  // hermes-agent repo root so its skills/MCPs/config load exactly as
+  // scripts/job-apply-start.sh sets them up.
+  hermesCwd: env("HERMES_AGENT_DIR") || PATHS.hermesAgent,
+  hermesPython:
+    env("HERMES_PYTHON") ||
+    (fs.existsSync(path.resolve(PATHS.hermesAgent, ".venv/bin/python"))
+      ? path.resolve(PATHS.hermesAgent, ".venv/bin/python")
+      : "python3"),
+  // Parsed ~/.hermes/.env (CUSTOM_API_KEY etc.) merged into the ACP child's env,
+  // mirroring `source "$HOME/.hermes/.env"` in job-apply-start.sh.
+  hermesEnvVars: parseEnvFile(env("HERMES_ENV_FILE") || path.join(os.homedir(), ".hermes", ".env")),
   unifiedAiUrl: PATHS.unifiedAi,
   autoSubmit: (env("AUTO_SUBMIT") || "true") !== "false",
   defaultMode: env("AGENT_DEFAULT_MODE", "plan"),

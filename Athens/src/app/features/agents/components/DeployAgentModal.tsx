@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Loader2, X, Zap, ArrowRight, ArrowLeft, Plus, User, Briefcase, Rocket, Check, Chrome,
 } from "lucide-react";
@@ -44,7 +45,8 @@ function SelectCard({ active, onClick, title, desc }: { active: boolean; onClick
       className={`text-left rounded-xl border px-3 py-2.5 transition-colors ${active ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border hover:bg-secondary"}`}
     >
       <div className="flex items-center gap-1.5">
-        {active && <Check size={13} className="text-primary shrink-0" />}
+        {/* Keep mounted — conditional unmount breaks if extensions rewrite "ai" inside text (e.g. playwright). */}
+        <Check size={13} className={`shrink-0 ${active ? "text-primary" : "invisible"}`} />
         <span className="text-sm font-semibold text-foreground">{title}</span>
       </div>
       <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{desc}</div>
@@ -108,8 +110,11 @@ export function DeployAgentModal({
   ];
   const canNext = stepValid[step];
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+  const modal = (
+    // translate="no" + visibility toggles (not conditional mount): browser Translate and
+    // Highlight-style extensions rewrite text nodes ("ai" in "playwright", "AI", etc.)
+    // and React crashes on unmount with removeChild "not a child of this node".
+    <div translate="no" className="notranslate fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
       <div className="relative z-10 bg-card rounded-3xl border border-border w-full max-w-3xl shadow-2xl flex flex-col max-h-[92vh]">
         {/* Header + step indicator */}
@@ -142,8 +147,9 @@ export function DeployAgentModal({
                   onClick={() => reachable && setStep(i)}
                   className={`flex items-center gap-2 rounded-full pl-1.5 pr-3 py-1 text-xs font-semibold transition-colors ${active ? "bg-primary text-white" : done ? "bg-primary/10 text-primary" : "bg-secondary text-muted-foreground"} disabled:opacity-50`}
                 >
-                  <span className={`w-5 h-5 rounded-full flex items-center justify-center ${active ? "bg-white/20" : done ? "bg-primary/20" : "bg-background"}`}>
-                    {done ? <Check size={12} /> : <Icon size={12} />}
+                  <span className={`relative w-5 h-5 rounded-full flex items-center justify-center ${active ? "bg-white/20" : done ? "bg-primary/20" : "bg-background"}`}>
+                    <Check size={12} className={done ? "" : "hidden"} />
+                    <Icon size={12} className={done ? "hidden" : ""} />
                   </span>
                   {s.label}
                 </button>
@@ -156,8 +162,7 @@ export function DeployAgentModal({
         {/* Body */}
         <div className="px-6 py-5 overflow-y-auto">
           {/* STEP 1 — Basics */}
-          {step === 0 && (
-            <div className="space-y-4">
+          <div className={step === 0 ? "space-y-4" : "hidden"} aria-hidden={step !== 0}>
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-semibold text-foreground">Agent name</span>
                 <input
@@ -189,11 +194,9 @@ export function DeployAgentModal({
                 </label>
               </div>
             </div>
-          )}
 
           {/* STEP 2 — Jobs */}
-          {step === 1 && (
-            <div className="space-y-3">
+          <div className={step === 1 ? "space-y-3" : "hidden"} aria-hidden={step !== 1}>
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-semibold text-foreground">
                   Job source <span className="text-muted-foreground font-normal">— posted, not yet applied</span>
@@ -251,51 +254,50 @@ export function DeployAgentModal({
                 Agent will auto-bid <span className="font-semibold text-primary">{form.queue.length}</span> job{form.queue.length === 1 ? "" : "s"}, one by one.
               </p>
             </div>
-          )}
 
           {/* STEP 3 — Engine */}
-          {step === 2 && (
-            <div className="space-y-4">
+          <div className={step === 2 ? "space-y-4" : "hidden"} aria-hidden={step !== 2}>
               <div>
                 <div className="text-xs font-semibold text-foreground mb-1.5">Provider</div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <SelectCard active={form.provider === "codex"} onClick={() => form.setProvider("codex")} title="Codex" desc="codex-rs drives the browser via playwright-cli" />
                   <SelectCard active={form.provider === "claude-code"} onClick={() => form.setProvider("claude-code")} title="Claude Code" desc="claude drives via Playwright MCP / CLI / Plan" />
+                  <SelectCard active={form.provider === "hermes"} onClick={() => form.setProvider("hermes")} title="Hermes" desc="Hermes drives via its own Playwright + Gmail MCP & job-apply skills" />
                 </div>
               </div>
 
-              {form.provider === "claude-code" ? (
-                <div>
-                  <div className="text-xs font-semibold text-foreground mb-1.5">Browser driver</div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <SelectCard active={form.claudeEngine === "cli"} onClick={() => form.setClaudeEngine("cli")} title="Playwright CLI" desc="Snapshots to files — cheaper" />
-                    <SelectCard active={form.claudeEngine === "mcp"} onClick={() => form.setClaudeEngine("mcp")} title="Playwright MCP" desc="Snapshots in context — pricier" />
-                    <SelectCard active={form.claudeEngine === "plan"} onClick={() => form.setClaudeEngine("plan")} title="Plan & Execute" desc="1 call/page, verify→replan — cheapest" />
-                  </div>
+              <div className={form.provider === "claude-code" ? "" : "hidden"} aria-hidden={form.provider !== "claude-code"}>
+                <div className="text-xs font-semibold text-foreground mb-1.5">Browser driver</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <SelectCard active={form.claudeEngine === "cli"} onClick={() => form.setClaudeEngine("cli")} title="Playwright CLI" desc="Snapshots to files — cheaper" />
+                  <SelectCard active={form.claudeEngine === "mcp"} onClick={() => form.setClaudeEngine("mcp")} title="Playwright MCP" desc="Snapshots in context — pricier" />
+                  <SelectCard active={form.claudeEngine === "plan"} onClick={() => form.setClaudeEngine("plan")} title="Plan & Execute" desc="1 call/page, verify→replan — cheapest" />
                 </div>
-              ) : (
-                <div>
-                  <div className="text-xs font-semibold text-foreground mb-1.5">Engine</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <SelectCard active={form.mode === "plan"} onClick={() => form.setMode("plan")} title="Plan" desc="~$0.01–0.02/job · plans each page, runs deterministically" />
-                    <SelectCard active={form.mode === "turbo"} onClick={() => form.setMode("turbo")} title="Turbo" desc="codex drives every step · ~$0.10–0.30/job" />
-                  </div>
+              </div>
+
+              <div className={form.provider === "codex" ? "" : "hidden"} aria-hidden={form.provider !== "codex"}>
+                <div className="text-xs font-semibold text-foreground mb-1.5">Engine</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <SelectCard active={form.mode === "plan"} onClick={() => form.setMode("plan")} title="Plan" desc="~$0.01–0.02/job · plans each page, runs deterministically" />
+                  <SelectCard active={form.mode === "turbo"} onClick={() => form.setMode("turbo")} title="Turbo" desc="codex drives every step · ~$0.10–0.30/job" />
                 </div>
-              )}
+              </div>
+
+              <div className={`text-[11px] text-muted-foreground leading-relaxed ${form.provider === "hermes" ? "" : "hidden"}`} aria-hidden={form.provider !== "hermes"}>
+                Hermes runs its own job-apply skills, Playwright MCP browser, and Gmail OTP, using its own configured model from ~/.hermes. No sub-engine to pick.
+              </div>
 
               <div className="grid grid-cols-2 gap-2">
-                {form.provider === "codex" && form.mode === "plan" && (
+                <div className={form.provider === "codex" && form.mode === "plan" ? "" : "hidden"} aria-hidden={form.provider !== "codex" || form.mode !== "plan"}>
                   <Toggle checked={form.autoApprove} onChange={() => form.setAutoApprove((v) => !v)} title="Auto-approve plans" desc="Run unattended (off = approve each page)" />
-                )}
-                <Toggle checked={form.generateResumeByAi} onChange={() => form.setGenerateResumeByAi((v) => !v)} title="Generate resume by AI" desc="Tailor a résumé per job from the JD" />
+                </div>
+                <Toggle checked={form.generateResumeByAi} onChange={() => form.setGenerateResumeByAi((v) => !v)} title="Per-job résumés" desc="Write a custom résumé for each job from the JD" />
                 <Toggle checked={form.autoSubmit} onChange={() => form.setAutoSubmit((v) => !v)} title="Auto-submit" desc="Click Submit (off = stop at review)" />
               </div>
             </div>
-          )}
 
           {/* STEP 4 — Browser (Chrome Profile Manager style) */}
-          {step === 3 && (
-            <div className="space-y-4">
+          <div className={step === 3 ? "space-y-4" : "hidden"} aria-hidden={step !== 3}>
               <div className="text-center">
                 <div className="text-sm font-semibold text-foreground">Which browser session?</div>
                 <div className="text-xs text-muted-foreground mt-0.5">
@@ -323,7 +325,9 @@ export function DeployAgentModal({
                       title={p.email}
                       className={`relative flex flex-col items-center gap-2 rounded-2xl border p-3 min-w-0 transition-colors ${active ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border hover:bg-secondary"}`}
                     >
-                      {active && <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-primary text-white flex items-center justify-center"><Check size={11} /></span>}
+                      <span className={`absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-primary text-white flex items-center justify-center ${active ? "" : "hidden"}`} aria-hidden={!active}>
+                        <Check size={11} />
+                      </span>
                       <ProfileAvatar dir={p.dir} name={p.name} size={56} />
                       <span className="text-xs font-semibold text-foreground truncate max-w-full">{p.name}</span>
                       <span className="text-[10px] text-muted-foreground truncate max-w-full -mt-1">{p.email}</span>
@@ -332,32 +336,30 @@ export function DeployAgentModal({
                 })}
               </div>
 
-              {form.chromeProfile ? (
-                <div className="rounded-xl border border-border px-4 py-3 flex items-center justify-between gap-3">
-                  <div className="text-xs text-muted-foreground">
-                    <span className={form.importStatus === "error" ? "text-rose-600" : form.importStatus === "done" ? "text-emerald-600" : ""}>
-                      {form.importMessage || "Quit Google Chrome, then import this profile's session once. Every agent then reuses a copy — concurrently, no re-login."}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void form.importSession()}
-                    disabled={form.importStatus === "importing"}
-                    className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-50"
-                  >
-                    {form.importStatus === "importing" ? <Loader2 size={12} className="animate-spin" /> : <Chrome size={12} />}
-                    {form.importStatus === "importing" ? "Importing…" : form.importStatus === "done" ? "Re-import session" : "Import session"}
-                  </button>
+              <div className={form.chromeProfile ? "rounded-xl border border-border px-4 py-3 flex items-center justify-between gap-3" : "hidden"} aria-hidden={!form.chromeProfile}>
+                <div className="text-xs text-muted-foreground">
+                  <span className={form.importStatus === "error" ? "text-rose-600" : form.importStatus === "done" ? "text-emerald-600" : ""}>
+                    {form.importMessage || "Quit Google Chrome, then import this profile's session once. Every agent then reuses a copy — concurrently, no re-login."}
+                  </span>
                 </div>
-              ) : (
-                <p className="text-[11px] text-muted-foreground text-center">A fresh browser logs in / solves OTP per run via the Gmail tools.</p>
-              )}
+                <button
+                  type="button"
+                  onClick={() => void form.importSession()}
+                  disabled={form.importStatus === "importing"}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-50"
+                >
+                  {form.importStatus === "importing" ? <Loader2 size={12} className="animate-spin" /> : <Chrome size={12} />}
+                  {form.importStatus === "importing" ? "Importing…" : form.importStatus === "done" ? "Re-import session" : "Import session"}
+                </button>
+              </div>
+              <p className={`text-[11px] text-muted-foreground text-center ${form.chromeProfile ? "hidden" : ""}`} aria-hidden={!!form.chromeProfile}>
+                A fresh browser logs in / solves OTP per run via the Gmail tools.
+              </p>
             </div>
-          )}
 
-          {form.err && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-4">{form.err}</p>
-          )}
+          <p className={`text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-4 ${form.err ? "" : "hidden"}`} aria-hidden={!form.err}>
+            {form.err || ""}
+          </p>
         </div>
 
         {/* Footer */}
@@ -367,30 +369,34 @@ export function DeployAgentModal({
             onClick={() => (step === 0 ? onClose() : setStep((s) => s - 1))}
             className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-border text-sm font-semibold hover:bg-secondary"
           >
-            {step === 0 ? "Cancel" : (<><ArrowLeft size={14} /> Back</>)}
+            <span className={step === 0 ? "" : "hidden"} aria-hidden={step !== 0}>Cancel</span>
+            <span className={`inline-flex items-center gap-1.5 ${step === 0 ? "hidden" : ""}`} aria-hidden={step === 0}>
+              <ArrowLeft size={14} /> Back
+            </span>
           </button>
 
-          {step < STEPS.length - 1 ? (
-            <button
-              type="button"
-              onClick={() => setStep((s) => s + 1)}
-              disabled={!canNext}
-              className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 disabled:opacity-50"
-            >
-              Next <ArrowRight size={14} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={(e) => form.handleSubmit(e as unknown as React.FormEvent)}
-              disabled={form.loading || !form.valid || form.loadingMeta || !form.applierReady}
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 disabled:opacity-50"
-            >
-              {form.loading ? (<><Loader2 size={13} className="animate-spin" /> Launching…</>) : (<><Zap size={13} /> Deploy Agent</>)}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setStep((s) => s + 1)}
+            disabled={!canNext}
+            className={`inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 disabled:opacity-50 ${step < STEPS.length - 1 ? "" : "hidden"}`}
+            aria-hidden={step >= STEPS.length - 1}
+          >
+            Next <ArrowRight size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => form.handleSubmit(e as unknown as React.FormEvent)}
+            disabled={form.loading || !form.valid || form.loadingMeta || !form.applierReady}
+            className={`inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 disabled:opacity-50 ${step < STEPS.length - 1 ? "hidden" : ""}`}
+            aria-hidden={step < STEPS.length - 1}
+          >
+            {form.loading ? (<><Loader2 size={13} className="animate-spin" /> Launching…</>) : (<><Zap size={13} /> Deploy Agent</>)}
+          </button>
         </div>
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }

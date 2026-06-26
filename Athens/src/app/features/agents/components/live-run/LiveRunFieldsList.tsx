@@ -13,7 +13,7 @@ export function LiveRunFieldsList({ fields }: { fields: RunField[] }) {
             <span className="text-foreground font-medium text-right break-words flex items-center gap-1.5">
               {f.value}
               {f.source === "ai" && (
-                <span className="text-[10px] font-bold text-violet-600 bg-violet-50 border border-violet-200 rounded px-1 py-0.5 shrink-0">AI</span>
+                <span className="text-[10px] font-bold text-violet-600 bg-violet-50 border border-violet-200 rounded px-1 py-0.5 shrink-0">auto</span>
               )}
             </span>
           </div>

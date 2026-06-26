@@ -121,7 +121,7 @@ export interface DeployOptions {
   mode?: "turbo" | "plan";
   autoApprove?: boolean;
   generateResumeByAi?: boolean;
-  provider?: "codex" | "claude-code";
+  provider?: "codex" | "claude-code" | "hermes";
   claudeEngine?: "cli" | "mcp" | "plan";
   jobIds?: string[];
   chromeProfile?: string;
