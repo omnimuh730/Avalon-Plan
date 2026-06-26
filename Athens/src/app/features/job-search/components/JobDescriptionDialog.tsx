@@ -366,15 +366,6 @@ export function JobDescriptionDialog({
                 ? ` (${displayJob.scores.skillsCovered ?? 0}/${displayJob.scores.skillsRequired})`
                 : ""}
             </span>
-            <span className="rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40">
-              Salary {displayJob.scores.salary}
-            </span>
-            <span className="rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40">
-              Bid {displayJob.scores.bidEst}
-            </span>
-            <span className="rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40">
-              Fresh {displayJob.scores.freshness}
-            </span>
           </div>
           <div className="flex w-full sm:w-auto items-center justify-end gap-2">
             <Button
