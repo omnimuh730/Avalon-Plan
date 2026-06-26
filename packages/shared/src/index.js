@@ -1,4 +1,7 @@
 export * from './skill-normalize.js';
+export * from './skill-compact.js';
+export * from './skill-tokens.js';
+export * from './skill-match.js';
 export * from './pricing.js';
 export * from './models.js';
 export * from './score.js';

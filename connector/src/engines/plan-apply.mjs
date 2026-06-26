@@ -33,11 +33,19 @@ function profileForPrompt(profile) {
 }
 
 // --- playwright-cli runner (deterministic, no LLM) ---------------------------
+// ROOT-CAUSE FIX (silent dropdown/required-field failures): playwright-cli ALWAYS exits 0,
+// even when an action hard-fails (e.g. `select` on a non-<select> → "Element is not a <select>
+// element", or a stale "Ref … not found"). It signals failure ONLY by emitting a `### Error`
+// section in its output, never via the exit code. So a plain `code === 0` success check is a
+// FALSE POSITIVE on every failed verb — which is exactly why `select` on a React-Select combobox
+// (Greenhouse citizenship dropdown etc.) was reported "→ Yes" yet never committed, leaving the
+// required field blank and blocking submit forever. Treat the `### Error` marker as failure too.
+const PW_ERROR_MARKER = /^###\s*Error\b/m;
 function pw(session, args, { timeout = 60000, env = {} } = {}) {
   return new Promise((resolve) => {
     let out = "", err = "";
     let done = false;
-    const finish = (code) => { if (!done) { done = true; resolve({ ok: code === 0, code, out, err }); } };
+    const finish = (code) => { if (!done) { done = true; resolve({ ok: code === 0 && !PW_ERROR_MARKER.test(out + "\n" + err), code, out, err }); } };
     try {
       const child = spawn("playwright-cli", args, {
         cwd: PATHS.agentRuntime,
@@ -152,7 +160,11 @@ const FIELD_VALUES_JS = `async page => { return await page.evaluate(() => {
   // fall back to a short control innerText that is not a placeholder.
   for (const el of document.querySelectorAll('[role=combobox],[aria-haspopup=listbox]')) {
     if (!vis(el)) continue;
-    const host = el.closest('[class*="control"],[class*="container"],[class*="select"]') || el.parentElement || el;
+    // Find the wrapping control, NOT the input itself: React-Select's input carries class
+    // "select__input", so a combined [class*=select] match resolves to the input (which has no
+    // value child) and the committed "single-value" sibling is never found. Prefer the *control*
+    // wrapper, then a generic container, so the displayed value is actually read.
+    const host = el.closest('[class*="control"]') || el.closest('[class*="container"]') || el.parentElement || el;
     let val = '';
     const sv = host.querySelector && host.querySelector('[class*="singleValue"],[class*="single-value"],[class*="multiValue"],[class*="multi-value"]');
     if (sv) val = norm(sv.innerText);
@@ -199,21 +211,54 @@ function pickOptionJs(value) {
 }, ${JSON.stringify(String(value ?? ""))}); }`;
 }
 
+// Generic "did the value actually commit?" probe — reads the LIVE state of every control
+// (native <select> selected option + the displayed single/multi-value of custom widgets) and
+// returns true if any now shows the wanted text. We trust THIS, not the CLI exit code, to
+// decide whether a combobox is set. No vendor selectors or hardcoded option values.
+function comboboxCommittedJs(value) {
+  return `async page => page.evaluate((want) => {
+  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  want = norm(want);
+  if (!want) return false;
+  const hit = (t) => { t = norm(t); return !!t && !/^(select|choose|--|\\.\\.\\.)/.test(t) && (t === want || t.includes(want) || want.includes(t)); };
+  for (const s of document.querySelectorAll('select')) { const o = s.options[s.selectedIndex]; if (o && hit(o.text)) return true; }
+  for (const el of document.querySelectorAll('[role=combobox],[aria-haspopup=listbox]')) {
+    const ctrl = el.closest('[class*=control]') || el.closest('[class*=container]') || el.parentElement;
+    if (!ctrl) continue;
+    const sv = ctrl.querySelector('[class*=single-value],[class*=singleValue],[class*=multi-value],[class*=multiValue]');
+    if (sv && hit(sv.innerText)) return true;
+  }
+  return false;
+}, ${JSON.stringify(String(value ?? ""))})`;
+}
+
+async function comboboxCommitted(session, value) {
+  const r = await pw(session, ["run-code", comboboxCommittedJs(value), "--raw"], { timeout: 12000 });
+  return /\btrue\b/.test(r.out || "");
+}
+
 async function selectCombobox(session, ref, value) {
   if (!ref) return { ok: false, reason: "no ref" };
-  // Native <select> commits directly — no popup to drive.
-  const native = await pw(session, ["select", ref, String(value ?? "")], { timeout: 20000 });
-  if (native.ok) return { ok: true, picked: String(value), via: "native" };
+  const want = String(value ?? "");
+  // Native <select> commits directly — no popup to drive. But playwright-cli exits 0 even when
+  // the element is NOT a <select> (a custom combobox), so a "successful" exit is not enough —
+  // confirm the value actually landed before trusting it; otherwise fall through to the widget path.
+  const native = await pw(session, ["select", ref, want], { timeout: 20000 });
+  if (native.ok && (await comboboxCommitted(session, want))) return { ok: true, picked: want, via: "native" };
   // Custom widget: open it, type to filter the list, then click the matching option.
   await pw(session, ["click", ref], { timeout: 20000 });
   await pw(session, ["run-code", "--filename=scripts/wait_stable.js"]).catch(() => {});
-  await pw(session, ["type", String(value ?? "")], { timeout: 15000 }).catch(() => {});
+  await pw(session, ["type", want], { timeout: 15000 }).catch(() => {});
   await pw(session, ["run-code", "--filename=scripts/wait_stable.js"]).catch(() => {});
   const r = await pw(session, ["run-code", pickOptionJs(value), "--raw"], { timeout: 15000 });
   let info = {};
   try { info = JSON.parse((r.out || "").match(/\{[\s\S]*\}/)?.[0] || "{}"); } catch {}
   if (!info.ok) { await pw(session, ["press", "Escape"]).catch(() => {}); } // close stray popup so it doesn't block other fields
-  return info;
+  // VERIFY the commit from the live page rather than trusting the click — a clicked option that
+  // didn't register (or a closed/empty menu) would otherwise be reported as set and block submit.
+  const committed = await comboboxCommitted(session, want);
+  if (committed) return { ok: true, picked: info.picked || want, via: info.ok ? "custom" : "verified" };
+  return { ok: false, reason: info.reason || "value did not commit" };
 }
 
 // Slim the a11y snapshot to the lines a form-planner actually needs. Greenhouse/Workday/

@@ -76,6 +76,12 @@ installed globally. Confirm it: `playwright-cli --version`.
 | List / close sessions | `playwright-cli list` / `playwright-cli close` / `playwright-cli close-all` |
 
 Notes:
+- **`playwright-cli` exits 0 even when an action FAILS** — it signals failure only by printing
+  a `### Error` block (e.g. `Element is not a <select> element` when you `select` a custom
+  React-Select combobox, or `Ref … not found` on a stale ref). NEVER judge success by the exit
+  code or by "the command returned": read the output for `### Error`, and confirm the value
+  actually landed in the next snapshot. `select` only works on a **native `<select>`**; for a
+  custom combobox/React-Select use the click → type → re-snapshot → click-the-option flow.
 - There is **no `wait --text` verb** in this CLI version. Wait by running
   `scripts/wait_stable.js` via `run-code`, or `run-code "async page => page.getByText('…').waitFor()"`.
   Never use a blind fixed `sleep` as the primary wait, and never tight-poll `snapshot`.

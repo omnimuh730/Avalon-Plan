@@ -3,7 +3,7 @@ import { jobsCollection } from '../../db/mongo.js';
 import { isRedisReady } from '../../db/redis.js';
 import { getHybridMatchWeights, getCandidatePoolSize } from '../../config/graphAndVectorConfig.js';
 import { JOB_LIST_PROJECTION } from '../jobListQuery.js';
-import { loadProfileSkillSet, invalidateProfileSkillCache } from './profileSkills.js';
+import { loadProfileMatchContext, invalidateProfileSkillCache } from './profileSkills.js';
 import {
   findCandidateJobIds,
   normalizeJobSkills,
@@ -20,10 +20,6 @@ import { getProfileVector, isQdrantReady, searchJobVectors } from '../vectorStor
 import { cosineToScore } from '../embeddings/embeddingService.js';
 
 const MAX_CANDIDATES = 50000;
-
-function jobSkillsForScoring(job) {
-  return enrichJobSkillsFromTitle(job).skillsNormalized;
-}
 
 function vectorScoreFromHit(hit) {
   const raw = Number(hit?.score ?? 0);
@@ -63,8 +59,8 @@ export async function matchJobsForApplier({
     return { docs: [], total: 0, recommendationFallback: true, reason: 'no_applier' };
   }
 
-  const profileSkills = await loadProfileSkillSet(name);
-  if (!profileSkills.size) {
+  const profileCtx = await loadProfileMatchContext(name);
+  if (!profileCtx.profileCompacts?.length && !profileCtx.boostCompacts?.length && !profileCtx.exactSet?.size) {
     return { docs: [], total: 0, recommendationFallback: true, reason: 'no_analyzed_resumes' };
   }
 
@@ -83,7 +79,7 @@ export async function matchJobsForApplier({
   const candidateIds = new Set();
 
   if (isRedisReady()) {
-    const redisIds = await findCandidateJobIds(profileSkills);
+    const redisIds = await findCandidateJobIds(profileCtx.profileTokens);
     if (redisIds?.size) {
       for (const id of redisIds) candidateIds.add(String(id));
     }
@@ -105,8 +101,8 @@ export async function matchJobsForApplier({
       .toArray();
 
     for (const job of jobs) {
-      const jobSkills = jobSkillsForScoring(job);
-      const coverage = computeCoverageScore(jobSkills, profileSkills);
+      const enriched = enrichJobSkillsFromTitle(job);
+      const coverage = computeCoverageScore(enriched.skills, profileCtx);
       if (coverage.required === 0) continue;
 
       const skillScore = coverage.matchScore;
@@ -117,6 +113,7 @@ export async function matchJobsForApplier({
 
       scoredRows.push({
         job,
+        enriched,
         coverage: { ...coverage, finalScore },
         matchScore: finalScore,
         vectorScore: useHybrid ? vectorScore : null,
@@ -125,7 +122,7 @@ export async function matchJobsForApplier({
   } else if (!isRedisReady()) {
     scoredRows = await scoreViaMongoScan({
       mongoQuery: mongoQuery || {},
-      profileSkills,
+      profileCtx,
       maxScan: MAX_CANDIDATES,
       vectorScores,
       hybridWeights,
@@ -140,8 +137,8 @@ export async function matchJobsForApplier({
     return bDate - aDate;
   });
 
-  let docs = scoredRows.map((row) => {
-    const enriched = enrichJobSkillsFromTitle(row.job);
+  const composeRow = (row) => {
+    const enriched = row.enriched || enrichJobSkillsFromTitle(row.job);
     return {
       ...row.job,
       skills: enriched.skills,
@@ -152,19 +149,24 @@ export async function matchJobsForApplier({
         { vectorScore: row.vectorScore },
       ),
     };
-  });
+  };
+
+  let pageDocs;
+  let rankedIds;
 
   if (hasScoreFilter) {
-    docs = applyScoreFilters(docs, scoreFilters);
+    const docs = scoredRows.map(composeRow);
+    const filtered = applyScoreFilters(docs, scoreFilters);
+    rankedIds = filtered.map((d) => d._id);
+    pageDocs = filtered.slice(skip, skip + limit);
+  } else {
+    rankedIds = scoredRows.map((row) => row.job._id);
+    pageDocs = scoredRows.slice(skip, skip + limit).map(composeRow);
   }
 
-  const pageScored = docs.slice(skip, skip + limit);
-  let pageDocs = pageScored;
-
-  if (!hasScoreFilter && pageScored.length < limit && catalogTotal > skip + pageScored.length) {
-    const rankedIds = docs.map((d) => d._id);
-    const needed = limit - pageScored.length;
-    const dateSkip = Math.max(0, skip - docs.length);
+  if (!hasScoreFilter && pageDocs.length < limit && catalogTotal > skip + pageDocs.length) {
+    const needed = limit - pageDocs.length;
+    const dateSkip = Math.max(0, skip - scoredRows.length);
     const dateDocs = await jobsCollection
       .find(
         { $and: [mongoQuery || {}, { _id: { $nin: rankedIds } }] },
@@ -175,7 +177,7 @@ export async function matchJobsForApplier({
       .limit(needed)
       .toArray();
     pageDocs = [
-      ...pageScored,
+      ...pageDocs,
       ...dateDocs.map((j) => ({
         ...j,
         ...composeJobScores(j, { matchScore: 0, covered: [], missing: [], required: 0 }),
@@ -195,13 +197,14 @@ export async function matchJobsForApplier({
 
 async function scoreViaMongoScan({
   mongoQuery,
-  profileSkills,
+  profileCtx,
   maxScan,
   vectorScores,
   hybridWeights,
   useHybrid,
 }) {
   const rows = [];
+  const profileSkills = profileCtx.exactSet;
   const cursor = jobsCollection
     .find({
       $and: [
@@ -219,8 +222,8 @@ async function scoreViaMongoScan({
     .limit(maxScan);
 
   for await (const job of cursor) {
-    const jobSkills = jobSkillsForScoring(job);
-    const coverage = computeCoverageScore(jobSkills, profileSkills);
+    const enriched = enrichJobSkillsFromTitle(job);
+    const coverage = computeCoverageScore(enriched.skills, profileCtx);
     if (coverage.required === 0 || coverage.matchScore === 0) continue;
 
     const skillScore = coverage.matchScore;
@@ -231,6 +234,7 @@ async function scoreViaMongoScan({
 
     rows.push({
       job,
+      enriched,
       coverage: { ...coverage, finalScore },
       matchScore: finalScore,
       vectorScore: useHybrid ? vectorScore : null,
@@ -241,8 +245,8 @@ async function scoreViaMongoScan({
 
 /** Score a single job against a profile (radar / detail views). */
 export async function scoreJobAgainstProfile(job, profileSkills) {
-  const jobSkills = jobSkillsForScoring(job);
-  return computeCoverageScore(jobSkills, profileSkills);
+  const { skills } = enrichJobSkillsFromTitle(job);
+  return computeCoverageScore(skills, profileSkills);
 }
 
 export function invalidateRecommendationCache(applierName) {

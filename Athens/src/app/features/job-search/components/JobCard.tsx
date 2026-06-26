@@ -50,6 +50,7 @@ type JobCardProps = {
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
+  onJobScoresUpdated?: (job: Job) => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -96,6 +97,7 @@ export function JobCard({
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
+  onJobScoresUpdated,
 }: JobCardProps) {
   const [jdOpen, setJdOpen] = useState(false);
 
@@ -241,16 +243,19 @@ export function JobCard({
         </div>
       </article>
 
+      {jdOpen ? (
       <JobDescriptionDialog
         job={job}
-        open={jdOpen}
+        open
         onOpenChange={setJdOpen}
         statusPending={statusPending}
         onApply={() => onApply?.()}
         onMarkScheduled={() => onMarkScheduled?.()}
         onMarkDeclined={() => onMarkDeclined?.()}
         onCancel={() => onCancel?.()}
+        onJobScoresUpdated={onJobScoresUpdated}
       />
+      ) : null}
     </>
   );
 }

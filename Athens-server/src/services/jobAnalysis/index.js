@@ -2,7 +2,7 @@ import { ObjectId } from 'mongodb';
 import { jobsCollection } from '../../db/mongo.js';
 import { attachStaticScoreFields } from '../jobListPipeline.js';
 import { upsertJobEmbeddingAsync } from '../embeddings/embeddingIngest.js';
-import { indexJobInRedis } from '../matching/skillIndex.js';
+import { indexJobInRedis, jobSkillTokens } from '../matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
 
 const TERMINAL = new Set(['analyzed']);
@@ -96,6 +96,7 @@ async function claimQueuedJobs(limit = 2) {
 
 async function runJobAnalysis(job) {
 	const { skills, skillsNormalized } = enrichJobSkillsFromTitle(job);
+	const skillTokens = jobSkillTokens(skills);
 	const applierName = job.skillAnalysis?.applierName || null;
 	const jobId = String(job._id);
 	const staticScores = attachStaticScoreFields({ ...job, skills, skillsNormalized });
@@ -108,6 +109,7 @@ async function runJobAnalysis(job) {
 				...staticScores,
 				skills,
 				skillsNormalized,
+				skillTokens,
 				skillAnalysis: {
 					status: 'analyzed',
 					applierName: applierName || null,
@@ -121,7 +123,7 @@ async function runJobAnalysis(job) {
 		},
 	);
 
-	await indexJobInRedis(jobId, skillsNormalized).catch(() => {});
+	await indexJobInRedis(jobId, skillsNormalized, skillTokens).catch(() => {});
 	upsertJobEmbeddingAsync(jobId, { applierName });
 
 	return { skillsProcessed: skillsNormalized.length };

@@ -8,6 +8,9 @@
     "./pricing": "./src/pricing.js",
     "./models": "./src/models.js",
     "./skill-normalize": "./src/skill-normalize.js",
+    "./skill-compact": "./src/skill-compact.js",
+    "./skill-tokens": "./src/skill-tokens.js",
+    "./skill-match": "./src/skill-match.js",
     "./score": "./src/score.js",
     "./types": "./src/types.d.ts"
   },

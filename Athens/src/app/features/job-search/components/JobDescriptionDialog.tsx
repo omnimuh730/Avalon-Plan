@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Briefcase,
   Building2,
@@ -24,11 +24,14 @@ import { Separator } from "../../../components/ui/separator";
 import { Skeleton } from "../../../components/ui/skeleton";
 import { cn } from "../../../lib/utils";
 import { bodyAsListItems, parseJobDescription } from "../../../lib/parseJobDescription";
+import { computeSkillHighlights } from "../../../lib/skill-match";
 import type { Job, WorkMode } from "../../../types";
 import { useJobDetail } from "../hooks/useJobDetail";
 import { useJobResumeRank, useJobSkillRadar } from "../hooks/useJobSkillRadar";
+import { useProfileMatchSkills } from "../hooks/useProfileMatchSkills";
 import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
 import { JobStatusActions } from "./JobStatusActions";
+import { AddProfileSkillPanel } from "./AddProfileSkillDialog";
 import { RequiredSkillsMatch } from "./RequiredSkillsMatch";
 
 const WORK_MODE_LABELS: Record<WorkMode, string> = {
@@ -46,6 +49,7 @@ type JobDescriptionDialogProps = {
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
+  onJobScoresUpdated?: (job: Job) => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -88,8 +92,8 @@ function SectionBlock({ title, body }: { title: string; body: string }) {
       <h4 className="text-xs font-bold uppercase tracking-wider text-primary">{title}</h4>
       {items ? (
         <ul className="space-y-2 pl-1">
-          {items.map((item) => (
-            <li key={item} className="flex gap-2.5 text-sm leading-relaxed text-foreground/90">
+          {items.map((item, index) => (
+            <li key={`${index}-${item.slice(0, 48)}`} className="flex gap-2.5 text-sm leading-relaxed text-foreground/90">
               <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary/70" aria-hidden />
               <span>{item}</span>
             </li>
@@ -131,8 +135,8 @@ function JobDescriptionBody({ job, loading }: { job: Job; loading: boolean }) {
       {preamble ? (
         <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-line">{preamble}</p>
       ) : null}
-      {sections.map((section) => (
-        <SectionBlock key={section.title} title={section.title} body={section.body} />
+      {sections.map((section, index) => (
+        <SectionBlock key={`${index}-${section.title}`} title={section.title} body={section.body} />
       ))}
     </div>
   );
@@ -147,13 +151,18 @@ export function JobDescriptionDialog({
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
+  onJobScoresUpdated,
 }: JobDescriptionDialogProps) {
-  const { displayJob, loading, error } = useJobDetail(job, open);
-  const j = displayJob ?? job;
+  const { displayJob: detailJob, loading, error } = useJobDetail(job, open);
+  const [localJob, setLocalJob] = useState<Job | null>(null);
+  const j = localJob ?? detailJob ?? job;
   const [skillMatchOpen, setSkillMatchOpen] = useState(false);
+  const [addSkillOpen, setAddSkillOpen] = useState(false);
+  const [pendingSkill, setPendingSkill] = useState("");
+  const { boostingSkill, boostSkillForJob, matchContext } = useProfileMatchSkills(open);
 
   const jobId = j.backendId || j.id;
-  const { data: resumeRank, loading: resumeRankLoading } = useJobResumeRank(jobId, open);
+  const { data: resumeRank, loading: resumeRankLoading } = useJobResumeRank(jobId, open && !addSkillOpen);
   const {
     data: radarData,
     loading: radarLoading,
@@ -166,12 +175,63 @@ export function JobDescriptionDialog({
   });
 
   useEffect(() => {
-    if (!open) setSkillMatchOpen(false);
+    if (!open) {
+      setSkillMatchOpen(false);
+      setAddSkillOpen(false);
+      setPendingSkill("");
+    }
   }, [open]);
+
+  useEffect(() => {
+    if (open) setLocalJob(null);
+  }, [open, job.id, detailJob?.id]);
+
+  const handleRequestAddSkill = (skill: string) => {
+    setPendingSkill(skill);
+    setAddSkillOpen(true);
+  };
+
+  const handleConfirmAddSkill = async (skill: string) => {
+    const updated = await boostSkillForJob(skill.trim(), j);
+    if (updated) {
+      setLocalJob(updated);
+      onJobScoresUpdated?.(updated);
+      setAddSkillOpen(false);
+      setPendingSkill("");
+    }
+  };
+
+  const displayJob = useMemo(() => {
+    if (localJob) return localJob;
+    if (!matchContext?.profileTokens.length && !matchContext?.profileCompacts.length) return j;
+    if (j.skillHighlights?.length) return j;
+    const highlights = computeSkillHighlights(j.skills, matchContext);
+    const covered = highlights.filter((h) => h.matched).length;
+    const required = highlights.length;
+    const skill = required ? Math.round((covered / required) * 100) : j.scores.skill;
+    const vector = j.scores.vector;
+    const overall =
+      vector != null && vector > 0
+        ? Math.round(0.55 * skill + 0.45 * vector)
+        : skill;
+    return {
+      ...j,
+      skillHighlights: highlights,
+      scores: {
+        ...j.scores,
+        skill,
+        overall,
+        skillsCovered: covered,
+        skillsRequired: required,
+      },
+      matchScore: overall,
+    };
+  }, [j, localJob, matchContext]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="border-b border-border bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-5 pr-12">
           <div className="flex items-start gap-4">
             <CompanyLogo job={j} />
@@ -196,7 +256,7 @@ export function JobDescriptionDialog({
                   </a>
                 </div>
                 <div className="shrink-0 mr-2">
-                  <Score score={j.scores.overall} />
+                  <Score score={displayJob.scores.overall} />
                 </div>
               </div>
               <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -236,13 +296,17 @@ export function JobDescriptionDialog({
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 subtle-scroll space-y-6">
-          <RequiredSkillsMatch job={j} />
+          <RequiredSkillsMatch
+            job={displayJob}
+            onRequestAddSkill={handleRequestAddSkill}
+            boostingSkill={boostingSkill}
+          />
 
-          {j.industries.length > 0 ? (
+          {displayJob.industries.length > 0 ? (
             <section>
               <h3 className="mb-3 text-sm font-bold text-foreground">Company focus</h3>
               <div className="flex flex-wrap gap-1.5">
-                {j.industries.map((tag) => (
+                {displayJob.industries.map((tag) => (
                   <Badge key={tag} v="subtle">
                     {tag}
                   </Badge>
@@ -251,7 +315,7 @@ export function JobDescriptionDialog({
             </section>
           ) : null}
 
-          {(j.skills.length > 0 || j.industries.length > 0) && <Separator />}
+          {(displayJob.skills.length > 0 || displayJob.industries.length > 0) && <Separator />}
 
           {skillMatchOpen ? (
             <section className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4">
@@ -290,26 +354,26 @@ export function JobDescriptionDialog({
                 {error}. Showing available summary.
               </p>
             ) : null}
-            <JobDescriptionBody job={j} loading={loading} />
+            <JobDescriptionBody job={displayJob} loading={loading} />
           </section>
         </div>
 
         <DialogFooter className="border-t border-border bg-card px-6 py-4 sm:justify-between">
           <div className="hidden sm:flex flex-wrap gap-2 text-[11px] text-muted-foreground">
             <span className={cn("rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40")}>
-              Skill {j.scores.skill}
-              {j.scores.skillsRequired
-                ? ` (${j.scores.skillsCovered ?? 0}/${j.scores.skillsRequired})`
+              Skill {displayJob.scores.skill}
+              {displayJob.scores.skillsRequired
+                ? ` (${displayJob.scores.skillsCovered ?? 0}/${displayJob.scores.skillsRequired})`
                 : ""}
             </span>
             <span className="rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40">
-              Salary {j.scores.salary}
+              Salary {displayJob.scores.salary}
             </span>
             <span className="rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40">
-              Bid {j.scores.bidEst}
+              Bid {displayJob.scores.bidEst}
             </span>
             <span className="rounded-md px-2 py-0.5 border border-border/60 bg-secondary/40">
-              Fresh {j.scores.freshness}
+              Fresh {displayJob.scores.freshness}
             </span>
           </div>
           <div className="flex w-full sm:w-auto items-center justify-end gap-2">
@@ -325,7 +389,7 @@ export function JobDescriptionDialog({
             </Button>
             {onApply ? (
               <JobStatusActions
-                job={j}
+                job={displayJob}
                 pending={statusPending}
                 onApply={onApply}
                 onMarkScheduled={() => onMarkScheduled?.()}
@@ -344,6 +408,15 @@ export function JobDescriptionDialog({
             )}
           </div>
         </DialogFooter>
+
+        <AddProfileSkillPanel
+          open={addSkillOpen}
+          onOpenChange={setAddSkillOpen}
+          initialSkill={pendingSkill}
+          onConfirm={handleConfirmAddSkill}
+          saving={Boolean(boostingSkill)}
+        />
+        </div>
       </DialogContent>
     </Dialog>
   );

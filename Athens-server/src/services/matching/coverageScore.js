@@ -1,29 +1,49 @@
-import { normalizeSkillSet, toCanonical } from '@nextoffer/shared/skill-normalize';
 import { clampScore } from '@nextoffer/shared/score';
+import { computeSkillHighlights, jobSkillMatchesProfile, buildProfileCompacts } from '@nextoffer/shared/skill-match';
+import { buildProfileTokens } from '@nextoffer/shared/skill-tokens';
 
 export { clampScore };
 
 /**
- * Asymmetric containment: |job ∩ profile| / |job|.
- * Profile extras never dilute the score.
+ * Asymmetric word-token coverage: |jobSkills matched by profile| / |jobSkills|.
+ * Profile extras never dilute the score. Job skills are the RAW display strings
+ * (not canonicalized) so word tokens such as `AI/ML System` → ai, ml, system
+ * survive; matching is via shared token + the ≥5 substring shim.
  *
- * @param {string[]|Set<string>} jobSkills - canonical job skills
- * @param {string[]|Set<string>} profileSkills - canonical profile skills
+ * @param {string[]|Set<string>} jobSkills - raw display job skills
+ * @param {Set<string>|{ profileTokens?: string[], profileCompacts?: string[], boostCompacts?: string[], exactSet?: Set<string> }} profileSkills
  * @returns {{ matchScore: number, covered: string[], missing: string[], required: number }}
  */
 export function computeCoverageScore(jobSkills, profileSkills) {
-  const jobSet = jobSkills instanceof Set ? jobSkills : normalizeSkillSet(jobSkills);
-  const profileSet = profileSkills instanceof Set ? profileSkills : normalizeSkillSet(profileSkills);
+  const rawSkills = jobSkills instanceof Set
+    ? [...jobSkills]
+    : (Array.isArray(jobSkills) ? jobSkills : []);
+  const ctx = profileSkills instanceof Set
+    ? {
+        profileTokens: buildProfileTokens([...profileSkills]),
+        profileCompacts: buildProfileCompacts([...profileSkills]),
+      }
+    : profileSkills;
 
-  const required = jobSet.size;
+  // Dedupe display skills by normalized text so the same chip isn't double-counted.
+  const seen = new Set();
+  const uniqueSkills = [];
+  for (const raw of rawSkills) {
+    const key = String(raw ?? '').trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    uniqueSkills.push(raw);
+  }
+
+  const required = uniqueSkills.length;
   if (required === 0) {
     return { matchScore: 0, covered: [], missing: [], required: 0 };
   }
 
   const covered = [];
   const missing = [];
-  for (const skill of jobSet) {
-    if (profileSet.has(skill)) covered.push(skill);
+  for (const skill of uniqueSkills) {
+    if (jobSkillMatchesProfile(skill, ctx)) covered.push(skill);
     else missing.push(skill);
   }
 
@@ -34,18 +54,20 @@ export function computeCoverageScore(jobSkills, profileSkills) {
 /**
  * Compose list-time job scores from coverage + optional vector similarity.
  */
-export function composeJobScores(job, coverage, { vectorScore = null } = {}) {
+export function composeJobScores(job, coverage, {
+  vectorScore = null,
+  matchContext = null,
+  includeHighlights = false,
+} = {}) {
   const skillScore = clampScore(coverage?.matchScore ?? 0);
   const matchScore = vectorScore !== null && vectorScore !== undefined
     ? clampScore(coverage?.finalScore ?? skillScore)
     : skillScore;
 
   const displaySkills = Array.isArray(job?.skills) ? job.skills.map((s) => String(s).trim()).filter(Boolean) : [];
-  const coveredSet = new Set(coverage?.covered ?? []);
-  const skillHighlights = displaySkills.map((name) => {
-    const key = toCanonical(name);
-    return { name, matched: key ? coveredSet.has(key) : false };
-  });
+  const skillHighlights = includeHighlights && matchContext
+    ? computeSkillHighlights(displaySkills, matchContext)
+    : undefined;
 
   return {
     matchScore,
@@ -55,7 +77,7 @@ export function composeJobScores(job, coverage, { vectorScore = null } = {}) {
     skillsCovered: coverage?.covered?.length ?? 0,
     skillsRequired: coverage?.required ?? 0,
     skillsMissing: coverage?.missing ?? [],
-    skillHighlights,
+    ...(skillHighlights ? { skillHighlights } : {}),
     recommendationRanked: true,
     _score: matchScore,
   };

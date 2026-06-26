@@ -16,7 +16,7 @@ import {
 } from '../services/jobListQuery.js';
 import { queueJobAnalysis, getJobAnalysisStatus } from '../services/jobAnalysis/index.js';
 import { matchJobsForApplier } from '../services/matching/matchingService.js';
-import { normalizeJobSkills, indexJobInRedis } from '../services/matching/skillIndex.js';
+import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../services/matching/skillIndex.js';
 import { upsertJobEmbeddingAsync } from '../services/embeddings/embeddingIngest.js';
 import {
 	getJobEmbeddingStatus,
@@ -123,6 +123,7 @@ export async function createJob(req, res) {
 
 		const skills = Array.isArray(job.skills) ? job.skills.map(s => String(s).trim()).filter(Boolean) : [];
 		job.skillsNormalized = normalizeJobSkills(skills);
+		job.skillTokens = jobSkillTokens(skills);
 		try {
 			const companyTags = Array.isArray(job.company?.tags) ? job.company.tags.map(t => String(t).trim()).filter(Boolean) : [];
 			if (companyCategoryCollection && companyTags.length) {
@@ -147,7 +148,7 @@ export async function createJob(req, res) {
 
 		if (result?.insertedId) {
 			upsertJobEmbeddingAsync(String(result.insertedId));
-			void indexJobInRedis(String(result.insertedId), job.skillsNormalized).catch(() => {});
+			void indexJobInRedis(String(result.insertedId), job.skillsNormalized, job.skillTokens).catch(() => {});
 		}
 
 		return res.status(201).json({

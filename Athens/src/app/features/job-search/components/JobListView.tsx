@@ -16,6 +16,7 @@ type JobListViewProps = {
   onMarkScheduled?: (job: Job) => void;
   onMarkDeclined?: (job: Job) => void;
   onCancel?: (job: Job) => void;
+  onJobScoresUpdated?: (job: Job) => void;
 };
 
 export function JobListView({
@@ -31,6 +32,7 @@ export function JobListView({
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
+  onJobScoresUpdated,
 }: JobListViewProps) {
   if (jobs.length === 0) {
     return (
@@ -63,6 +65,7 @@ export function JobListView({
           onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
           onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
           onCancel={onCancel ? () => onCancel(job) : undefined}
+          onJobScoresUpdated={onJobScoresUpdated}
         />
       ))}
     </div>

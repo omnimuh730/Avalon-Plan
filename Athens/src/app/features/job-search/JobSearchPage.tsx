@@ -211,6 +211,7 @@ export function JobSearchPage() {
               onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
               onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
               onCancel={(job) => void cancelJobStatus(job)}
+              onJobScoresUpdated={patchJob}
             />
           </TabTransition>
         </div>
