@@ -49,9 +49,14 @@ export interface ResumeMatch {
   topResumes?: { name: string; scorePercent: number }[];
   resumeStack?: string;
   aiGenerated?: boolean;
-  // Set when the résumé was AI-generated for this job — links to its PDF.
   generationId?: string | null;
   resumeId?: string | null;
+  profileName?: string | null;
+  resumeFileName?: string | null;
+  resumeMimeType?: string | null;
+  resumeSizeBytes?: number | null;
+  submittedFileName?: string | null;
+  hasRunResume?: boolean;
 }
 
 export interface Screenshot {

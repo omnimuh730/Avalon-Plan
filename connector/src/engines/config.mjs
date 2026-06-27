@@ -66,6 +66,14 @@ export const CONFIG = {
   // Parsed ~/.hermes/.env (CUSTOM_API_KEY etc.) merged into the ACP child's env,
   // mirroring `source "$HOME/.hermes/.env"` in job-apply-start.sh.
   hermesEnvVars: parseEnvFile(env("HERMES_ENV_FILE") || path.join(os.homedir(), ".hermes", ".env")),
+  // Live-browser streaming for Hermes runs: attach to the headed Playwright MCP
+  // Chrome over CDP and stream screenshots into Athens. Read-only; safe to disable
+  // (HERMES_LIVE_VIEW=false) if the debug-port arg ever disturbs the MCP browser.
+  hermesLiveView: (env("HERMES_LIVE_VIEW", "true") !== "false"),
+  hermesCdpPort: Number(env("HERMES_CDP_PORT", "9223")),
+  hermesHome: env("HERMES_HOME") || path.join(os.homedir(), ".hermes"),
+  playwrightMcpConfigPath:
+    env("PLAYWRIGHT_MCP_CONFIG") || path.join(os.homedir(), ".hermes", "playwright-mcp-config.json"),
   unifiedAiUrl: PATHS.unifiedAi,
   autoSubmit: (env("AUTO_SUBMIT") || "true") !== "false",
   defaultMode: env("AGENT_DEFAULT_MODE", "plan"),

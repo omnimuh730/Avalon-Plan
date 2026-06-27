@@ -73,6 +73,12 @@ function sanitizePayload(type, event) {
       generationId: copy.generationId || null,
       resumeId: copy.resumeId || null,
       aiGenerated: copy.aiGenerated || false,
+      profileName: copy.profileName || null,
+      resumeFileName: copy.resumeFileName || null,
+      resumeMimeType: copy.resumeMimeType || null,
+      resumeSizeBytes: copy.resumeSizeBytes || null,
+      submittedFileName: copy.submittedFileName || null,
+      hasRunResume: copy.hasRunResume || false,
     };
   }
   return copy;

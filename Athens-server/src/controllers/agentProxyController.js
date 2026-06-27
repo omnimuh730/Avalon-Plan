@@ -11,7 +11,7 @@ function mapBffPath(reqPath) {
   if (reqPath === "/models") return "/api/models";
   if (reqPath === "/runs") return "/api/runs";
   if (/^\/stream\//.test(reqPath)) return `/api${reqPath}`;
-  if (/^\/runs\/[^/]+\/(events|resume|screenshots)/.test(reqPath)) return `/api${reqPath}`;
+  if (/^\/runs\/[^/]+\/(events|resume|screenshots|resumes)/.test(reqPath)) return `/api${reqPath}`;
   return `/api${reqPath}`;
 }
 
@@ -66,6 +66,19 @@ export async function proxyToAgentBff(req, res) {
   }
 
   if (contentType.includes("image/") && upstream.body) {
+    res.writeHead(upstream.status, forwardResponseHeaders(upstream, res));
+    const { Readable } = await import("node:stream");
+    Readable.fromWeb(upstream.body).pipe(res);
+    return;
+  }
+
+  if (
+    (contentType.includes("application/pdf")
+      || contentType.includes("application/vnd.openxmlformats")
+      || contentType.includes("application/msword")
+      || contentType.includes("text/plain"))
+    && upstream.body
+  ) {
     res.writeHead(upstream.status, forwardResponseHeaders(upstream, res));
     const { Readable } = await import("node:stream");
     Readable.fromWeb(upstream.body).pipe(res);

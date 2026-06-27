@@ -45,6 +45,10 @@ export function agentScreenshotUrl(runId: string, fileName: string) {
   return `${AGENTS_BASE}/runs/${encodeURIComponent(runId)}/screenshots/${encodeURIComponent(fileName)}`;
 }
 
+export function agentRunResumeUrl(runId: string, fileName: string) {
+  return `${AGENTS_BASE}/runs/${encodeURIComponent(runId)}/resumes/${encodeURIComponent(fileName)}`;
+}
+
 export async function fetchAgentHealth(): Promise<HealthData> {
   return json<HealthData>("/health");
 }

@@ -70,6 +70,8 @@ export function LiveRunPanel({ run, onClose, onLog }: {
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 min-h-0">
           <LiveRunActivityFeed steps={selJob.steps} isReview={state.isReview} />
           <LiveRunBrowserPanel
+            runId={run.runId}
+            profileName={run.profileName || selJob.meta.profileName}
             shot={selJob.shot}
             resumeMatch={selJob.resumeMatch}
             fields={selJob.fields}

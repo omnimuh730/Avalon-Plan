@@ -1,20 +1,18 @@
-// Drive Hermes Agent as the agent for one job application — via its ACP server.
+// Drive Hermes Agent as the agent for job applications — via its ACP server.
 //
 // Counterpart to claude-runner.mjs, but Hermes speaks the Agent Client Protocol
-// (ACP) over stdio instead of a `stream-json` CLI. We spawn Hermes' ACP server
-// (`python -m acp_adapter`) from the hermes-agent repo root, then run a minimal
-// newline-delimited JSON-RPC client: initialize → session/new → session/prompt,
-// consuming `session/update` notifications until the prompt resolves.
+// (ACP) over stdio. To match `scripts/job-apply-start.sh` reliability we run a
+// WARM client: ONE `python -m acp_adapter` process for the whole batch, with a
+// FRESH ACP session per job. That keeps the Playwright MCP browser + Gmail MCP +
+// skills warm (started once via discover_mcp_tools at process start) and the
+// prompt cache hot, while each job still gets a clean conversation. This mirrors
+// the interactive `hermes chat` session the script opens — same .hermes.md,
+// MCP config, skills and model (~/.hermes) — minus the human in the loop.
 //
-// Hermes IS the agent: it reasons, drives a real browser through its own
-// Playwright MCP + Gmail MCP (loaded from the hermes-agent repo config — exactly
-// as scripts/job-apply-start.sh sets up), runs its greenhouse-apply / workday-apply
-// skills, and verifies — all itself. We pass `mcpServers: []` in session/new so
-// Hermes uses its OWN configured MCP servers, not any we'd inject.
-//
-// Model/provider is whatever Hermes is configured with (~/.hermes) — the connector
-// does not map model ids onto Hermes provider flags. So we do not price per-turn
-// usage here; cost accounting is best-effort (see hermes-apply.mjs).
+// Hermes IS the agent: it reasons, drives the headed browser via its OWN
+// Playwright MCP, runs greenhouse/workday/ashby skills, and verifies. We pass
+// `mcpServers: []` in session/new because the MCP servers are loaded from the
+// hermes-agent repo config at process start, not injected per session.
 
 import { spawn } from "node:child_process";
 import readline from "node:readline";
@@ -40,9 +38,7 @@ function toolLabel(update) {
 /** Extract plain text from an ACP content block or list of blocks. */
 function contentText(content) {
   if (!content) return "";
-  // Single text block: { type: "text", text }
   if (!Array.isArray(content)) return content.text || "";
-  // List of ToolCallContent: [{ type: "content", content: { type:"text", text } }]
   return content
     .map((c) => c?.content?.text || c?.text || "")
     .filter(Boolean)
@@ -52,7 +48,8 @@ function contentText(content) {
 /**
  * Normalize an ACP `session/update` payload into the compact dashboard event
  * vocabulary shared with claude-runner ({ kind: message|reasoning|command|tool }).
- * Returns null when ignored.
+ * Returns null when ignored. (Text chunks are coalesced by the client, so this
+ * only maps non-text updates.)
  */
 export function mapUpdate(update) {
   switch (update?.sessionUpdate) {
@@ -65,7 +62,6 @@ export function mapUpdate(update) {
       return text.trim() ? { kind: "reasoning", text } : null;
     }
     case "tool_call": {
-      // Browser/terminal/fetch tools read as "commands"; everything else as a tool.
       const kind = ["execute", "fetch"].includes(update.kind) ? "command" : "tool";
       const label = toolLabel(update);
       return kind === "command"
@@ -78,101 +74,45 @@ export function mapUpdate(update) {
       if (text.trim()) return { kind: "command", status: "completed", output: text.slice(0, 140) };
       return null;
     }
-    // plan / usage_update / mode updates: not surfaced as steps.
     default:
       return null;
   }
 }
 
 /**
- * Run one Hermes ACP turn for a job application.
+ * Create a warm Hermes ACP client. One child process, many jobs.
  *
  * @param {object} o
  * @param {string} o.hermesPython  python interpreter (the hermes-agent venv's)
- * @param {string} o.cwd           the hermes-agent repo root (skills/MCP/config load from here)
- * @param {string} o.prompt        the task prompt
+ * @param {string} o.hermesCwd     the hermes-agent repo root (skills/MCP/config load from here)
  * @param {object} [o.env]         extra env (CUSTOM_API_KEY etc. + gate secrets)
- * @param {(e:object)=>void} [o.onEvent]
- * @param {AbortSignal} [o.signal]
+ * @param {number} [o.mcpReadyMs]  grace after initialize for MCP warmup (default 1500)
+ * @param {number} [o.initTimeoutMs] initialize timeout (default 60000)
  * @param {object} [o.deps]        { spawn } injectable for tests
  */
-export async function runHermesAgent(o) {
+export function createHermesClient(o) {
   const spawnFn = o.deps?.spawn || spawn;
-  const env = { ...process.env, ...(o.env || {}) };
-  const child = spawnFn(o.hermesPython, ["-m", "acp_adapter"], { cwd: o.cwd, env, signal: o.signal });
+  const cwd = o.hermesCwd || o.cwd || process.cwd(); // ACP requires an absolute cwd
+  let child = null;
+  let exited = false;
+  let exitCode = null;
+  let rl = null;
 
   const stderr = [];
-  let failure = null;
-  let sessionId = null;
-  let stopReason = null;
-  let finalMessage = "";
-
-  const emit = (mapped) => {
-    if (!mapped || !o.onEvent) return;
-    o.onEvent(mapped);
-  };
-
-  // Hermes streams assistant text token-by-token (one agent_message_chunk /
-  // agent_thought_chunk per few characters). Coalesce consecutive same-kind
-  // chunks into ONE event so the dashboard shows whole thoughts / messages
-  // instead of a per-token flood. Flush on a kind switch, a tool boundary, or
-  // turn end.
-  let buf = { kind: null, text: "" };
-  const flushBuf = () => {
-    if (buf.text) emit({ kind: buf.kind, text: buf.text });
-    buf = { kind: null, text: "" };
-  };
-  const bufferChunk = (kind, text) => {
-    if (!text) return;
-    if (buf.kind && buf.kind !== kind) flushBuf();
-    buf.kind = kind;
-    buf.text += text;
-  };
-
-  // Swallow the ABORT_ERR a signal-spawned child emits on Stop/Pause — otherwise
-  // Node re-throws it as uncaught and kills the connector process.
-  child.on("error", (err) => {
-    if (err?.code === "ABORT_ERR" || err?.name === "AbortError") return;
-    stderr.push(`spawn error: ${err?.message || err}`);
-  });
-
-  // Parse per-call DeepSeek usage out of Hermes' stderr log (line-buffered, since
-  // a chunk may straddle line boundaries) and emit it as a usage delta.
   let errBuf = "";
-  const scanUsageLine = (line) => {
-    const m = USAGE_LINE_RE.exec(line);
-    if (!m) return;
-    const [, model, inTok, outTok, hit] = m;
-    const input = Number(inTok) || 0;
-    const output = Number(outTok) || 0;
-    const cached = Number(hit) || 0;
-    emit({
-      kind: "usage",
-      model,
-      usage: { input_tokens: input, output_tokens: output, cached_input_tokens: cached, total_tokens: input + output },
-    });
-  };
-  if (child.stderr) {
-    child.stderr.on("data", (d) => {
-      const s = String(d);
-      stderr.push(s);
-      errBuf += s;
-      let nl;
-      while ((nl = errBuf.indexOf("\n")) >= 0) {
-        scanUsageLine(errBuf.slice(0, nl));
-        errBuf = errBuf.slice(nl + 1);
-      }
-    });
-  }
-
-  // --- Minimal newline-delimited JSON-RPC client over the child's stdio. ---
   let nextId = 1;
   const pending = new Map(); // id -> { resolve, reject }
+
+  // Per-job state, swapped in by runJob. Jobs run sequentially (the batch loop
+  // awaits each), so a single "active job" pointer is safe: all stdout
+  // notifications + stderr usage lines belong to the in-flight job.
+  let active = null; // { onEvent, sessionId, buf, finalMessage }
+
   const send = (msg) => {
     try {
-      child.stdin.write(JSON.stringify(msg) + "\n");
+      child?.stdin.write(JSON.stringify(msg) + "\n");
     } catch {
-      /* child gone — the awaiting request rejects on close */
+      /* child gone — awaiting request rejects on close */
     }
   };
   const request = (method, params) =>
@@ -183,6 +123,31 @@ export async function runHermesAgent(o) {
     });
   const respond = (id, result) => send({ jsonrpc: "2.0", id, result });
   const respondError = (id, code, message) => send({ jsonrpc: "2.0", id, error: { code, message } });
+
+  const flushBuf = () => {
+    if (active?.buf.text) active.onEvent?.({ kind: active.buf.kind, text: active.buf.text });
+    if (active) active.buf = { kind: null, text: "" };
+  };
+  const bufferChunk = (kind, text) => {
+    if (!text || !active) return;
+    if (active.buf.kind && active.buf.kind !== kind) flushBuf();
+    active.buf.kind = kind;
+    active.buf.text += text;
+  };
+
+  const scanUsageLine = (line) => {
+    const m = USAGE_LINE_RE.exec(line);
+    if (!m || !active) return;
+    const [, model, inTok, outTok, hit] = m;
+    const input = Number(inTok) || 0;
+    const output = Number(outTok) || 0;
+    const cached = Number(hit) || 0;
+    active.onEvent?.({
+      kind: "usage",
+      model,
+      usage: { input_tokens: input, output_tokens: output, cached_input_tokens: cached, total_tokens: input + output },
+    });
+  };
 
   // Server → client request: auto-approve dangerous-command permission gates so
   // the run stays unattended. Pick the most permissive "allow" option offered.
@@ -199,19 +164,19 @@ export async function runHermesAgent(o) {
       else respond(id, { outcome: { outcome: "cancelled" } });
       return;
     }
-    // We advertise no client fs/terminal capabilities, so Hermes shouldn't call
-    // back for those. If it does, decline cleanly rather than hang.
     respondError(id, -32601, `method not handled: ${method}`);
   };
 
   const handleNotification = (msg) => {
     if (msg.method !== "session/update") return;
     const update = msg.params?.update;
-    if (!update) return;
+    if (!update || !active) return;
+    // Ignore updates for any session that isn't the in-flight job's.
+    if (active.sessionId && msg.params?.sessionId && msg.params.sessionId !== active.sessionId) return;
     const su = update.sessionUpdate;
     if (su === "agent_message_chunk") {
       const text = contentText(update.content);
-      finalMessage += text;
+      active.finalMessage += text;
       bufferChunk("message", text);
       return;
     }
@@ -219,72 +184,170 @@ export async function runHermesAgent(o) {
       bufferChunk("reasoning", contentText(update.content));
       return;
     }
-    // Any non-text update (tool call/result, plan, …) ends the current text run.
     flushBuf();
-    emit(mapUpdate(update));
+    const mapped = mapUpdate(update);
+    if (mapped) active.onEvent?.(mapped);
   };
 
-  const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
-  const readerDone = (async () => {
-    for await (const line of rl) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      let msg;
-      try {
-        msg = JSON.parse(trimmed);
-      } catch {
-        continue; // non-JSON diagnostic line on stdout — ignore
-      }
-      if (msg.method != null && msg.id != null) handleServerRequest(msg);
-      else if (msg.method != null) handleNotification(msg);
-      else if (msg.id != null) {
-        const p = pending.get(msg.id);
-        if (!p) continue;
-        pending.delete(msg.id);
-        if (msg.error) p.reject(new Error(msg.error.message || `JSON-RPC error ${msg.error.code}`));
-        else p.resolve(msg.result);
-      }
+  const attachStreams = () => {
+    child.on("error", (err) => {
+      if (err?.code === "ABORT_ERR" || err?.name === "AbortError") return;
+      stderr.push(`spawn error: ${err?.message || err}`);
+    });
+    child.on("exit", (c) => {
+      exited = true;
+      exitCode = c ?? 0;
+      for (const [, p] of pending) p.reject(new Error("ACP process exited"));
+      pending.clear();
+    });
+    if (child.stderr) {
+      child.stderr.on("data", (d) => {
+        const s = String(d);
+        stderr.push(s);
+        errBuf += s;
+        let nl;
+        while ((nl = errBuf.indexOf("\n")) >= 0) {
+          scanUsageLine(errBuf.slice(0, nl));
+          errBuf = errBuf.slice(nl + 1);
+        }
+      });
     }
-    // Stream closed — fail any still-pending requests so awaits don't hang.
-    for (const [, p] of pending) p.reject(new Error("ACP stream closed"));
-    pending.clear();
-  })();
+    rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+    (async () => {
+      for await (const line of rl) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let msg;
+        try {
+          msg = JSON.parse(trimmed);
+        } catch {
+          continue;
+        }
+        if (msg.method != null && msg.id != null) handleServerRequest(msg);
+        else if (msg.method != null) handleNotification(msg);
+        else if (msg.id != null) {
+          const p = pending.get(msg.id);
+          if (!p) continue;
+          pending.delete(msg.id);
+          if (msg.error) p.reject(new Error(msg.error.message || `JSON-RPC error ${msg.error.code}`));
+          else p.resolve(msg.result);
+        }
+      }
+    })().catch(() => {});
+  };
 
-  try {
-    await request("initialize", {
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {}, // no fs/terminal — Hermes uses its own tools
-      clientInfo: { name: "nextoffer-connector", version: "1.0.0" },
+  async function start() {
+    exited = false;
+    exitCode = null;
+    child = spawnFn(o.hermesPython, ["-m", "acp_adapter"], {
+      cwd,
+      // HERMES_HOME points Hermes at a per-run config (isolated browser + unique
+      // CDP port) so concurrent runs never share a browser. Omitted → shared ~/.hermes.
+      env: { ...process.env, ...(o.env || {}), ...(o.hermesHome ? { HERMES_HOME: o.hermesHome } : {}) },
     });
-    const newSession = await request("session/new", { cwd: o.cwd, mcpServers: [] });
-    sessionId = newSession?.sessionId || null;
-    const prompt = await request("session/prompt", {
-      sessionId,
-      prompt: [{ type: "text", text: o.prompt || "" }],
-    });
-    stopReason = prompt?.stopReason || null;
-    if (stopReason && !["end_turn", "max_tokens", "max_turn_requests"].includes(stopReason)) {
-      // "cancelled" | "refusal" | … — surface as a failure unless we aborted.
-      if (!o.signal?.aborted) failure = `hermes stopped: ${stopReason}`;
-    }
-  } catch (err) {
-    if (!(o.signal?.aborted)) failure = `hermes ACP error: ${err?.message || err}`;
-  } finally {
-    flushBuf(); // emit any trailing buffered message/thought before teardown
-    if (errBuf) { scanUsageLine(errBuf); errBuf = ""; } // last (newline-less) stderr line
-    // One prompt per job — tear the ACP server down so each application is isolated.
-    try {
-      child.stdin.end();
-    } catch {
-      /* already closed */
-    }
-    if (!child.killed) child.kill();
+    attachStreams();
+    await withTimeout(
+      request("initialize", {
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {}, // no fs/terminal — Hermes uses its own tools
+        clientInfo: { name: "nextoffer-connector", version: "1.0.0" },
+      }),
+      o.initTimeoutMs ?? 60000,
+      "hermes ACP initialize timed out",
+    );
+    // MCP tools are discovered synchronously at process start; give the headed
+    // browser a brief grace before the first navigate so job 1 doesn't race it.
+    await sleep(o.mcpReadyMs ?? 1500);
   }
 
-  await readerDone.catch(() => {});
-  const exitCode = await new Promise((r) => child.on("exit", (c) => r(c ?? 0)));
+  function isAlive() {
+    return !!child && !exited;
+  }
 
-  // Usage is priced per-call from the stderr log (emitted live as usage deltas);
-  // hermes-apply accumulates it. Nothing to return here.
-  return { threadId: sessionId, finalMessage, usage: null, costUsd: null, exitCode, failure, stderr: stderr.join("") };
+  /**
+   * Run one job on a fresh ACP session. Resolves with
+   * { threadId, finalMessage, usage:null, failure }. Rejects only on transport
+   * death; an aborted signal resolves with failure=null + whatever was seen.
+   */
+  async function runJob({ prompt, onEvent, signal }) {
+    active = { onEvent, sessionId: null, buf: { kind: null, text: "" }, finalMessage: "" };
+    let failure = null;
+    let sessionId = null;
+    let onAbort = null;
+    try {
+      const ns = await request("session/new", { cwd, mcpServers: [] });
+      sessionId = ns?.sessionId || null;
+      active.sessionId = sessionId;
+
+      const promptPromise = request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: prompt || "" }],
+      });
+      const abortPromise = new Promise((resolve) => {
+        if (!signal) return;
+        onAbort = () => {
+          if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+          resolve({ stopReason: "cancelled" });
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+      });
+      const res = signal ? await Promise.race([promptPromise, abortPromise]) : await promptPromise;
+      flushBuf();
+      const stopReason = res?.stopReason || null;
+      if (stopReason && !["end_turn", "max_tokens", "max_turn_requests", "cancelled"].includes(stopReason)) {
+        if (!signal?.aborted) failure = `hermes stopped: ${stopReason}`;
+      }
+    } finally {
+      if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+    }
+    const finalMessage = active.finalMessage;
+    active = null;
+    return { threadId: sessionId, finalMessage, usage: null, failure };
+  }
+
+  async function stop() {
+    flushBuf();
+    if (errBuf) { scanUsageLine(errBuf); errBuf = ""; }
+    try { child?.stdin.end(); } catch { /* closed */ }
+    try { rl?.close(); } catch { /* closed */ }
+    if (child && !child.killed) child.kill();
+    if (child && !exited) await new Promise((r) => child.on("exit", () => r()));
+  }
+
+  async function restart() {
+    try { await stop(); } catch { /* ignore */ }
+    await start();
+  }
+
+  return {
+    start, stop, restart, runJob, isAlive,
+    get stderr() { return stderr.join(""); },
+    get exitCode() { return exitCode; },
+  };
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function withTimeout(promise, ms, message) {
+  let t;
+  const timeout = new Promise((_, reject) => { t = setTimeout(() => reject(new Error(message)), ms); });
+  return Promise.race([promise.finally(() => clearTimeout(t)), timeout]);
+}
+
+/**
+ * One-shot convenience wrapper (start → runJob → stop). Kept for tests / the ACP
+ * smoke script; the batch path uses createHermesClient directly for a warm session.
+ */
+export async function runHermesAgent(o) {
+  const client = createHermesClient(o);
+  try {
+    await client.start();
+    const res = await client.runJob({ prompt: o.prompt, onEvent: o.onEvent, signal: o.signal });
+    return { ...res, exitCode: client.exitCode ?? 0, stderr: client.stderr };
+  } finally {
+    await client.stop();
+  }
 }

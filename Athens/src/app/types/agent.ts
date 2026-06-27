@@ -198,6 +198,15 @@ export interface ResumeMatch {
   bestResume?: { name: string; scorePercent: number };
   topResumes?: { name: string; scorePercent: number }[];
   resumeStack?: string;
+  aiGenerated?: boolean;
+  generationId?: string | null;
+  resumeId?: string | null;
+  profileName?: string | null;
+  resumeFileName?: string | null;
+  resumeMimeType?: string | null;
+  resumeSizeBytes?: number | null;
+  submittedFileName?: string | null;
+  hasRunResume?: boolean;
 }
 
 export interface Screenshot {

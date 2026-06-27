@@ -21,6 +21,7 @@ import { awaitHumanResume, wasStopped, isAwaitingHuman } from "./human-handoff.m
 import { sessionFileFor } from "./mcp-session.mjs";
 import { prepareForkedProfile, persistForkedProfile, forkedOpenArgs } from "./chrome-profile.mjs";
 import { startBrowserMonitor } from "./browser-monitor.mjs";
+import { attachRunResumeFields } from "./run-resume.mjs";
 
 const SECRET_FIELDS = ["openaiApiKey", "deepseekApiKey", "ecomagentApiKey", "gmailAppPassword", "defaultPassword"];
 const OTP_SCRIPT = PATHS.gmailOtp;
@@ -757,11 +758,53 @@ export async function runBatchPlan(opts) {
       if (opts.generateResumeByAi) {
         try {
           const { ensureAgentJobResumeFile } = await import("./agent-resume-gen.mjs");
-          await ensureAgentJobResumeFile({ applierName, job, destFilePath: jobProfile.resumePath, emit: jobEmit, jobIndex: i, model: opts.model, apiKey: opts.apiKey });
+          const gen = await ensureAgentJobResumeFile({ applierName, job, destFilePath: jobProfile.resumePath, emit: jobEmit, jobIndex: i, model: opts.model, apiKey: opts.apiKey });
+          jobEmit({
+            type: "resumeMatch",
+            jobIndex: i,
+            jobTitle: job.title,
+            jobCompany: job.company,
+            bestResume: { name: gen.techStack || "AI Generated", scorePercent: 100 },
+            resumeStack: gen.techStack || "AI Generated",
+            aiGenerated: true,
+            generationId: gen.generationId || null,
+            resumeId: gen.resumeId || null,
+            ...attachRunResumeFields({
+              runId: opts.runId,
+              jobIndex: i,
+              sourcePath: jobProfile.resumePath,
+              profileName: applierName,
+              resumeId: gen.resumeId,
+              generationId: gen.generationId,
+              aiGenerated: true,
+              resumeFileName: gen.fileName,
+            }),
+          });
         } catch (e) {
           jobEmit({ type: "step", level: "warn", jobIndex: i, title: "AI résumé failed — using uploaded résumé", detail: String(e?.message || e).slice(0, 160) });
           jobProfile = opts.profile; // fall back to the applicant's existing résumé
         }
+      } else if (jobProfile.resumePath) {
+        jobEmit({
+          type: "resumeMatch",
+          jobIndex: i,
+          jobTitle: job.title,
+          jobCompany: job.company,
+          resumeStack: jobProfile.resumeStack || "",
+          bestResume: {
+            name: jobProfile.resumeStack || path.basename(jobProfile.resumePath),
+            scorePercent: 100,
+          },
+          resumeId: jobProfile.resumeId || null,
+          ...attachRunResumeFields({
+            runId: opts.runId,
+            jobIndex: i,
+            sourcePath: jobProfile.resumePath,
+            profileName: applierName,
+            resumeId: jobProfile.resumeId,
+            resumeFileName: jobProfile.resumeFileName,
+          }),
+        });
       }
 
       let r;

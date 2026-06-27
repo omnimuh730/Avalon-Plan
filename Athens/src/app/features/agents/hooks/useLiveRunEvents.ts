@@ -143,7 +143,10 @@ export function useLiveRunEvents(
         }
         case "resumeMatch": {
           const idx = (e.jobIndex as number | undefined) ?? cur;
-          patchJob(idx, (j) => ({ ...j, resumeMatch: e as unknown as ResumeMatch }));
+          patchJob(idx, (j) => ({
+            ...j,
+            resumeMatch: { ...(j.resumeMatch || {}), ...(e as unknown as ResumeMatch) },
+          }));
           break;
         }
         case "jobDone": {

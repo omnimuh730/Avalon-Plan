@@ -5,7 +5,9 @@ import { LiveRunResumeMatch } from "./LiveRunResumeMatch";
 import { LiveRunFieldsList } from "./LiveRunFieldsList";
 import { LiveRunUsageCard } from "./LiveRunUsageCard";
 
-export function LiveRunBrowserPanel({ shot, resumeMatch, fields, usage, meta, jobLabel, jobs, selectedIndex, batchUsage, isBatch }: {
+export function LiveRunBrowserPanel({ runId, profileName, shot, resumeMatch, fields, usage, meta, jobLabel, jobs, selectedIndex, batchUsage, isBatch }: {
+  runId: string;
+  profileName?: string;
   shot: Screenshot | null;
   resumeMatch: ResumeMatch | null;
   fields: RunField[];
@@ -25,7 +27,9 @@ export function LiveRunBrowserPanel({ shot, resumeMatch, fields, usage, meta, jo
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         <LiveRunScreenshot shot={shot} />
-        {resumeMatch && <LiveRunResumeMatch resumeMatch={resumeMatch} />}
+        {resumeMatch && (
+          <LiveRunResumeMatch runId={runId} profileName={profileName || meta.profileName} resumeMatch={resumeMatch} />
+        )}
         <LiveRunFieldsList fields={fields} />
         <LiveRunUsageCard
           usage={usage}

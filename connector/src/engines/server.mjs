@@ -15,6 +15,7 @@ import {
   resumeRun, registerRun, runSignal, pauseRun, stopRun, wasStopped, unregisterRun,
 } from "./human-handoff.mjs";
 import { sweepOrphanBrowsers } from "./browser-sweep.mjs";
+import { resolveRunResumePath } from "./run-resume.mjs";
 
 // codex-rs owns the agentic loop now; only this tiny outcome check remains here.
 const isSubmissionSuccess = (result) => result === "submitted";
@@ -85,6 +86,8 @@ function persistRunUpdates(run, e) {
         // Persist the generated-résumé reference so a finished run can show it.
         ...(e.generationId ? { resumeGenerationId: e.generationId } : {}),
         ...(e.resumeId ? { resumeId: e.resumeId } : {}),
+        ...(e.resumeFileName ? { resumeFileName: e.resumeFileName } : {}),
+        ...(e.submittedFileName ? { submittedFileName: e.submittedFileName } : {}),
       }).catch(err => logPersistErr("updateRunJob resumeMatch", err));
     }
   }
@@ -219,6 +222,7 @@ const server = http.createServer(async (req, res) => {
         "GET  /api/runs/:runId",
         "GET  /api/runs/:runId/events",
         "GET  /api/runs/:runId/screenshots/:file",
+        "GET  /api/runs/:runId/resumes/:file",
         "GET  /api/dashboard",
         "GET  /api/activity",
         "POST /api/deploy",
@@ -357,6 +361,36 @@ const server = http.createServer(async (req, res) => {
         "Cache-Control": "public, max-age=86400",
       });
       fs.createReadStream(resolved).pipe(res);
+      return;
+    } catch (err) {
+      return sendJSON(res, 500, { error: String(err?.message || err) });
+    }
+  }
+
+  const runResumeMatch = pathname.match(/^\/api\/runs\/([^/]+)\/resumes\/([^/]+)$/);
+  if (runResumeMatch && req.method === "GET") {
+    try {
+      const runId = runResumeMatch[1];
+      const fileName = path.basename(runResumeMatch[2]);
+      if (fileName !== runResumeMatch[2] || fileName.includes("..")) {
+        return sendJSON(res, 400, { error: "invalid file name" });
+      }
+      const filePath = resolveRunResumePath(runId, fileName);
+      if (!filePath) return sendJSON(res, 404, { error: "résumé file not found" });
+      const ext = path.extname(fileName).toLowerCase();
+      const mime =
+        ext === ".pdf" ? "application/pdf"
+          : ext === ".docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : ext === ".doc" ? "application/msword"
+              : ext === ".txt" ? "text/plain"
+                : "application/octet-stream";
+      res.writeHead(200, {
+        "Content-Type": mime,
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=86400",
+        "Content-Disposition": `inline; filename="${fileName}"`,
+      });
+      fs.createReadStream(filePath).pipe(res);
       return;
     } catch (err) {
       return sendJSON(res, 500, { error: String(err?.message || err) });

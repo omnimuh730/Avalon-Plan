@@ -27,6 +27,7 @@ import {
   materializeResume,
 } from "../core/user-resumes.mjs";
 import { ensureAgentJobResumeFile } from "./agent-resume-gen.mjs";
+import { attachRunResumeFields } from "./run-resume.mjs";
 import { PATHS } from "./config.mjs";
 import { spawn } from "node:child_process";
 import { awaitHumanResume, runSignal, wasManuallyPaused, wasStopped } from "./human-handoff.mjs";
@@ -378,12 +379,17 @@ export async function runBatchCodex(opts) {
   }
 
   const jobIndexRef = { current: 0 };
-  const monitor = startBrowserMonitor({
-    runId: opts.runId,
-    session,
-    emit: opts.emit,
-    getJobIndex: () => jobIndexRef.current,
-  });
+  // The Hermes provider drives a Playwright MCP browser (not this run's
+  // playwright-cli session) and streams its own frames over CDP, so it opts out
+  // of this monitor to avoid spawning failing playwright-cli screenshots.
+  const monitor = opts.skipBrowserMonitor
+    ? { stop() {} }
+    : startBrowserMonitor({
+        runId: opts.runId,
+        session,
+        emit: opts.emit,
+        getJobIndex: () => jobIndexRef.current,
+      });
 
   try {
     return await runBatchCodexInner(opts, { session, forkedProfile: forked || null, jobIndexRef });
@@ -495,6 +501,16 @@ async function runBatchCodexInner(opts, { session, forkedProfile = null, jobInde
           reused: resumeResult.reused,
           generationId: resumeResult.generationId || null,
           resumeId: resumeResult.resumeId || null,
+          ...attachRunResumeFields({
+            runId: opts.runId,
+            jobIndex: i,
+            sourcePath: destFilePath,
+            profileName: applierName,
+            resumeId: resumeResult.resumeId,
+            generationId: resumeResult.generationId,
+            aiGenerated: true,
+            resumeFileName: resumeResult.fileName,
+          }),
         });
         return resumeResult;
       }).catch((e) => {
@@ -655,6 +671,15 @@ async function runBatchCodexInner(opts, { session, forkedProfile = null, jobInde
           scorePercent: Math.round((r.score || 0) * 100),
         })),
         resumeStack: chosenDoc?.techStack || "",
+        resumeId: jobProfile.resumeId || String(chosenDoc?._id || "") || null,
+        ...attachRunResumeFields({
+          runId: opts.runId,
+          jobIndex: i,
+          sourcePath: jobProfile.resumePath,
+          profileName: applierName,
+          resumeId: jobProfile.resumeId,
+          resumeFileName: jobProfile.resumeFileName,
+        }),
       });
     }
 
