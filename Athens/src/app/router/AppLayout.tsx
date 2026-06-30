@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 import { Sidebar } from "../components/layout/Sidebar";
 import { TopNav } from "../components/layout/TopNav";
+import { ApplyProgressOverlay } from "../components/ApplyProgressOverlay";
 import { pathForView, viewFromPathname, type NavigateOptions } from "../config/routes";
 import { AgentRunProvider } from "../context/AgentRunContext";
 import { ApplierProvider } from "../../context/applier-context";
@@ -94,6 +95,7 @@ export function AppLayout() {
             <Outlet />
           </main>
         </div>
+        <ApplyProgressOverlay />
       </div>
     </AppProviders>
   );

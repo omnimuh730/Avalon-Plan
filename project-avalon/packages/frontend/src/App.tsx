@@ -12,6 +12,7 @@ import {
   createActionId,
   type ActionableTarget,
   type ActionablePageContext,
+  type ApplyProgress,
   type ActionableTree,
   type ActionResult,
   type ActionType,
@@ -176,6 +177,10 @@ export default function App() {
         const active = nextTabs.find((t) => t.active) ?? nextTabs[0];
         setSelectedTabId(active.id);
       }
+    });
+
+    next.on(SOCKET_EVENTS.APPLY_PROGRESS, (progress: ApplyProgress) => {
+      pushLog(progress.message, progress.phase !== 'error');
     });
 
     next.on(SOCKET_EVENTS.ACTION_RESULT, (result: ActionResult) => {

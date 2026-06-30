@@ -6,6 +6,7 @@ import {
   DEFAULT_SESSION_ID,
   SOCKET_EVENTS,
   type ActionResult,
+  type ApplyProgress,
   type RegisterPayload,
   type RegisteredPayload,
   type RemoteAction,
@@ -19,6 +20,8 @@ interface Session {
   id: string;
   extension?: Socket;
   controller?: Socket;
+  /** Read-only listeners (e.g. Athens) — receive broadcasts, never take the controller slot. */
+  observers: Set<Socket>;
 }
 
 const sessions = new Map<string, Session>();
@@ -32,7 +35,7 @@ function getOrCreateSession(sessionId?: string): Session {
   const id = resolveSessionId(sessionId);
   const existing = sessions.get(id);
   if (existing) return existing;
-  const session: Session = { id };
+  const session: Session = { id, observers: new Set() };
   sessions.set(session.id, session);
   return session;
 }
@@ -60,7 +63,8 @@ function cleanupSocket(socket: Socket) {
       session.controller = undefined;
       emitPeerStatus(session);
     }
-    if (!session.extension && !session.controller) {
+    session.observers.delete(socket);
+    if (!session.extension && !session.controller && session.observers.size === 0) {
       sessions.delete(id);
     }
   }
@@ -91,6 +95,8 @@ io.on('connection', (socket) => {
     if (payload.role === 'extension') {
       session.extension?.disconnect();
       session.extension = socket;
+    } else if (payload.role === 'observer') {
+      session.observers.add(socket);
     } else {
       session.controller?.disconnect();
       session.controller = socket;
@@ -122,6 +128,15 @@ io.on('connection', (socket) => {
 
   socket.on(SOCKET_EVENTS.ACTION_RESULT, (result: ActionResult) => {
     boundSession?.controller?.emit(SOCKET_EVENTS.ACTION_RESULT, result);
+  });
+
+  // Live apply progress from the extension → controller + all observers (Athens).
+  socket.on(SOCKET_EVENTS.APPLY_PROGRESS, (progress: ApplyProgress) => {
+    if (!boundSession) return;
+    boundSession.controller?.emit(SOCKET_EVENTS.APPLY_PROGRESS, progress);
+    for (const observer of boundSession.observers) {
+      observer.emit(SOCKET_EVENTS.APPLY_PROGRESS, progress);
+    }
   });
 
   socket.on(SOCKET_EVENTS.TABS_UPDATE, (tabs: TabInfo[]) => {

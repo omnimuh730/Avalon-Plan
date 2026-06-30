@@ -1,7 +1,31 @@
-import { type ApplyInjectionPlanPayload, type ActionResult } from '@avalon/shared';
+import {
+  type ApplyInjectionPlanPayload,
+  type ActionResult,
+  type ApplyProgress,
+  type InjectionPlan,
+} from '@avalon/shared';
 import { EXTENSION_MESSAGES } from './constants';
 import { ensureContentScript } from './tab-messages';
 import { FILE_TARGET_ATTR, type InjectionPlanRunResult } from './injection-plan-runner';
+
+const DEFAULT_SUBMIT_DELAY_MS = 5000;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Run a (possibly partial) injection plan in the page and return its result. */
+async function runPlanInTab(tabId: number, plan: InjectionPlan): Promise<InjectionPlanRunResult> {
+  const response = (await browser.tabs.sendMessage(tabId, {
+    type: EXTENSION_MESSAGES.RUN_INJECTION_PLAN,
+    plan,
+  })) as { ok?: boolean; data?: InjectionPlanRunResult; error?: string } | undefined;
+
+  if (!response?.ok || !response.data) {
+    throw new Error(response?.error ?? 'Injection plan failed');
+  }
+  return response.data;
+}
 
 const DEFAULT_FILE = 'Eli Taylor.docx';
 const DEFAULT_FILE_MIME =
@@ -64,36 +88,96 @@ async function attachTaggedFiles(tabId: number): Promise<number> {
 export async function executeInjectionPlan(
   tabId: number,
   payload: ApplyInjectionPlanPayload,
+  onProgress?: (progress: Omit<ApplyProgress, 'at'>) => void,
 ): Promise<ActionResult['data']> {
   const steps = payload.plan?.steps ?? [];
   if (steps.length === 0) {
     throw new Error('Injection plan has no steps');
   }
 
-  await ensureContentScript(tabId);
-  const response = (await browser.tabs.sendMessage(tabId, {
-    type: EXTENSION_MESSAGES.RUN_INJECTION_PLAN,
-    plan: payload.plan,
-  })) as { ok?: boolean; data?: InjectionPlanRunResult; error?: string } | undefined;
+  const emit = (progress: Omit<ApplyProgress, 'at'>) => onProgress?.(progress);
 
-  if (!response?.ok || !response.data) {
-    throw new Error(response?.error ?? 'Injection plan failed');
+  await ensureContentScript(tabId);
+
+  const fileSteps = steps.filter((s) => s.op === 'attachFile');
+  const fieldSteps = steps.filter((s) => s.op !== 'attachFile');
+  const totalSteps = steps.length;
+  let applied = 0;
+  let failed = 0;
+  const results: InjectionPlanRunResult['results'] = [];
+
+  // --- Phase 1: file uploads (top priority — run first and wait for completion).
+  if (fileSteps.length > 0) {
+    emit({ phase: 'files', message: `Uploading ${fileSteps.length} file(s)…`, appliedSteps: 0, totalSteps });
+    const fileRun = await runPlanInTab(tabId, { steps: fileSteps });
+    results.push(...fileRun.results);
+    applied += fileRun.applied;
+    failed += fileRun.failed;
+
+    // The isolated content world can't assign `input.files`; the background sets
+    // the bytes in the page's MAIN world. We await it, so the upload is fully
+    // committed before any other field is touched.
+    let fileFailed = 0;
+    if (fileRun.fileTargets.length > 0) {
+      const attached = await attachTaggedFiles(tabId);
+      fileFailed = fileRun.fileTargets.length - attached;
+      failed += fileFailed;
+    }
+    emit({
+      phase: 'files',
+      message:
+        fileFailed > 0
+          ? `Files uploaded with ${fileFailed} failure(s)`
+          : 'Files uploaded',
+      appliedSteps: applied,
+      totalSteps,
+    });
   }
 
-  const { applied, failed, results, fileTargets } = response.data;
+  // --- Phase 2: remaining form fields.
+  if (fieldSteps.length > 0) {
+    emit({ phase: 'fields', message: `Filling ${fieldSteps.length} field(s)…`, appliedSteps: applied, totalSteps });
+    const fieldRun = await runPlanInTab(tabId, { steps: fieldSteps });
+    results.push(...fieldRun.results);
+    applied += fieldRun.applied;
+    failed += fieldRun.failed;
+    emit({ phase: 'fields', message: 'Fields filled', appliedSteps: applied, totalSteps });
+  }
 
-  // The résumé upload is top priority: every tagged file input is filled in the
-  // MAIN world. Surface a clear failure if a file input was found but not set.
-  let fileFailed = 0;
-  if (fileTargets.length > 0) {
-    const attached = await attachTaggedFiles(tabId);
-    fileFailed = fileTargets.length - attached;
+  // --- Phase 3: countdown, then auto-click Submit/Apply/Next (the final step).
+  let submitted = false;
+  if (payload.autoSubmit !== false) {
+    const delayMs = payload.submitDelayMs ?? DEFAULT_SUBMIT_DELAY_MS;
+    for (let secondsLeft = Math.ceil(delayMs / 1000); secondsLeft > 0; secondsLeft -= 1) {
+      emit({
+        phase: 'submit-wait',
+        message: `Submitting in ${secondsLeft}…`,
+        secondsLeft,
+        appliedSteps: applied,
+        totalSteps,
+      });
+      await sleep(1000);
+    }
+
+    const submitResponse = (await browser.tabs.sendMessage(tabId, {
+      type: EXTENSION_MESSAGES.RUN_SUBMIT,
+    })) as { ok?: boolean; clicked?: boolean; label?: string; error?: string } | undefined;
+
+    submitted = Boolean(submitResponse?.clicked);
+    if (submitted) {
+      emit({ phase: 'submitted', message: `Submitted${submitResponse?.label ? ` (${submitResponse.label})` : ''}`, appliedSteps: applied, totalSteps });
+    } else {
+      emit({ phase: 'done', message: 'No submit control found — left for manual review', appliedSteps: applied, totalSteps });
+    }
+  } else {
+    emit({ phase: 'done', message: 'Fill complete', appliedSteps: applied, totalSteps });
   }
 
   return {
     applied,
     skipped: 0,
-    failed: failed + fileFailed,
+    failed,
     result: results,
+    submitted,
   };
 }

@@ -6,6 +6,7 @@ export const EXTENSION_MESSAGES = {
   EXECUTE_IN_TAB: 'avalon:execute-in-tab',
   EXECUTE_RESULT: 'avalon:execute-result',
   RUN_INJECTION_PLAN: 'avalon:run-injection-plan',
+  RUN_SUBMIT: 'avalon:run-submit',
   RELAY_CONNECT: 'avalon:relay-connect',
   RELAY_DISCONNECT: 'avalon:relay-disconnect',
   RELAY_STATUS: 'avalon:relay-status',

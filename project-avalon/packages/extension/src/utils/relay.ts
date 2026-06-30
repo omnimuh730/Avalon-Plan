@@ -4,6 +4,7 @@ import {
   type ActionResult,
   type ActionablePageContext,
   type ApplyInjectionPlanPayload,
+  type ApplyProgress,
   type RemoteAction,
   type RegisteredPayload,
   type TabInfo,
@@ -15,6 +16,16 @@ import { ensureContentScript, runActionInTab } from './tab-messages';
 
 let socket: Socket | null = null;
 let tabListenersBound = false;
+let currentSessionId: string = DEFAULT_SESSION_ID;
+
+function emitApplyProgress(progress: Omit<ApplyProgress, 'at' | 'sessionId'>) {
+  if (!socket?.connected) return;
+  socket.emit(SOCKET_EVENTS.APPLY_PROGRESS, {
+    ...progress,
+    sessionId: currentSessionId,
+    at: Date.now(),
+  } satisfies ApplyProgress);
+}
 
 function bindTabListeners() {
   if (tabListenersBound) return;
@@ -130,7 +141,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
         : undefined;
 
     try {
-      const data = await executeInjectionPlan(planTabId, payload);
+      const data = await executeInjectionPlan(planTabId, payload, emitApplyProgress);
       return {
         actionId: action.id,
         success: true,
@@ -170,6 +181,7 @@ export async function connectRelay(
       SOCKET_EVENTS.REGISTER,
       { role: 'extension', sessionId },
       (response: RegisteredPayload) => {
+        currentSessionId = response.sessionId;
         void browser.storage.local.set({
           [AVALON_SERVER_KEY]: serverUrl,
           [AVALON_SESSION_KEY]: response.sessionId,

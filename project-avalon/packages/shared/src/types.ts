@@ -2,7 +2,7 @@
 export const DEFAULT_SESSION_ID = 'default';
 
 /** Client role when connecting to the Avalon relay server. */
-export type ClientRole = 'extension' | 'controller';
+export type ClientRole = 'extension' | 'controller' | 'observer';
 
 /** Dynamic attribute filter on a DOM element. */
 export interface PropertyFilter {
@@ -135,6 +135,13 @@ export interface ApplyInjectionPlanPayload {
   /** Declarative steps executed in the content script's isolated world. */
   plan: InjectionPlan;
   page?: ActionablePageContext;
+  /**
+   * After all fields are filled, auto-click the Submit/Apply/Next control as the
+   * final mandatory step. Defaults to true.
+   */
+  autoSubmit?: boolean;
+  /** Delay before the auto-submit click, surfaced as a countdown. Defaults to 5000ms. */
+  submitDelayMs?: number;
 }
 
 export interface RemoteAction {
@@ -170,9 +177,33 @@ export const SOCKET_EVENTS = {
   REQUEST_TABS: 'request-tabs',
   REQUEST_SCREENSHOT: 'request-screenshot',
   SCREENSHOT_RESULT: 'screenshot-result',
+  /** Live apply lifecycle updates (file upload, field fill, submit countdown). */
+  APPLY_PROGRESS: 'apply-progress',
   PING: 'ping',
   PONG: 'pong',
 } as const;
+
+/** Lifecycle phases reported while an injection plan is being applied. */
+export type ApplyPhase =
+  | 'files' // uploading résumé / file inputs (top priority, runs first)
+  | 'fields' // filling the remaining form fields
+  | 'submit-wait' // counting down before the auto-submit click
+  | 'submitted' // submit / apply / next was clicked
+  | 'done' // apply finished (no submit control found)
+  | 'error';
+
+/** A single live progress update broadcast to controllers and observers (e.g. Athens). */
+export interface ApplyProgress {
+  sessionId?: string;
+  phase: ApplyPhase;
+  message: string;
+  /** Seconds remaining during the `submit-wait` countdown. */
+  secondsLeft?: number;
+  /** Steps applied so far / total, for a progress bar. */
+  appliedSteps?: number;
+  totalSteps?: number;
+  at: number;
+}
 
 export interface RegisterPayload {
   role: ClientRole;
