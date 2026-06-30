@@ -173,10 +173,16 @@ export default function App() {
 
     next.on(SOCKET_EVENTS.TABS_UPDATE, (nextTabs: TabInfo[]) => {
       setTabs(nextTabs);
-      if (nextTabs.length && selectedTabId === '') {
-        const active = nextTabs.find((t) => t.active) ?? nextTabs[0];
-        setSelectedTabId(active.id);
-      }
+      // Follow the user's active browser tab. Otherwise selectedTabId stays stuck
+      // on the last applied/scanned tab: switching tabs and scanning would send
+      // the stale id, and the extension's focusTab() would yank focus back to the
+      // previous tab and scan it instead of the one the user is now viewing.
+      const active = nextTabs.find((t) => t.active);
+      setSelectedTabId((prev) => {
+        if (active) return active.id;
+        if (prev === '' && nextTabs.length) return nextTabs[0].id;
+        return prev;
+      });
     });
 
     next.on(SOCKET_EVENTS.APPLY_PROGRESS, (progress: ApplyProgress) => {
@@ -247,7 +253,7 @@ export default function App() {
         }
       },
     );
-  }, [pushLog, selectedTabId, serverUrl, sessionId]);
+  }, [pushLog, serverUrl, sessionId]);
 
   useEffect(() => {
     return () => {

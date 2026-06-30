@@ -191,7 +191,13 @@ function isUnlabeledClickable(el: Element): boolean {
 }
 
 function isEditorChrome(el: Element): boolean {
-  return el.tagName === 'BUTTON' && Boolean(el.closest('[contenteditable="true"]'));
+  if (el.tagName !== 'BUTTON') return false;
+  if (el.closest('[contenteditable="true"]')) return true;
+  // Rich-text formatting toolbars (bold/italic/list/link) sit beside the editable
+  // in the same field block, not inside it. Detect by the editor's semantics
+  // (a contenteditable textbox in the same field), never by toolbar class names.
+  const fieldRoot = findFieldRoot(el);
+  return Boolean(fieldRoot?.querySelector('[contenteditable="true"][role="textbox"]'));
 }
 
 // A bare <button> reports .type === 'submit' by default, so the property alone
@@ -408,6 +414,76 @@ function getGroupContent(parent: Element, childSet: Set<Element>, scope: Element
   }
 
   return content;
+}
+
+/**
+ * Section headings and instructions often live in the DOM *between* two field
+ * groups, so they belong to no group's own innerText (parent − children) and are
+ * silently lost. Example:
+ *
+ *   <group>…</group>
+ *   <p>Show us 1–3 things you've built…</p>   ← orphan, owned by no group
+ *   <group2><textarea/></group2>
+ *
+ * We attach each orphan text block to the NEXT group in document order so its
+ * context reaches the AI. Purely structural — no vendor or label matching.
+ */
+function collectSectionTextByGroup(scope: Element, groupParents: Element[]): Map<Element, string> {
+  const result = new Map<Element, string>();
+  if (groupParents.length === 0) return result;
+
+  const groupSet = new Set(groupParents);
+  const ordered = [...groupParents].sort((a, b) =>
+    a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+  );
+
+  const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode() as Text | null;
+  while (node) {
+    const current = node;
+    node = walker.nextNode() as Text | null;
+
+    const text = (current.textContent ?? '').trim();
+    const host = current.parentElement;
+    if (!text || !host) continue;
+    if (host.tagName === 'SCRIPT' || host.tagName === 'STYLE') continue;
+
+    // Skip text already owned by a group, or transient dropdown/listbox noise.
+    let owned = false;
+    for (let p: Element | null = host; p && p !== scope; p = p.parentElement) {
+      if (groupSet.has(p) || isListboxInternalNoise(p)) {
+        owned = true;
+        break;
+      }
+    }
+    if (owned) continue;
+
+    const target = ordered.find(
+      (gp) => current.compareDocumentPosition(gp) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    if (!target) continue;
+
+    const prev = result.get(target);
+    result.set(target, prev ? `${prev} ${text}` : text);
+  }
+
+  return result;
+}
+
+function clamp(text: string): string {
+  return text.length > MAX_GROUP_CONTENT_LENGTH
+    ? `${text.slice(0, MAX_GROUP_CONTENT_LENGTH).trim()}…`
+    : text;
+}
+
+/** Prepend the lost between-group section text to a group's own content. */
+function mergeSectionContext(lead: string | undefined, base: string): string {
+  const leadText = normalizeWhitespace(lead ?? '');
+  if (!leadText) return base;
+  if (!base) return clamp(leadText);
+  if (base.includes(leadText)) return clamp(base);
+  if (leadText.includes(base)) return clamp(leadText);
+  return clamp(`${leadText} ${base}`);
 }
 
 function getFieldContextText(
@@ -866,6 +942,8 @@ export async function fetchActionableTree(
     fetchOptions,
   );
 
+  const sectionTextByGroup = collectSectionTextByGroup(scope, parentOrder);
+
   const groups: ActionableGroup[] = [];
   for (const parent of parentOrder) {
     const children = parentToChildren.get(parent) ?? [];
@@ -888,7 +966,7 @@ export async function fetchActionableTree(
       );
     }
     groups.push({
-      content: getGroupContent(parent, childSet, scope),
+      content: mergeSectionContext(sectionTextByGroup.get(parent), getGroupContent(parent, childSet, scope)),
       contentHtml: stripChildrenHtml(parent, childSet),
       children: childEntries,
     });

@@ -325,6 +325,16 @@ export function getAccessibleName(el: Element): string {
     if (labelText) return labelText;
   }
 
+  // A control wrapped in a <label> takes its accessible name from that label
+  // (HTML label association). Without this, fields with only a wrapping label
+  // fall through to the field-root title and inherit a neighbouring section's
+  // heading instead of their own question.
+  const wrappingLabel = el.closest('label');
+  if (wrappingLabel) {
+    const labelText = wrappingLabel.textContent?.trim().replace(/\*+/g, '').trim();
+    if (labelText && !isGenericPlaceholder(labelText)) return labelText;
+  }
+
   const fieldRoot = findFieldRoot(el);
   if (fieldRoot) {
     const fieldTitle = getFieldTitle(fieldRoot);
