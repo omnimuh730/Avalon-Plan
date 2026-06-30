@@ -1,27 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { fetchAvalonHealth } from "../../../services/agentApi";
 import type { AvalonHealthData } from "../../../types/agent";
 
 export function useAvalonHealth() {
   const [health, setHealth] = useState<AvalonHealthData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (sessionId?: string) => {
     setLoading(true);
     try {
-      setHealth(await fetchAvalonHealth());
+      setHealth(await fetchAvalonHealth(sessionId));
     } catch {
       setHealth({ ok: false, extension: false });
     } finally {
       setLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    void refresh();
-    const id = window.setInterval(() => void refresh(), 15000);
-    return () => window.clearInterval(id);
-  }, [refresh]);
 
   return { health, loading, refresh };
 }

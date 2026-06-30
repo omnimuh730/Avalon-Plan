@@ -69,7 +69,11 @@ function cleanupSocket(socket: Socket) {
 const app = express();
 app.use(cors({ origin: CORS_ORIGIN }));
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, sessions: sessions.size });
+  const active = [...sessions.values()].map((session) => ({
+    id: session.id,
+    peers: peerStatus(session),
+  }));
+  res.json({ ok: true, sessions: sessions.size, active });
 });
 
 const httpServer = createServer(app);

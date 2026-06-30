@@ -60,7 +60,9 @@ export function useAvalonRelay(applicantContext: string) {
 
   const socketRef = useRef<Socket | null>(null);
   const applyingRef = useRef(false);
+  const sessionIdRef = useRef(sessionId);
   const selectedTabIdRef = useRef(selectedTabId);
+  sessionIdRef.current = sessionId;
   selectedTabIdRef.current = selectedTabId;
 
   const canExecute = connected && peers.extension;
@@ -97,7 +99,12 @@ export function useAvalonRelay(applicantContext: string) {
   const connect = useCallback(() => {
     socketRef.current?.removeAllListeners();
     socketRef.current?.disconnect();
-    const next = io(serverUrl, { transports: ["websocket", "polling"] });
+    const next = io(serverUrl, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+    });
     socketRef.current = next;
 
     next.on("connect", () => {
@@ -105,20 +112,26 @@ export function useAvalonRelay(applicantContext: string) {
       pushLog("Connected to relay server");
       next.emit(
         SOCKET_EVENTS.REGISTER,
-        { role: "controller", sessionId: sessionId || undefined },
+        { role: "controller", sessionId: sessionIdRef.current || undefined },
         (response: RegisteredPayload) => {
           setRegistered(response);
-          setSessionId(response.sessionId);
+          setSessionId((prev) => prev || response.sessionId);
           setPeers(response.peers);
           pushLog(`Registered session ${response.sessionId}`);
         },
       );
     });
 
-    next.on("disconnect", () => {
+    next.on("disconnect", (reason) => {
       setConnected(false);
-      setRegistered(null);
-      pushLog("Disconnected");
+      setPeers({ extension: false, controller: false });
+      if (reason !== "io client disconnect") {
+        pushLog(`Disconnected (${reason})`);
+      }
+    });
+
+    next.on("connect_error", (err) => {
+      pushLog(`Connection error: ${err.message}`, false);
     });
 
     next.on("peers-update", (payload: { peers: typeof peers }) => {
@@ -194,7 +207,7 @@ export function useAvalonRelay(applicantContext: string) {
         pushLog(`Screenshot failed: ${payload.error}`, false);
       }
     });
-  }, [pushLog, serverUrl, sessionId]);
+  }, [pushLog, serverUrl]);
 
   useEffect(() => {
     connect();

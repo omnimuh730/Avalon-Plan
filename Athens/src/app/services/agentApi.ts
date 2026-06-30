@@ -6,8 +6,7 @@ import type {
   HealthData,
   RunSummary,
 } from "../types/agent";
-import { io } from "socket.io-client";
-import { DEFAULT_SESSION_ID, SOCKET_EVENTS } from "@avalon/shared";
+import { DEFAULT_SESSION_ID } from "@avalon/shared";
 
 const AGENTS_BASE = `${API_BASE.replace(/\/$/, "")}/agents`;
 
@@ -38,45 +37,24 @@ export function avalonRelayUrl() {
   return (import.meta.env.VITE_AVALON_SERVER || "http://localhost:3847").replace(/\/$/, "");
 }
 
-/** Probe Avalon relay + extension peer status. */
-export function fetchAvalonHealth(): Promise<AvalonHealthData> {
-  return new Promise((resolve) => {
-    const socket = io(avalonRelayUrl(), {
-      transports: ["websocket", "polling"],
-      timeout: 5000,
-      reconnection: false,
-    });
-
-    const fail = () => {
-      socket.removeAllListeners();
-      socket.disconnect();
-      resolve({ ok: false, extension: false });
+/** Probe Avalon relay via HTTP — does not steal the controller socket slot. */
+export async function fetchAvalonHealth(sessionId = DEFAULT_SESSION_ID): Promise<AvalonHealthData> {
+  try {
+    const res = await fetch(`${avalonRelayUrl()}/health`);
+    if (!res.ok) return { ok: false, extension: false };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      active?: Array<{ id: string; peers?: { extension?: boolean } }>;
     };
-
-    const timer = window.setTimeout(fail, 6000);
-
-    socket.on("connect", () => {
-      socket.emit(
-        SOCKET_EVENTS.REGISTER,
-        { role: "controller", sessionId: DEFAULT_SESSION_ID },
-        (response: { sessionId?: string; peers?: { extension?: boolean } }) => {
-          window.clearTimeout(timer);
-          socket.removeAllListeners();
-          socket.disconnect();
-          resolve({
-            ok: true,
-            extension: Boolean(response?.peers?.extension),
-            sessionId: response?.sessionId,
-          });
-        },
-      );
-    });
-
-    socket.on("connect_error", () => {
-      window.clearTimeout(timer);
-      fail();
-    });
-  });
+    const session = data.active?.find((s) => s.id === sessionId) ?? data.active?.[0];
+    return {
+      ok: Boolean(data.ok),
+      extension: Boolean(session?.peers?.extension),
+      sessionId: session?.id ?? sessionId,
+    };
+  } catch {
+    return { ok: false, extension: false };
+  }
 }
 
 export async function fetchAgentHealth(): Promise<HealthData | null> {

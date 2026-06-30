@@ -5,12 +5,10 @@ import { PageShell } from "../../components/layout/PageShell";
 import type { DeployOptions } from "../../types/agent";
 import { AvalonControllerView } from "./components/AvalonControllerView";
 import { DeployAgentModal } from "./components/DeployAgentModal";
-import { useAvalonHealth } from "./hooks/useAvalonHealth";
 import type { QueuedJob } from "./hooks/useAvalonRelay";
 
 export function AgentsPage() {
   const { applierReady } = useApplier();
-  const { health, loading: healthLoading, refresh } = useAvalonHealth();
   const [showDeploy, setShowDeploy] = useState(false);
   const [queuedJobs, setQueuedJobs] = useState<QueuedJob[]>([]);
   const [sessionKey, setSessionKey] = useState(0);
@@ -67,9 +65,6 @@ export function AgentsPage() {
           <AvalonControllerView
             key={sessionKey}
             initialJobs={queuedJobs.length ? queuedJobs : undefined}
-            health={health}
-            healthLoading={healthLoading}
-            onRefreshHealth={() => void refresh()}
             onQueueJobs={() => setShowDeploy(true)}
           />
         )}

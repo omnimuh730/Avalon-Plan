@@ -21,6 +21,9 @@ Action rules by controlType:
   - Use groupContext + option label together (e.g. "What do you want to work on?" → Check Backend/Frontend for a full-stack engineer)
 - radio → Click (select that option), value = N/A
 - button → Click, value = N/A
+- Single-select option groups (radio options, or Yes/No and segmented <button> options that SHARE the same groupContext): these are ONE question split into multiple option fields. You MUST select EXACTLY ONE option per group — shouldSkip No on the chosen option and shouldSkip Yes on every OTHER option in that same group. Never leave all options in a group skipped, and never mark more than one as shouldSkip No.
+  - Choose the option that matches the profile (e.g. sponsorship Yes/No from profile.sponsorship).
+  - If the profile has no direct answer, still answer when the question is required (asterisk / "required") or clearly expects a choice: pick the most reasonable, low-risk answer for a qualified applicant from the groupContext (e.g. authorized-to-work → Yes; require-sponsorship → No). Do not skip a required question for "no profile data".
 - file → FileUpload, value = file purpose (e.g. "resume", "cover letter") — do not invent file bytes
 - link → Click with shouldSkip Yes, value N/A — informational links must NOT be clicked (they leave the application page)
 
@@ -33,10 +36,12 @@ Resume / CV file upload (TOP PRIORITY — MANDATORY):
 ShouldSkip Yes when:
 - Informational / disclosure / external links (definitions, OFCCP, dol.gov, learn more)
 - Optional fields with no profile data and no sensible default (only if truly skippable)
+- The NON-chosen options of a single-select group (exactly one option per group stays shouldSkip No)
 - NEVER for Resume/CV file uploads
 - NEVER for all checkboxes in a "select all that apply" group — pick Check/Uncheck per option instead
+- NEVER for ALL options of a single-select / Yes-No / radio group — that silently leaves the question unanswered; always pick one
 
-ShouldSkip No for required fields and all real inputs that must be filled to submit.
+ShouldSkip No for required fields and all real inputs that must be filled to submit. Treat every question as answerable: prefer making a sensible choice over skipping. Only skip when the field is genuinely optional AND there is no reasonable answer.
 
 Profile (autoBidProfile): use exact values for firstName, lastName, email, phone, city, state, country,
 linkedin, github, gender, demographic fields, sponsorship, etc. Map EEO dropdowns to closest listed option label.
@@ -131,6 +136,8 @@ export function buildAnalysisUserMessage(
 
   const parts = [
     'Build an action plan (action, shouldSkip, value) for every field id below.',
+    'Answer every question — do not leave any required field unanswered. Prefer a sensible choice over skipping.',
+    'Single-select groups (Yes/No, radio, segmented buttons sharing a groupContext): pick EXACTLY ONE option (shouldSkip No) and shouldSkip Yes the rest. Never skip all options of such a group.',
     'Resume/CV file uploads are mandatory — must be FileUpload with shouldSkip No (top priority).',
     'Multi-select checkbox groups: shouldSkip No per option — Check skills that match profile careers/title.',
     'Combobox / location / autocomplete fields: action must be Typing (never SelectOption) — type profile city or filter text; Enter confirms after typing.',

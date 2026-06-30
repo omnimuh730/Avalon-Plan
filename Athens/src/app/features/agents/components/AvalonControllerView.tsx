@@ -22,9 +22,19 @@ import {
 import type { ActionableTree } from "@avalon/shared";
 import { useApplier } from "@/context/applier-context";
 import { cn } from "../../../lib/utils";
-import type { AvalonHealthData } from "../../../types/agent";
 import { formatApplierProfile } from "../avalon/ai/profile";
 import { useAvalonRelay, type QueuedJob } from "../hooks/useAvalonRelay";
+
+function applyDisabledReason(relay: ReturnType<typeof useAvalonRelay>, hasPlan: boolean): string | null {
+  if (!hasPlan) return "Run Analyze first to build a fill plan.";
+  if (relay.analyzing) return "Analysis still running…";
+  if (relay.applying) return "Apply already in progress…";
+  if (!relay.treePage?.tabId) return "Tab context lost — click Scan form again, then Apply.";
+  if (!relay.canExecute) {
+    return relay.executeDisabledReason ?? "Extension disconnected — click Reconnect in settings.";
+  }
+  return null;
+}
 
 function fieldId(groupIdx: number, childIdx: number): string {
   return `${groupIdx}:${childIdx}`;
@@ -87,15 +97,9 @@ function StatusDot({ ok, warn }: { ok?: boolean; warn?: boolean }) {
 
 export function AvalonControllerView({
   initialJobs,
-  health,
-  healthLoading,
-  onRefreshHealth,
   onQueueJobs,
 }: {
   initialJobs?: QueuedJob[];
-  health?: AvalonHealthData | null;
-  healthLoading?: boolean;
-  onRefreshHealth?: () => void;
   onQueueJobs?: () => void;
 }) {
   const { applier } = useApplier();
@@ -120,7 +124,9 @@ export function AvalonControllerView({
   const activeJob = relay.jobQueue[relay.activeJobIndex];
   const hasTree = Boolean(relay.actionableTree?.length);
   const hasPlan = Boolean(relay.formAnalysis?.fields.length);
-  const relayOk = health?.ok && health.extension;
+  const liveOk = relay.connected && relay.peers.extension;
+  const applyBlocked = applyDisabledReason(relay, hasPlan);
+  const canApply = hasPlan && !applyBlocked;
 
   const workflowSteps: WorkflowStep[] = [
     { id: "connect", label: "Connected", done: relay.canExecute, active: !relay.canExecute },
@@ -153,9 +159,13 @@ export function AvalonControllerView({
         <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b border-border/60">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary/60 border border-border/50">
-              <StatusDot ok={health?.ok} warn={health?.ok && !health.extension} />
+              <StatusDot ok={liveOk} warn={relay.connected && !relay.peers.extension} />
               <span className="text-xs font-semibold text-foreground">
-                {healthLoading ? "Checking…" : relayOk ? "Extension live" : health?.ok ? "Relay only" : "Offline"}
+                {liveOk
+                  ? "Extension live"
+                  : relay.connected
+                    ? "Relay only — waiting for extension"
+                    : "Disconnected"}
               </span>
             </div>
             {relay.registered && (
@@ -183,12 +193,11 @@ export function AvalonControllerView({
             </button>
             <button
               type="button"
-              onClick={onRefreshHealth}
-              disabled={healthLoading}
-              className="p-2 rounded-lg border border-border hover:bg-secondary transition-colors disabled:opacity-50"
-              title="Refresh status"
+              onClick={() => relay.connect()}
+              className="p-2 rounded-lg border border-border hover:bg-secondary transition-colors"
+              title="Reconnect relay"
             >
-              <RefreshCw className={cn("w-4 h-4 text-muted-foreground", healthLoading && "animate-spin")} />
+              <RefreshCw className="w-4 h-4 text-muted-foreground" />
             </button>
           </div>
         </div>
@@ -222,7 +231,22 @@ export function AvalonControllerView({
         </div>
       </div>
 
-      {relay.executeDisabledReason && !relay.canExecute && (
+      {applyBlocked && hasPlan && (
+        <div className="rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-2">
+          <span>{applyBlocked}</span>
+          {!relay.canExecute && (
+            <button
+              type="button"
+              onClick={() => relay.connect()}
+              className="shrink-0 px-3 py-1 rounded-lg bg-amber-900/10 text-amber-900 font-semibold hover:bg-amber-900/15"
+            >
+              Reconnect
+            </button>
+          )}
+        </div>
+      )}
+
+      {relay.executeDisabledReason && !relay.canExecute && !hasPlan && (
         <div className="rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-xs text-amber-900">
           {relay.executeDisabledReason}
         </div>
@@ -421,9 +445,7 @@ export function AvalonControllerView({
             <button
               type="button"
               onClick={() => void relay.applyActionPlan()}
-              disabled={
-                !hasPlan || relay.applying || relay.analyzing || !relay.canExecute || !relay.treePage?.tabId
-              }
+              disabled={!canApply || relay.applying || relay.analyzing}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-foreground text-background text-sm font-bold hover:opacity-90 disabled:opacity-40 transition-opacity"
             >
               {relay.applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
