@@ -9,6 +9,35 @@ function normalizeText(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Activate an element the way a real pointer would. A bare `element.click()`
+ * only fires a `click` event — custom controls (segmented Yes/No toggles,
+ * option pills) commonly drive their state from `pointerdown`/`mousedown`, so a
+ * lone synthetic click no-ops on them. We replay the full gesture, then call the
+ * native `.click()` last so the element's default activation behavior (e.g. a
+ * real checkbox toggling) still runs exactly once. Option handlers set a value
+ * idempotently, so firing both down and click cannot double-toggle them.
+ */
+function dispatchActivation(el: HTMLElement): void {
+  el.focus?.();
+  const view = el.ownerDocument?.defaultView ?? window;
+  const opts = { bubbles: true, cancelable: true, view } as const;
+  const PointerEventCtor =
+    typeof view.PointerEvent === 'function' ? view.PointerEvent : null;
+  const firePointer = (type: string) => {
+    if (PointerEventCtor) {
+      el.dispatchEvent(new PointerEventCtor(type, { ...opts, pointerType: 'mouse' }));
+    }
+  };
+  firePointer('pointerover');
+  el.dispatchEvent(new MouseEvent('mouseover', opts));
+  firePointer('pointerdown');
+  el.dispatchEvent(new MouseEvent('mousedown', opts));
+  firePointer('pointerup');
+  el.dispatchEvent(new MouseEvent('mouseup', opts));
+  el.click();
+}
+
 function findByContext(contextText: string): Element | null {
   const needle = normalizeText(contextText);
   if (!needle) return null;
@@ -74,7 +103,7 @@ export function createInjectionHelpers(): InjectionHelpers {
     findByContext,
     findField,
     click(el: Element) {
-      resolvePointerTarget(el).click();
+      dispatchActivation(resolvePointerTarget(el));
     },
     clickText(root: Element, label: string) {
       const needle = normalizeText(label);
@@ -83,7 +112,7 @@ export function createInjectionHelpers(): InjectionHelpers {
           (el) => normalizeText((el as HTMLElement).innerText ?? el.textContent ?? '') === needle,
         ) ?? null;
       if (!hit) throw new Error(`Option not found: ${label}`);
-      resolvePointerTarget(hit).click();
+      dispatchActivation(resolvePointerTarget(hit));
       return hit;
     },
     setValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {

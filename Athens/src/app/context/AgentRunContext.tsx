@@ -1,29 +1,18 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import type { ActiveRun, RunSummary } from "../types/agent";
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import type { RunSummary } from "../types/agent";
 
 type AgentRunContextValue = {
-  activeRun: ActiveRun | null;
-  setActiveRun: (run: ActiveRun | null) => void;
   openRun: (run: RunSummary) => void;
-  pendingTab: "dashboard" | "runs" | null;
-  setPendingTab: (tab: "dashboard" | "runs" | null) => void;
 };
 
 const AgentRunContext = createContext<AgentRunContextValue | null>(null);
 
 export function AgentRunProvider({ children }: { children: ReactNode }) {
-  const [activeRun, setActiveRun] = useState<ActiveRun | null>(null);
-  const [pendingTab, setPendingTab] = useState<"dashboard" | "runs" | null>(null);
-
   const openRun = useCallback((_run: RunSummary) => {
-    setActiveRun(null);
-    setPendingTab("runs");
+    // Agents page is Avalon-only; navigate via dashboard widget instead.
   }, []);
 
-  const value = useMemo(
-    () => ({ activeRun, setActiveRun, openRun, pendingTab, setPendingTab }),
-    [activeRun, openRun, pendingTab],
-  );
+  const value = useMemo(() => ({ openRun }), [openRun]);
 
   return <AgentRunContext.Provider value={value}>{children}</AgentRunContext.Provider>;
 }
