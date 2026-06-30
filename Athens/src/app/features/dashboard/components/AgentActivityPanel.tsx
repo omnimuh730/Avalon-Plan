@@ -42,9 +42,9 @@ export function AgentActivityPanel({ onNavigateAgents }: AgentActivityPanelProps
         ]);
         if (cancelled) return;
         setRuns(runList.slice(0, 3));
-        setActiveRuns(dash.activeRuns ?? runList.filter((r) => r.status === "running").length);
-        setRunsToday(dash.succeededToday ?? 0);
-        const subs = dash.submissions7d?.length ? dash.submissions7d : dash.applications7d ?? [];
+        setActiveRuns(dash?.activeRuns ?? runList.filter((r) => r.status === "running").length);
+        setRunsToday(dash?.succeededToday ?? 0);
+        const subs = dash?.submissions7d?.length ? dash.submissions7d : dash?.applications7d ?? [];
         if (subs.length) {
           setChartData(subs.map((d) => ({ h: d.day, t: d.count })));
         }

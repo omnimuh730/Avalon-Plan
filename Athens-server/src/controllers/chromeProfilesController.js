@@ -8,14 +8,13 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 
-/** Persistent per-applicant master user-data-dir — MUST match the connector's
- *  mcp-session.masterProfileDir: <claudeCwd>/.sessions/<safeApplier>-chrome. */
 function safeApplier(name) {
   return String(name || "").replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "applicant";
 }
+
+/** Persistent per-applicant master user-data-dir for optional Chrome session import. */
 function masterProfileDir(applierName) {
-  const claudeCwd = process.env.CLAUDE_CODE_DIR || path.join(REPO_ROOT, "claude-code");
-  return path.join(claudeCwd, ".sessions", `${safeApplier(applierName)}-chrome`);
+  return path.join(REPO_ROOT, ".data", "chrome-sessions", `${safeApplier(applierName)}-chrome`);
 }
 
 // Don't copy Chrome lock/socket files or the large regenerable caches when forking.

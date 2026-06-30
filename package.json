@@ -4,8 +4,7 @@
   "workspaces": [
     "packages/shared",
     "Athens-server",
-    "unified-ai-server",
-    "connector"
+    "unified-ai-server"
   ],
   "scripts": {
     "prestart": "node scripts/prestart.mjs",
@@ -20,7 +19,6 @@
     "test:shared": "node --test packages/shared/src/pricing.test.mjs",
     "start:athens-server": "npm run start -w Athens-server",
     "start:ai": "npm run start -w unified-ai-server",
-    "start:connector": "npm run start -w connector",
     "start:ui": "npm run dev --prefix Athens"
   }
 }

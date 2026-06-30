@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Initialize separate git repos for new services, then subtree-add ALL subprojects
+# Initialize separate git repos for new services, then subtree-add subprojects
 # into the NextOffer monorepo (preserves each repo's commit history).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-NEW_REPOS=(packages unified-ai-server connector mcp-servers agent-runtime)
-ALL_SUBTREES=(Athens Athens-server codex claude-code Extension packages unified-ai-server connector mcp-servers agent-runtime)
+NEW_REPOS=(packages unified-ai-server)
+ALL_SUBTREES=(Athens Athens-server Extension packages unified-ai-server)
 
 echo "== Step 1: init git in new sub-repos =="
 for d in "${NEW_REPOS[@]}"; do
@@ -45,7 +45,7 @@ subtree_branch() {
   case "$1" in
     Athens) echo master ;;
     Athens-server) echo cursor/dev-setup-readme-and-npm-start ;;
-    codex|claude-code|packages|unified-ai-server|connector|mcp-servers|agent-runtime) echo main ;;
+    packages|unified-ai-server) echo main ;;
     Extension) echo master ;;
     *) echo main ;;
   esac
@@ -85,7 +85,3 @@ bash "$ROOT/scripts/git-subtree-remotes.sh" || true
 echo ""
 echo "Done. Subtrees:"
 git log --oneline --graph -15
-echo ""
-echo "Push a subtree back upstream later, e.g.:"
-echo "  git subtree push --prefix=Athens athens-upstream master"
-echo "  git subtree push --prefix=connector connector-upstream main"

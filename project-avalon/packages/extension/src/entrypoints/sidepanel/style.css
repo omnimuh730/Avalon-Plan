@@ -1,0 +1,75 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, sans-serif;
+  line-height: 1.4;
+  color: #e8eaed;
+  background: #0f1117;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 12px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+label {
+  font-size: 0.75rem;
+  color: #9aa4b2;
+}
+
+input {
+  width: 100%;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #2a3144;
+  background: #151922;
+  color: inherit;
+}
+
+button {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: white;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #2a3144;
+}
+
+.status {
+  padding: 8px;
+  border-radius: 8px;
+  background: #151922;
+  border: 1px solid #2a3144;
+  font-size: 0.8125rem;
+}
+
+.status.connected {
+  border-color: #166534;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+code {
+  font-size: 0.75rem;
+}

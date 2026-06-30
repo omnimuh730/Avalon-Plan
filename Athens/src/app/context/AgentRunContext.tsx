@@ -15,17 +15,8 @@ export function AgentRunProvider({ children }: { children: ReactNode }) {
   const [activeRun, setActiveRun] = useState<ActiveRun | null>(null);
   const [pendingTab, setPendingTab] = useState<"dashboard" | "runs" | null>(null);
 
-  const openRun = useCallback((run: RunSummary) => {
-    setActiveRun({
-      runId: run.id,
-      agentName: run.agentName,
-      url: run.url,
-      profileName: run.profileName,
-      model: run.model,
-      source: run.source,
-      jobCount: run.jobCount,
-      mode: run.status === "running" ? "live" : "review",
-    });
+  const openRun = useCallback((_run: RunSummary) => {
+    setActiveRun(null);
     setPendingTab("runs");
   }, []);
 

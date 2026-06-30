@@ -1,6 +1,5 @@
 /**
- * Per-job outcome inside an agent run (codex core-backend / agent-bff).
- * Mapped from apply results via `mapJobResultToStatus` — not the Job Search pipeline.
+ * Per-job outcome inside an agent run.
  */
 export type AgentJobStatus = "in_progress" | "succeeded" | "failed" | "scheduled" | "review";
 
@@ -78,14 +77,15 @@ export interface DashboardData {
 
 export interface HealthData {
   ok: boolean;
-  model: string;
-  keyPresent: boolean;
-  autoSubmit: boolean;
-  mongoDb: string;
-  mongoUri: string;
-  resumeDataPath: string;
-  playwrightCwd: string;
-  applicationsLog: string;
+  model?: string;
+  keyPresent?: boolean;
+  mongoDb?: string;
+}
+
+export interface AvalonHealthData {
+  ok: boolean;
+  extension: boolean;
+  sessionId?: string;
 }
 
 export interface LogEntry {
@@ -112,19 +112,11 @@ export type AgentJobTabKey = "in_progress" | "succeeded" | "failed" | "scheduled
 
 export interface DeployOptions {
   name: string;
-  autoSubmit: boolean;
   profileId: string;
   model: string;
   source: string;
-  startIndex: number;
-  endIndex: number;
-  mode?: "turbo" | "plan";
-  autoApprove?: boolean;
-  generateResumeByAi?: boolean;
-  provider?: "codex" | "claude-code" | "hermes";
-  claudeEngine?: "cli" | "mcp" | "plan";
   jobIds?: string[];
-  chromeProfile?: string;
+  jobs?: Array<{ id: string; title: string; company: string; url: string; source: string }>;
 }
 
 export interface ModelOption {

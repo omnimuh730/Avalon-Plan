@@ -7,11 +7,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const AVALON = path.join(ROOT, 'project-avalon');
 
 const services = [
   { name: 'unified-ai', cmd: 'npm', args: ['run', 'start', '-w', 'unified-ai-server'], cwd: ROOT },
   { name: 'athens-server', cmd: 'npm', args: ['run', 'start', '-w', 'Athens-server'], cwd: ROOT },
-  { name: 'connector', cmd: 'npm', args: ['run', 'start', '-w', 'connector'], cwd: ROOT },
+  { name: 'avalon-backend', cmd: 'npm', args: ['run', 'dev:backend'], cwd: AVALON },
+  { name: 'avalon-ai-bff', cmd: 'npm', args: ['run', 'dev:ai-bff'], cwd: AVALON },
   { name: 'athens-ui', cmd: 'npm', args: ['run', 'dev'], cwd: path.join(ROOT, 'Athens') },
 ];
 
@@ -45,9 +47,10 @@ process.on('SIGTERM', () => shutdown(0));
 
 console.log(`
 NextOffer is running:
-  Frontend       → http://localhost:5173
+  Frontend       → http://localhost:9030
   Athens-server  → http://localhost:8979
   Unified AI     → http://localhost:8790
-  Connector      → http://localhost:8781
+  Avalon relay   → http://localhost:3847
+  Avalon AI BFF  → http://localhost:3920
 Press Ctrl+C to stop all services.
 `);

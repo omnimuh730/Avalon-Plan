@@ -5,9 +5,11 @@ import {
   fetchAgentDashboard,
   fetchAgentHealth,
   fetchAgentRuns,
+  fetchAvalonHealth,
 } from "../../../services/agentApi";
 import type {
   ActivityEntry,
+  AvalonHealthData,
   DashboardData,
   HealthData,
   JobRow,
@@ -22,6 +24,7 @@ export function useAgentDashboard() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [health, setHealth] = useState<HealthData | null>(null);
+  const [avalonHealth, setAvalonHealth] = useState<AvalonHealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const liveLogRef = useRef<ActivityEntry[]>([]);
@@ -30,13 +33,15 @@ export function useAgentDashboard() {
     if (!applierReady) return;
     setError(null);
     try {
-      const [healthRes, dashRes, runsRes, actRes] = await Promise.all([
+      const [healthRes, avalonRes, dashRes, runsRes, actRes] = await Promise.all([
         fetchAgentHealth(),
+        fetchAvalonHealth(),
         fetchAgentDashboard(profileId),
         fetchAgentRuns(profileId),
         fetchAgentActivity(profileId),
       ]);
       setHealth(healthRes);
+      setAvalonHealth(avalonRes);
       setDashboard(dashRes);
       setRuns(runsRes);
       const serverActivity = actRes;
@@ -94,6 +99,7 @@ export function useAgentDashboard() {
     activity,
     dashboardJobs,
     health,
+    avalonHealth,
     loading,
     error,
     refresh,
