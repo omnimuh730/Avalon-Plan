@@ -35,6 +35,11 @@ function parseActionPlan(
   if (resolvedAction === "SelectOption" && field && field.controlType !== "select") {
     resolvedAction = "Typing";
   }
+  // A free-text field is only ever filled by typing — a Click/Check on a
+  // text/textarea is a model slip; coerce it (generic control-type rule).
+  if ((field?.controlType === "text" || field?.controlType === "textarea") && resolvedAction !== "Typing") {
+    resolvedAction = "Typing";
+  }
 
   return {
     id,

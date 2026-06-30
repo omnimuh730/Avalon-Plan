@@ -24,6 +24,7 @@ import { useApplier } from "@/context/applier-context";
 import { cn } from "../../../lib/utils";
 import { formatApplierProfile } from "../avalon/ai/profile";
 import { useAvalonRelay, type QueuedJob } from "../hooks/useAvalonRelay";
+import { LiveTabView } from "./LiveTabView";
 
 function applyDisabledReason(relay: ReturnType<typeof useAvalonRelay>, hasPlan: boolean): string | null {
   if (!hasPlan) return "Run Analyze first to build a fill plan.";
@@ -266,6 +267,17 @@ export function AvalonControllerView({
                 {relay.jobQueue.length}
               </span>
             </div>
+            {relay.jobQueue.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void relay.applyQueue()}
+                disabled={!relay.canExecute || relay.applying}
+                className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-40"
+                title="Open each job, scan, and fill — stops before submit for your review"
+              >
+                {relay.applying ? "Applying…" : `Apply all (${relay.jobQueue.length})`}
+              </button>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-2 space-y-1.5 min-h-[200px] max-h-[420px] xl:max-h-none">
@@ -290,40 +302,55 @@ export function AvalonControllerView({
               relay.jobQueue.map((job, i) => {
                 const active = i === relay.activeJobIndex;
                 return (
-                  <button
+                  <div
                     key={job.id}
-                    type="button"
-                    onClick={() => {
-                      relay.setActiveJobIndex(i);
-                      relay.navigateToJob(job);
-                    }}
                     className={cn(
-                      "w-full text-left rounded-xl p-3 border transition-all",
+                      "w-full rounded-xl p-3 border transition-all",
                       active
                         ? "border-violet-500/50 bg-violet-500/8 shadow-sm shadow-violet-500/10 ring-1 ring-violet-500/20"
                         : "border-border/60 hover:border-border hover:bg-secondary/40",
                     )}
                   >
-                    <div className="flex items-start gap-2.5">
-                      <span
-                        className={cn(
-                          "w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0",
-                          active ? "bg-violet-600 text-white" : "bg-secondary text-muted-foreground",
-                        )}
-                      >
-                        {i + 1}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-semibold text-foreground truncate leading-snug">
-                          {job.title || "(untitled)"}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground truncate mt-0.5">
-                          {job.company || job.source}
-                        </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        relay.setActiveJobIndex(i);
+                        relay.navigateToJob(job);
+                      }}
+                      className="w-full text-left"
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <span
+                          className={cn(
+                            "w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0",
+                            active ? "bg-violet-600 text-white" : "bg-secondary text-muted-foreground",
+                          )}
+                        >
+                          {i + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold text-foreground truncate leading-snug">
+                            {job.title || "(untitled)"}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground truncate mt-0.5">
+                            {job.company || job.source}
+                          </p>
+                        </div>
+                        <ExternalLink className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
                       </div>
-                      <ExternalLink className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                    </div>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        relay.setActiveJobIndex(i);
+                        void relay.applyJob(job);
+                      }}
+                      disabled={!relay.canExecute || relay.applying}
+                      className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold text-violet-700 bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-40"
+                    >
+                      Apply (fill, pause before submit)
+                    </button>
+                  </div>
                 );
               })
             )}
@@ -344,6 +371,23 @@ export function AvalonControllerView({
             <div className="flex items-center gap-2 min-w-0">
               <Monitor className="w-4 h-4 text-muted-foreground shrink-0" />
               <span className="text-xs font-bold text-foreground truncate">Live browser</span>
+              <div className="ml-2 inline-flex rounded-lg border border-border bg-background p-0.5">
+                {(["webrtc", "screenshot"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => relay.setMonitorMode(mode)}
+                    className={cn(
+                      "px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors",
+                      relay.monitorMode === mode
+                        ? "bg-violet-600 text-white"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {mode === "webrtc" ? "Live" : "Screenshot"}
+                  </button>
+                ))}
+              </div>
             </div>
             {relay.tabs.length > 0 && (
               <select
@@ -373,7 +417,14 @@ export function AvalonControllerView({
               </div>
             </div>
 
-            {relay.screenshot ? (
+            {relay.monitorMode === "webrtc" ? (
+              <LiveTabView
+                socket={relay.socketRef.current}
+                sessionId={relay.registered?.sessionId ?? relay.sessionId}
+                tabId={relay.selectedTabId === "" ? undefined : Number(relay.selectedTabId)}
+                canExecute={relay.canExecute}
+              />
+            ) : relay.screenshot ? (
               <img
                 src={relay.screenshot}
                 alt="Tab screenshot"
@@ -391,16 +442,20 @@ export function AvalonControllerView({
 
             {/* Floating toolbar */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 p-1 rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 shadow-xl">
-              <button
-                type="button"
-                onClick={relay.requestScreenshot}
-                disabled={!relay.canExecute}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-semibold text-white/90 hover:bg-white/10 disabled:opacity-40"
-              >
-                <Image className="w-3.5 h-3.5" />
-                Capture
-              </button>
-              <div className="w-px h-5 bg-white/10" />
+              {relay.monitorMode === "screenshot" && (
+                <>
+                  <button
+                    type="button"
+                    onClick={relay.requestScreenshot}
+                    disabled={!relay.canExecute}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-semibold text-white/90 hover:bg-white/10 disabled:opacity-40"
+                  >
+                    <Image className="w-3.5 h-3.5" />
+                    Capture
+                  </button>
+                  <div className="w-px h-5 bg-white/10" />
+                </>
+              )}
               <button
                 type="button"
                 onClick={relay.fetchActionableTree}

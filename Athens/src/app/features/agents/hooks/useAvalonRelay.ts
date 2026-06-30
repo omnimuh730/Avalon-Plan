@@ -8,6 +8,7 @@ import {
   type ActionableTarget,
   type ActionableTree,
   type ActionResult,
+  type ApplyProgress,
   type InjectionPlan,
   type RegisteredPayload,
   type RemoteAction,
@@ -57,9 +58,12 @@ export function useAvalonRelay(applicantContext: string) {
   const [applying, setApplying] = useState(false);
   const [jobQueue, setJobQueue] = useState<QueuedJob[]>([]);
   const [activeJobIndex, setActiveJobIndex] = useState(0);
+  const [applyPhase, setApplyPhase] = useState<ApplyProgress | null>(null);
+  const [monitorMode, setMonitorMode] = useState<"webrtc" | "screenshot">("screenshot");
 
   const socketRef = useRef<Socket | null>(null);
   const applyingRef = useRef(false);
+  const pendingActionsRef = useRef<Map<string, (result: ActionResult) => void>>(new Map());
   const sessionIdRef = useRef(sessionId);
   const selectedTabIdRef = useRef(selectedTabId);
   sessionIdRef.current = sessionId;
@@ -147,6 +151,12 @@ export function useAvalonRelay(applicantContext: string) {
     });
 
     next.on(SOCKET_EVENTS.ACTION_RESULT, (result: ActionResult) => {
+      // Resolve any awaiting orchestration step (applyJob) before state updates.
+      const resolver = pendingActionsRef.current.get(result.actionId);
+      if (resolver) {
+        pendingActionsRef.current.delete(result.actionId);
+        resolver(result);
+      }
       const data = result.data as
         | {
             tree?: ActionableTree;
@@ -197,6 +207,11 @@ export function useAvalonRelay(applicantContext: string) {
           : `Action ${result.actionId} failed: ${result.error}`,
         result.success,
       );
+    });
+
+    next.on(SOCKET_EVENTS.APPLY_PROGRESS, (progress: ApplyProgress) => {
+      setApplyPhase(progress);
+      pushLog(progress.message, progress.phase !== "error");
     });
 
     next.on(SOCKET_EVENTS.SCREENSHOT_RESULT, (payload: { dataUrl?: string; error?: string }) => {
@@ -410,6 +425,114 @@ export function useAvalonRelay(applicantContext: string) {
     [pushLog],
   );
 
+  /** Emit an action and resolve with its ACTION_RESULT (or reject on timeout). */
+  const emitActionAsync = useCallback(
+    (action: RemoteAction, timeoutMs = 120000): Promise<ActionResult> =>
+      new Promise((resolve, reject) => {
+        if (!socketRef.current?.connected) {
+          reject(new Error("Not connected to relay"));
+          return;
+        }
+        const timer = setTimeout(() => {
+          pendingActionsRef.current.delete(action.id);
+          reject(new Error(`Action "${action.action}" timed out`));
+        }, timeoutMs);
+        pendingActionsRef.current.set(action.id, (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        });
+        socketRef.current.emit(SOCKET_EVENTS.EXECUTE_ACTION, action);
+        pushLog(`Sent ${action.action} (${action.id})`);
+      }),
+    [pushLog],
+  );
+
+  /**
+   * Drive one job end-to-end: open a fresh tab, wait for load, scan the form,
+   * analyze with the AI, then fill — stopping BEFORE submit for manual review.
+   */
+  const applyJob = useCallback(
+    async (job: QueuedJob) => {
+      if (!canExecute) {
+        pushLog(executeDisabledReason ?? "Cannot apply — extension not connected", false);
+        return;
+      }
+      setApplying(true);
+      applyingRef.current = true;
+      try {
+        pushLog(`Applying to "${job.title}"…`, true);
+        const opened = await emitActionAsync({
+          id: createActionId(),
+          action: "open_tab",
+          payload: { url: job.url },
+        });
+        if (!opened.success) throw new Error(opened.error || "Failed to open tab");
+        const openedData = opened.data as { tabId?: number; page?: ActionablePageContext };
+        const tabId = openedData.tabId;
+        if (!tabId) throw new Error("open_tab returned no tab id");
+        setSelectedTabId(tabId);
+
+        const treeRes = await emitActionAsync({
+          id: createActionId(),
+          tabId,
+          action: "fetch_actionable_tree",
+          payload: { probeComboboxes },
+        });
+        if (!treeRes.success) throw new Error(treeRes.error || "Form scan failed");
+        const treeData = treeRes.data as { tree?: ActionableTree; page?: ActionablePageContext };
+        const tree = treeData.tree;
+        const pageCtx = treeData.page ?? openedData.page;
+        if (!tree?.length || !pageCtx) throw new Error("No fillable fields found on the page");
+
+        setAnalyzing(true);
+        const analysis = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined });
+        setAnalyzing(false);
+        setActionableTree(tree);
+        setTreePage(pageCtx);
+        setFormAnalysis(analysis);
+
+        const built = buildFormInjectionPlan({ tree, fields: analysis.fields });
+        setInjectionPlan(built.plan);
+        setGeneratedScript(built.preview);
+        if (!built.plan.steps.length) throw new Error("Plan has no fillable steps");
+
+        // autoSubmit:false → executor fills everything but stops before the submit click.
+        const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, { autoSubmit: false });
+        const applyRes = await emitActionAsync(
+          {
+            id: createActionId(),
+            tabId,
+            action: "apply_injection_plan",
+            payload: payload as unknown as Record<string, unknown>,
+          },
+          180000,
+        );
+        if (!applyRes.success) throw new Error(applyRes.error || "Apply failed");
+        pushLog(`Filled "${job.title}" — paused before submit for your review`, true);
+      } catch (error) {
+        pushLog(error instanceof Error ? error.message : "Apply failed", false);
+      } finally {
+        setAnalyzing(false);
+        setApplying(false);
+        applyingRef.current = false;
+      }
+    },
+    [applicantContext, canExecute, emitActionAsync, executeDisabledReason, probeComboboxes, pushLog],
+  );
+
+  /** Apply every queued job in sequence (each opens its own tab; none auto-submits). */
+  const applyQueue = useCallback(async () => {
+    if (!jobQueue.length) {
+      pushLog("Queue is empty — add jobs first", false);
+      return;
+    }
+    for (let i = 0; i < jobQueue.length; i += 1) {
+      setActiveJobIndex(i);
+      await applyJob(jobQueue[i]);
+    }
+    pushLog(`Queue complete · ${jobQueue.length} job(s) filled (awaiting your review)`, true);
+  }, [applyJob, jobQueue, pushLog]);
+
   return {
     serverUrl,
     setServerUrl,
@@ -441,6 +564,10 @@ export function useAvalonRelay(applicantContext: string) {
     jobQueue,
     activeJobIndex,
     setActiveJobIndex,
+    applyPhase,
+    monitorMode,
+    setMonitorMode,
+    socketRef,
     connect,
     fetchActionableTree,
     analyzeTree,
@@ -451,6 +578,8 @@ export function useAvalonRelay(applicantContext: string) {
     requestScreenshot,
     navigateToJob,
     enqueueJobs,
+    applyJob,
+    applyQueue,
     pushLog,
   };
 }

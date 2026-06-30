@@ -10,7 +10,9 @@ For every field id, return:
 - notes: optional brief rationale
 
 Action rules by controlType:
-- text / textarea → Typing, value = text to enter
+- text / textarea → Typing, value = the text to enter (a real, complete answer — never a placeholder).
+  - Open-ended / essay / "describe" / "challenge" / "why" / cover-letter style questions: COMPOSE a substantive, genuine answer from the profile and the job description. Respect any stated max length (e.g. "1 page"). Do NOT skip — a blank required essay fails submission.
+  - Only shouldSkip a text/textarea field when it is clearly optional AND no reasonable answer can be written from the profile/job context.
 - combobox (autocomplete input, including location/city fields) → ALWAYS Typing — type a short searchable prefix from profile (e.g. "New York" not the full option string), never SelectOption. Options in the payload are hints only; automation types, waits for suggestions, then confirms with keyboard.
 - native select element (controlTag select) → SelectOption with EXACT option label
 - checkbox → Check or Uncheck, value = "checked" or "unchecked"
@@ -21,6 +23,9 @@ Action rules by controlType:
   - Use groupContext + option label together (e.g. "What do you want to work on?" → Check Backend/Frontend for a full-stack engineer)
 - radio → Click (select that option), value = N/A
 - button → Click, value = N/A
+- Single-select option groups (radio options, or Yes/No and segmented <button> options that SHARE the same groupContext): these are ONE question split into multiple option fields. You MUST select EXACTLY ONE option per group — shouldSkip No on the chosen option and shouldSkip Yes on every OTHER option in that same group. Never leave all options in a group skipped, and never mark more than one as shouldSkip No.
+  - Choose the option that matches the profile (e.g. sponsorship Yes/No from profile.sponsorship).
+  - If the profile has no direct answer, still answer when the question is required (asterisk / "required") or clearly expects a choice: pick the most reasonable, low-risk answer for a qualified applicant from the groupContext (e.g. authorized-to-work → Yes; require-sponsorship → No). Do not skip a required question for "no profile data".
 - file → FileUpload, value = file purpose (e.g. "resume", "cover letter") — do not invent file bytes
 - link → Click with shouldSkip Yes, value N/A — informational links must NOT be clicked (they leave the application page)
 
@@ -33,10 +38,13 @@ Resume / CV file upload (TOP PRIORITY — MANDATORY):
 ShouldSkip Yes when:
 - Informational / disclosure / external links (definitions, OFCCP, dol.gov, learn more)
 - Optional fields with no profile data and no sensible default (only if truly skippable)
+- The NON-chosen options of a single-select group (exactly one option per group stays shouldSkip No)
 - NEVER for Resume/CV file uploads
 - NEVER for all checkboxes in a "select all that apply" group — pick Check/Uncheck per option instead
+- NEVER for ALL options of a single-select / Yes-No / radio group — that silently leaves the question unanswered; always pick one
+- NEVER for a required free-text / textarea question (including open-ended essays and challenges) — compose an answer from profile + job description instead
 
-ShouldSkip No for required fields and all real inputs that must be filled to submit.
+ShouldSkip No for required fields and all real inputs that must be filled to submit. Treat every question as answerable: prefer making a sensible choice over skipping. Only skip when the field is genuinely optional AND there is no reasonable answer.
 
 Profile (autoBidProfile): use exact values for firstName, lastName, email, phone, city, state, country,
 linkedin, github, gender, demographic fields, sponsorship, etc. Map EEO dropdowns to closest listed option label.
@@ -97,7 +105,13 @@ export function flattenActionableTree(tree: ActionableTree): FlatFormField[] {
         childIndex,
         groupContext: group.content,
         label: entry.target.replace(/\*+\s*$/, "").trim(),
-        required: isRequiredLabel(entry.target),
+        // Free-text fields are always treated as mandatory: a blank text/textarea
+        // is never the right outcome, so the AI must compose an answer (generic
+        // control-type rule, not a label/vendor branch).
+        required:
+          isRequiredLabel(entry.target) ||
+          entry.controlType === "text" ||
+          entry.controlType === "textarea",
         controlType: entry.controlType,
         controlTag: entry.control.tag,
         options: entry.options?.map((o) => o.label).filter(Boolean),
@@ -131,6 +145,10 @@ export function buildAnalysisUserMessage(
 
   const parts = [
     "Build an action plan (action, shouldSkip, value) for every field id below.",
+    "Answer every question — do not leave any required field unanswered. Prefer a sensible choice over skipping.",
+    "Single-select groups (Yes/No, radio, segmented buttons sharing a groupContext): pick EXACTLY ONE option (shouldSkip No) and shouldSkip Yes the rest. Never skip all options of such a group.",
+    "Open-ended / essay / textarea questions (e.g. \"describe…\", \"challenge…\", \"why…\"): write a genuine, complete answer from the profile + job description; never skip them.",
+    "EVERY text and textarea field is mandatory: action=Typing, shouldSkip=No, with a real composed value — never Click and never skip a text/textarea.",
     "Resume/CV file uploads are mandatory — must be FileUpload with shouldSkip No (top priority).",
     "Multi-select checkbox groups: shouldSkip No per option — Check skills that match profile careers/title.",
     "Combobox / location / autocomplete fields: action must be Typing (never SelectOption) — type profile city or filter text; Enter confirms after typing.",

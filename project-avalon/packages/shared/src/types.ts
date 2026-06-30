@@ -83,6 +83,7 @@ export type ActionType =
   | 'get_attribute'
   | 'set_attribute'
   | 'navigate'
+  | 'open_tab'
   | 'reload'
   | 'screenshot'
   | 'execute_script'
@@ -179,12 +180,28 @@ export const SOCKET_EVENTS = {
   SCREENSHOT_RESULT: 'screenshot-result',
   /** Live apply lifecycle updates (file upload, field fill, submit countdown). */
   APPLY_PROGRESS: 'apply-progress',
+  /** WebRTC signaling for the live tab view (relayed between controller and extension). */
+  WEBRTC_SIGNAL: 'webrtc-signal',
   PING: 'ping',
   PONG: 'pong',
 } as const;
 
+/** A single WebRTC signaling message relayed between the controller (Athens) and the extension. */
+export interface WebRtcSignal {
+  sessionId?: string;
+  /** request: viewer wants the stream · stop: viewer left · offer/answer/ice: SDP/ICE exchange · error: capture failed. */
+  kind: 'request' | 'stop' | 'offer' | 'answer' | 'ice' | 'error';
+  /** Human-readable reason when kind === 'error'. */
+  message?: string;
+  /** Tab to capture (sent with 'request'). */
+  tabId?: number;
+  /** RTCSessionDescriptionInit for offer/answer, or RTCIceCandidateInit for ice. */
+  data?: unknown;
+}
+
 /** Lifecycle phases reported while an injection plan is being applied. */
 export type ApplyPhase =
+  | 'navigating' // opening the job tab and waiting for it to load
   | 'files' // uploading résumé / file inputs (top priority, runs first)
   | 'fields' // filling the remaining form fields
   | 'submit-wait' // counting down before the auto-submit click
@@ -249,6 +266,7 @@ export const ACTION_DEFINITIONS: Record<
   get_attribute: { label: 'Get attribute', description: 'Read attribute value', needsTarget: true },
   set_attribute: { label: 'Set attribute', description: 'Set attribute value', needsTarget: true },
   navigate: { label: 'Navigate', description: 'Open URL in tab', needsTarget: false },
+  open_tab: { label: 'Open tab', description: 'Open URL in a new tab and wait for load', needsTarget: false },
   reload: { label: 'Reload', description: 'Reload current tab', needsTarget: false },
   screenshot: { label: 'Screenshot', description: 'Capture visible tab', needsTarget: false },
   execute_script: { label: 'Execute script', description: 'Run JS in page context', needsTarget: false },

@@ -2,6 +2,7 @@ import type { ApplyProgress } from "@avalon/shared";
 import { useApplyProgress } from "../hooks/useApplyProgress";
 
 const PHASE_LABEL: Record<ApplyProgress["phase"], string> = {
+  navigating: "Opening job tab",
   files: "Uploading files",
   fields: "Filling fields",
   "submit-wait": "Submitting",
@@ -11,6 +12,7 @@ const PHASE_LABEL: Record<ApplyProgress["phase"], string> = {
 };
 
 const PHASE_ACCENT: Record<ApplyProgress["phase"], string> = {
+  navigating: "bg-blue-500",
   files: "bg-blue-500",
   fields: "bg-blue-500",
   "submit-wait": "bg-amber-500",

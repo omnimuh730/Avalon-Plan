@@ -7,6 +7,7 @@ import {
   SOCKET_EVENTS,
   type ActionResult,
   type ApplyProgress,
+  type WebRtcSignal,
   type RegisterPayload,
   type RegisteredPayload,
   type RemoteAction,
@@ -136,6 +137,14 @@ io.on('connection', (socket) => {
     boundSession.controller?.emit(SOCKET_EVENTS.APPLY_PROGRESS, progress);
     for (const observer of boundSession.observers) {
       observer.emit(SOCKET_EVENTS.APPLY_PROGRESS, progress);
+    }
+  });
+
+  // WebRTC signaling for the live tab view — relay to every other peer in the session.
+  socket.on(SOCKET_EVENTS.WEBRTC_SIGNAL, (signal: WebRtcSignal) => {
+    if (!boundSession) return;
+    for (const peer of [boundSession.extension, boundSession.controller, ...boundSession.observers]) {
+      if (peer && peer.id !== socket.id) peer.emit(SOCKET_EVENTS.WEBRTC_SIGNAL, signal);
     }
   });
 

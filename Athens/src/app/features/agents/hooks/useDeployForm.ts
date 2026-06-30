@@ -70,21 +70,45 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
   const addAll = () => setQueue((q) => [...q, ...candidates]);
   const clearQueue = () => setQueue([]);
 
+  /** Manually queue a pasted job URL (no job source needed). Returns false on a bad URL. */
+  const addUrlToQueue = (rawUrl: string): boolean => {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return false;
+    let normalized: string;
+    let host: string;
+    try {
+      const u = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
+      normalized = u.toString();
+      host = u.hostname.replace(/^www\./, "");
+    } catch {
+      setErr("Enter a valid job URL");
+      return false;
+    }
+    setErr("");
+    setQueue((q) =>
+      q.some((x) => x.url === normalized)
+        ? q
+        : [...q, { id: `manual:${normalized}`, title: host, company: "Manual link", url: normalized, source: "manual" } as JobCandidate],
+    );
+    return true;
+  };
+
   const selectedSource = sources.find((s) => s.title === source);
   const posted = selectedSource?.posted ?? 0;
-  const valid = name.trim().length > 0 && !!profileId && queue.length > 0;
+  const valid = !!profileId && queue.length > 0;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!valid) {
-      setErr("Add at least one job to the worker queue.");
+      setErr("Add at least one job to the queue.");
       return;
     }
     setErr("");
     setLoading(true);
+    const sessionName = name.trim() || `${source || "Manual"} · ${new Date().toLocaleDateString()}`;
     try {
       await onDeploy({
-        name: name.trim(),
+        name: sessionName,
         profileId,
         model: model || "avalon",
         source,
@@ -121,6 +145,7 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
     queue,
     loadingJobs,
     addToQueue,
+    addUrlToQueue,
     removeFromQueue,
     addAll,
     clearQueue,

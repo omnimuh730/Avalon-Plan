@@ -88,10 +88,17 @@ export function buildFormInjectionPlan(options: BuildInjectionPlanOptions): Inje
     });
   });
 
-  steps.forEach((step, index) => {
+  // File uploads (résumé/CV) are the top priority and must run first. Stable
+  // partition keeps every other step in its original order.
+  const orderedSteps = [
+    ...steps.filter((s) => s.op === "attachFile"),
+    ...steps.filter((s) => s.op !== "attachFile"),
+  ];
+
+  orderedSteps.forEach((step, index) => {
     fieldPreviews.push({ id: step.id, preview: describeStep(step, index) });
   });
 
-  const preview = steps.map(describeStep).join("\n");
-  return { plan: { steps }, preview, fieldPreviews };
+  const preview = orderedSteps.map(describeStep).join("\n");
+  return { plan: { steps: orderedSteps }, preview, fieldPreviews };
 }
