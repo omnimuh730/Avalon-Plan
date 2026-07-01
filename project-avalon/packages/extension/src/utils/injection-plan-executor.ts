@@ -11,7 +11,7 @@ import { FILE_TARGET_ATTR, type InjectionPlanRunResult } from './injection-plan-
 
 const DEFAULT_SUBMIT_DELAY_MS = 5000;
 /** After the résumé bytes are set, give async uploaders (S3 dropzones) time to finish. */
-const FILE_SETTLE_MS = 2500;
+const FILE_SETTLE_MS = 5000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -30,67 +30,80 @@ async function runPlanInTab(tabId: number, plan: InjectionPlan): Promise<Injecti
   return response.data;
 }
 
-const DEFAULT_FILE = 'Eli Taylor.docx';
-const DEFAULT_FILE_MIME =
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-
-/** Read the bundled résumé as base64 (structured-clone-safe for executeScript args). */
-async function readDefaultFileBase64(): Promise<string> {
-  const response = await fetch(browser.runtime.getURL(DEFAULT_FILE));
-  if (!response.ok) throw new Error(`Could not load ${DEFAULT_FILE}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
 /**
- * Runs in the page's MAIN world (injected by the extension, so CSP-immune).
- * Assigns the file to every input the content script tagged — the isolated
- * content world silently ignores `input.files`, the MAIN world does not.
+ * Runs in the page's MAIN world (injected by the extension via chrome.scripting,
+ * so it is IMMUNE to the page's CSP — unlike an inline <script>, which Greenhouse/
+ * Ashby block). Assigns the résumé to every tagged input using the native `files`
+ * setter (React-safe) and fires both `change` and a synthetic `drop` so plain file
+ * inputs AND drag-and-drop zones (react-dropzone) both register the file.
  */
-function attachFilesInMainWorld(attr: string, base64: string, name: string, mime: string): number {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  const file = new File([bytes], name, { type: mime });
+function setFilesInMainWorld(attr: string, base64: string, name: string, mime: string) {
+  const result: { attached: number; found: number; errors: string[] } = {
+    attached: 0,
+    found: 0,
+    errors: [],
+  };
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    const makeFile = () => new File([bytes], name, { type: mime });
 
-  let attached = 0;
-  for (const node of Array.from(document.querySelectorAll(`[${attr}]`))) {
-    const input = node as HTMLInputElement;
-    try {
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      input.files = dt.files;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      attached += input.files.length > 0 ? 1 : 0;
-    } catch {
-      /* leave the tag; reported as not-attached */
+    const nodes = Array.from(document.querySelectorAll(`[${attr}]`));
+    result.found = nodes.length;
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
+
+    for (const node of nodes) {
+      const input = node as HTMLInputElement;
+      try {
+        const dt = new DataTransfer();
+        dt.items.add(makeFile());
+        if (desc && desc.set) desc.set.call(input, dt.files);
+        else input.files = dt.files;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        // Drag-and-drop zones react to a `drop`, not `change`. Fire once on the
+        // closest wrapper so it bubbles to the dropzone root exactly once.
+        const zone = input.parentElement ?? input;
+        const dropDt = new DataTransfer();
+        dropDt.items.add(makeFile());
+        for (const type of ['dragenter', 'dragover', 'drop']) {
+          zone.dispatchEvent(
+            new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dropDt }),
+          );
+        }
+
+        if (input.files && input.files.length > 0) result.attached += 1;
+        else result.errors.push(`files empty after assign: ${input.id || input.name || 'input'}`);
+      } catch (err) {
+        result.errors.push(String(err));
+      }
+      input.removeAttribute(attr);
     }
-    input.removeAttribute(attr);
+  } catch (err) {
+    result.errors.push(String(err));
   }
-  return attached;
+  return result;
 }
 
-/**
- * Set files on the content-script-tagged inputs from the MAIN world. Uploads the
- * per-job résumé bytes when provided (the AI-generated PDF), else the bundled default.
- */
-async function attachTaggedFiles(tabId: number, resume?: AttachedFile): Promise<number> {
-  const base64 = resume?.base64 ?? (await readDefaultFileBase64());
-  const name = resume?.name || DEFAULT_FILE;
-  const mime = resume?.mimeType || DEFAULT_FILE_MIME;
+/** Set files on tagged inputs via the page's MAIN world (CSP-immune, React-safe). */
+async function attachTaggedFiles(tabId: number, resume: AttachedFile): Promise<number> {
+  if (!resume?.base64) throw new Error('No tailored résumé PDF to attach');
+  const name = (resume.name || 'resume.pdf').replace(/\.txt\.pdf$/i, '.pdf');
+  const mime = resume.mimeType || 'application/pdf';
+
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: attachFilesInMainWorld,
-    args: [FILE_TARGET_ATTR, base64, name, mime],
+    func: setFilesInMainWorld,
+    args: [FILE_TARGET_ATTR, resume.base64, name, mime],
   });
-  return typeof injection?.result === 'number' ? injection.result : 0;
+  const res = (injection?.result as { attached?: number; found?: number; errors?: string[] }) ?? {};
+  if ((res.attached ?? 0) === 0 && (res.found ?? 0) > 0 && res.errors?.length) {
+    console.warn('[Avalon] MAIN-world attach errors:', res.errors);
+  }
+  return res.attached ?? 0;
 }
 
 export async function executeInjectionPlan(
@@ -115,10 +128,16 @@ export async function executeInjectionPlan(
   let filesFound = 0;
   let filesAttached = 0;
   const results: InjectionPlanRunResult['results'] = [];
-  const resumeName = payload.resumeFile?.name ?? DEFAULT_FILE;
+  const resumeName = payload.resumeFile?.name ?? 'tailored résumé.pdf';
 
-  // --- Phase 1: file uploads (top priority — run first and wait for completion).
+  // --- Phase 1: résumé upload (required when plan includes attachFile; skip if none).
   if (fileSteps.length > 0) {
+    if (!payload.resumeFile?.base64) {
+      const msg = 'Tailored résumé PDF is required but was not provided';
+      emit({ phase: 'error', message: msg, appliedSteps: 0, totalSteps });
+      throw new Error(msg);
+    }
+
     emit({ phase: 'files', message: `Attaching résumé (${resumeName})…`, appliedSteps: 0, totalSteps });
     const fileRun = await runPlanInTab(tabId, { steps: fileSteps });
     results.push(...fileRun.results);
@@ -126,16 +145,11 @@ export async function executeInjectionPlan(
     failed += fileRun.failed;
     filesFound = fileRun.fileTargets.length;
 
-    // The isolated content world can't assign `input.files`; the background sets
-    // the bytes in the page's MAIN world. We await it, so the upload is fully
-    // committed before any other field is touched.
     let fileFailed = 0;
     if (filesFound > 0) {
       filesAttached = await attachTaggedFiles(tabId, payload.resumeFile);
       fileFailed = filesFound - filesAttached;
       failed += fileFailed;
-      // Async dropzones (Greenhouse/Ashby upload to S3) need a moment; submitting
-      // before the upload settles is a common "résumé missing" failure.
       emit({
         phase: 'files',
         message: `Résumé set on ${filesAttached}/${filesFound} input(s) — waiting for upload…`,
@@ -144,24 +158,30 @@ export async function executeInjectionPlan(
       });
       await sleep(FILE_SETTLE_MS);
     }
+
+    const fileErrorMsg =
+      filesFound === 0
+        ? 'Plan expected a résumé field but none was found on the page'
+        : fileFailed > 0
+          ? `Résumé attach failed on ${fileFailed}/${filesFound} input(s)`
+          : null;
+
+    if (fileErrorMsg) {
+      emit({ phase: 'error', message: fileErrorMsg, appliedSteps: applied, totalSteps });
+      throw new Error(fileErrorMsg);
+    }
+
     emit({
-      phase: fileFailed > 0 || filesFound === 0 ? 'error' : 'files',
-      message:
-        filesFound === 0
-          ? 'Plan expected a résumé field but none was found on the page'
-          : fileFailed > 0
-            ? `Résumé attach failed on ${fileFailed}/${filesFound} input(s)`
-            : `Résumé attached (${resumeName})`,
+      phase: 'files',
+      message: `Résumé attached (${resumeName})`,
       appliedSteps: applied,
       totalSteps,
     });
   } else {
-    // No attachFile step at all — the résumé will NOT be uploaded. Surface it
-    // loudly; a silent skip reads as "resume not uploaded" with no explanation.
     emit({
-      phase: 'error',
-      message: 'No résumé/file field detected on this form — résumé was NOT uploaded',
-      appliedSteps: 0,
+      phase: 'files',
+      message: 'No résumé field in plan — skipping file attach',
+      appliedSteps: applied,
       totalSteps,
     });
   }
@@ -176,7 +196,7 @@ export async function executeInjectionPlan(
     emit({ phase: 'fields', message: 'Fields filled', appliedSteps: applied, totalSteps });
   }
 
-  // --- Phase 3: countdown, then auto-click Submit/Apply/Next (the final step).
+  // --- Phase 3: countdown, then auto-click Submit/Apply/Next.
   let submitted = false;
   if (payload.autoSubmit !== false) {
     const delayMs = payload.submitDelayMs ?? DEFAULT_SUBMIT_DELAY_MS;

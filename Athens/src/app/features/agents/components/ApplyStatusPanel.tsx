@@ -33,7 +33,12 @@ const STAGE_INDEX: Record<StageKey, number> = {
 };
 
 /** Map the current live phase to the pipeline stage it belongs to. */
-function activeStage(phase: ApplyProgress | null, analyzing: boolean): StageKey {
+function activeStage(
+  phase: ApplyProgress | null,
+  analyzing: boolean,
+  generatingResume?: boolean,
+): StageKey {
+  if (generatingResume) return "resume";
   if (analyzing) return "analyze";
   switch (phase?.phase) {
     case "navigating":
@@ -56,22 +61,25 @@ function activeStage(phase: ApplyProgress | null, analyzing: boolean): StageKey 
 export function ApplyStatusPanel({
   applying,
   analyzing,
+  generatingResume,
   applyPhase,
   activeResume,
   jobTitle,
 }: {
   applying: boolean;
   analyzing: boolean;
+  generatingResume?: boolean;
   applyPhase: ApplyProgress | null;
   activeResume: JobResume | null;
   jobTitle?: string;
 }) {
-  if (!applying && !applyPhase) return null;
+  if (!applying && !applyPhase && !generatingResume && !analyzing) return null;
 
-  const current = activeStage(applyPhase, analyzing);
+  const current = activeStage(applyPhase, analyzing, generatingResume);
   const currentIdx = STAGE_INDEX[current];
   const isError = applyPhase?.phase === "error";
-  const isDone = !applying && applyPhase?.phase === "done";
+  const isDone = !applying && (applyPhase?.phase === "done" || applyPhase?.phase === "submitted");
+  const errorMessage = isError ? applyPhase?.message : null;
 
   const total = applyPhase?.totalSteps ?? 0;
   const doneSteps = applyPhase?.appliedSteps ?? 0;
@@ -145,7 +153,7 @@ export function ApplyStatusPanel({
               {applyPhase.message}
             </span>
           ) : (
-            <span>{applyPhase?.message ?? (applying ? "Working…" : "Idle")}</span>
+            <span>{errorMessage ?? applyPhase?.message ?? (applying ? "Working…" : "Idle")}</span>
           )}
         </div>
 
@@ -159,6 +167,12 @@ export function ApplyStatusPanel({
         )}
 
         {/* Résumé sub-status */}
+        {generatingResume && !activeResume && (
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-600 shrink-0" />
+            <span>Generating tailored résumé PDF…</span>
+          </div>
+        )}
         {activeResume && (
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <FileText className="w-3.5 h-3.5 text-violet-600 shrink-0" />

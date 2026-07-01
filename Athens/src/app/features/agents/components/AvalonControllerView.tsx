@@ -26,14 +26,19 @@ import { formatApplierProfile } from "../avalon/ai/profile";
 import { useAvalonRelay, type QueuedJob } from "../hooks/useAvalonRelay";
 import { LiveTabView } from "./LiveTabView";
 import { ApplyStatusPanel } from "./ApplyStatusPanel";
+import { AgentResumePdfPreview, agentJobResumePdfUrl } from "./AgentResumePdfPreview";
 
 function applyDisabledReason(relay: ReturnType<typeof useAvalonRelay>, hasPlan: boolean): string | null {
   if (!hasPlan) return "Run Analyze first to build a fill plan.";
   if (relay.analyzing) return "Analysis still running…";
   if (relay.applying) return "Apply already in progress…";
-  if (!relay.treePage?.tabId) return "Tab context lost — click Scan form again, then Apply.";
+  if (!relay.treePage?.tabId) return "Tab context lost — open the job and scan the form again.";
   if (!relay.canExecute) {
     return relay.executeDisabledReason ?? "Extension disconnected — click Reconnect in settings.";
+  }
+  const job = relay.jobQueue[relay.activeJobIndex];
+  if (job && !job.id.startsWith("manual:") && job.source !== "manual" && !relay.activeResume?.file.base64 && !relay.activeResume?.resumePdfPath) {
+    return "Generate tailored résumé first (step 1) and preview the PDF.";
   }
   return null;
 }
@@ -126,19 +131,29 @@ export function AvalonControllerView({
   const activeJob = relay.jobQueue[relay.activeJobIndex];
   const hasTree = Boolean(relay.actionableTree?.length);
   const hasPlan = Boolean(relay.formAnalysis?.fields.length);
+  const hasResumeDraft = Boolean(
+    relay.activeResume?.file.base64 || relay.activeResume?.resumePdfPath,
+  );
   const liveOk = relay.connected && relay.peers.extension;
   const applyBlocked = applyDisabledReason(relay, hasPlan);
   const canApply = hasPlan && !applyBlocked;
 
   const workflowSteps: WorkflowStep[] = [
     { id: "connect", label: "Connected", done: relay.canExecute, active: !relay.canExecute },
-    { id: "scan", label: "Scanned", done: hasTree, active: relay.canExecute && !hasTree },
+    {
+      id: "resume",
+      label: "Résumé",
+      done: hasResumeDraft,
+      active: Boolean(activeJob) && (relay.generatingResume || !hasResumeDraft),
+    },
+    { id: "open", label: "Opened", done: Boolean(relay.treePage?.url), active: hasResumeDraft && !relay.treePage?.url },
+    { id: "scan", label: "Scanned", done: hasTree, active: Boolean(relay.treePage?.url) && !hasTree },
     { id: "analyze", label: "Analyzed", done: hasPlan, active: hasTree && !hasPlan },
     {
       id: "apply",
       label: "Applied",
       done: false,
-      active: hasPlan && !relay.applying,
+      active: hasPlan && hasResumeDraft && !relay.applying,
     },
   ];
 
@@ -237,6 +252,7 @@ export function AvalonControllerView({
       <ApplyStatusPanel
         applying={relay.applying}
         analyzing={relay.analyzing}
+        generatingResume={relay.generatingResume}
         applyPhase={relay.applyPhase}
         activeResume={relay.activeResume}
         jobTitle={activeJob?.title}
@@ -324,10 +340,7 @@ export function AvalonControllerView({
                   >
                     <button
                       type="button"
-                      onClick={() => {
-                        relay.setActiveJobIndex(i);
-                        relay.navigateToJob(job);
-                      }}
+                      onClick={() => relay.setActiveJobIndex(i)}
                       className="w-full text-left"
                     >
                       <div className="flex items-start gap-2.5">
@@ -421,6 +434,14 @@ export function AvalonControllerView({
             )}
           </div>
 
+          {relay.monitorMode === "webrtc" && (
+            <div className="mx-4 mt-2 rounded-lg border border-amber-200/80 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+              Live view requires a one-time capture from the{" "}
+              <strong>Avalon extension side panel</strong> — open it on the job tab and click{" "}
+              <strong>Start live view</strong>, then return here.
+            </div>
+          )}
+
           <div className="relative flex-1 min-h-[280px] bg-[#0f1117] flex items-center justify-center p-3">
             {/* Browser chrome mock */}
             <div className="absolute top-3 left-3 right-3 flex items-center gap-1.5 z-10">
@@ -436,7 +457,7 @@ export function AvalonControllerView({
 
             {relay.monitorMode === "webrtc" ? (
               <LiveTabView
-                socket={relay.socketRef.current}
+                socket={relay.relaySocket}
                 sessionId={relay.registered?.sessionId ?? relay.sessionId}
                 tabId={relay.selectedTabId === "" ? undefined : Number(relay.selectedTabId)}
                 canExecute={relay.canExecute}
@@ -480,7 +501,7 @@ export function AvalonControllerView({
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-semibold text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-40"
               >
                 <TreePine className="w-3.5 h-3.5" />
-                Scan form
+                3 · Scan form
               </button>
             </div>
           </div>
@@ -488,34 +509,154 @@ export function AvalonControllerView({
 
         {/* Right — activity + actions */}
         <aside className="xl:col-span-3 flex flex-col gap-4">
-          {/* Primary actions */}
-          <div className="rounded-2xl border border-border/80 bg-card shadow-sm p-4 space-y-3">
+          {/* Tailored résumé preview — step 1 */}
+          {(activeJob || relay.generatingResume || relay.activeResume || relay.resumeError) && (
+            <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-border/60 flex items-center justify-between gap-2">
+                <h2 className="text-xs font-bold text-foreground flex items-center gap-2">
+                  {relay.generatingResume ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-600" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                  )}
+                  1 · Tailored résumé
+                </h2>
+                {relay.activeResume && (
+                  <span
+                    className={cn(
+                      "text-[9px] font-bold px-2 py-0.5 rounded-full",
+                      relay.activeResume.reused
+                        ? "text-muted-foreground bg-secondary"
+                        : "text-violet-700 bg-violet-500/10",
+                    )}
+                  >
+                    {relay.activeResume.reused ? "reused" : "generated"}
+                  </span>
+                )}
+              </div>
+              {relay.resumeError && !relay.activeResume && (
+                <div className="px-4 py-4 space-y-2">
+                  <p className="text-[11px] text-red-700">{relay.resumeError}</p>
+                  <button
+                    type="button"
+                    onClick={() => void relay.generateActiveJobResume()}
+                    className="text-[10px] font-semibold text-violet-600 hover:text-violet-700"
+                  >
+                    Retry generation
+                  </button>
+                </div>
+              )}
+              {relay.generatingResume && !relay.activeResume && !relay.resumeError && (
+                <div className="px-4 py-10 flex flex-col items-center justify-center gap-2 text-[11px] text-muted-foreground">
+                  <Loader2 className="w-6 h-6 animate-spin text-violet-600" />
+                  Generating PDF from job description…
+                </div>
+              )}
+              {relay.activeResume && (relay.activeResume.file.base64 || activeJob) && (
+                <>
+                  <AgentResumePdfPreview
+                    applierName={applier?.name}
+                    jobId={activeJob?.id}
+                    base64={relay.activeResume.file.base64}
+                    mimeType={relay.activeResume.file.mimeType}
+                    className="w-full h-[240px] bg-secondary/20 border-0"
+                  />
+                  <div className="px-4 py-2 border-t border-border/60 flex flex-col gap-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className="text-[10px] text-muted-foreground truncate"
+                        title={relay.activeResume.file.name}
+                      >
+                        {relay.activeResume.file.name.replace(/\.txt$/i, ".pdf")}
+                      </span>
+                      <a
+                        href={
+                          activeJob && applier?.name
+                            ? agentJobResumePdfUrl(applier.name, activeJob.id)
+                            : relay.activeResume.file.base64
+                              ? `data:${relay.activeResume.file.mimeType};base64,${relay.activeResume.file.base64}`
+                              : undefined
+                        }
+                        download={`${relay.activeResume.file.name.replace(/\.txt$/i, ".pdf")}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[10px] font-semibold text-violet-600 hover:text-violet-700 shrink-0"
+                      >
+                        Save draft PDF
+                      </a>
+                    </div>
+                    {relay.activeResume.resumePdfPath && (
+                      <p className="text-[9px] text-muted-foreground truncate" title={relay.activeResume.resumePdfPath}>
+                        Saved locally · {relay.activeResume.resumePdfPath}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+              {!hasResumeDraft && activeJob && !relay.generatingResume && (
+                <div className="px-4 py-3 border-t border-border/60">
+                  <button
+                    type="button"
+                    onClick={() => void relay.generateActiveJobResume()}
+                    disabled={relay.generatingResume}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-violet-600 text-white text-[11px] font-bold hover:bg-violet-500 disabled:opacity-40"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Generate résumé
+                  </button>
+                </div>
+              )}
+              {hasResumeDraft && activeJob && !relay.generatingResume && (
+                <div className="px-4 py-3 border-t border-border/60">
+                  <button
+                    type="button"
+                    onClick={() => void relay.generateActiveJobResume(true)}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-violet-500/40 text-violet-700 text-[10px] font-bold hover:bg-violet-500/10"
+                  >
+                    Regenerate tailored résumé (same JD, fresh LLM run)
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Pipeline steps 2–5 */}
+          <div className="rounded-2xl border border-border/80 bg-card shadow-sm p-4 space-y-2">
             <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Pipeline</h2>
+            <button
+              type="button"
+              onClick={() => void relay.openActiveJob()}
+              disabled={!hasResumeDraft || !relay.canExecute || relay.applying}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-border text-sm font-semibold hover:bg-secondary disabled:opacity-40"
+            >
+              <ExternalLink className="w-4 h-4" />
+              2 · Open job link
+            </button>
             <button
               type="button"
               onClick={() => void relay.analyzeTree()}
               disabled={!hasTree || relay.analyzing || relay.applying}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-sm font-bold shadow-md shadow-violet-500/20 hover:shadow-lg disabled:opacity-50 disabled:shadow-none transition-shadow"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-sm font-bold shadow-md shadow-violet-500/20 hover:shadow-lg disabled:opacity-50 disabled:shadow-none transition-shadow"
             >
               {relay.analyzing ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              {relay.analyzing ? "Analyzing…" : "Analyze form"}
+              {relay.analyzing ? "Analyzing…" : "4 · Analyze form"}
             </button>
             <button
               type="button"
               onClick={() => void relay.applyActionPlan()}
               disabled={!canApply || relay.applying || relay.analyzing}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-foreground text-background text-sm font-bold hover:opacity-90 disabled:opacity-40 transition-opacity"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-foreground text-background text-sm font-bold hover:opacity-90 disabled:opacity-40 transition-opacity"
             >
               {relay.applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-              {relay.applying ? "Injecting…" : "Apply fill plan"}
+              {relay.applying ? "Injecting…" : "5 · Apply fill plan"}
             </button>
             {hasPlan && relay.injectionPlan && (
-              <p className="text-[10px] text-center text-muted-foreground">
-                {relay.injectionPlan.steps.length} deterministic steps ready
+              <p className="text-[10px] text-center text-muted-foreground pt-1">
+                {relay.injectionPlan.steps.length} steps · uses drafted PDF
               </p>
             )}
             {relay.formAnalysis?.usage && (
@@ -526,49 +667,10 @@ export function AvalonControllerView({
                   : ""}
               </p>
             )}
+            <p className="text-[9px] text-center text-muted-foreground leading-relaxed pt-1">
+              Step 3: <span className="font-semibold">Scan form</span> in the live browser after opening the job.
+            </p>
           </div>
-
-          {/* Tailored résumé preview */}
-          {relay.activeResume && (
-            <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-border/60 flex items-center justify-between gap-2">
-                <h2 className="text-xs font-bold text-foreground flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5 text-violet-600" />
-                  Tailored résumé
-                </h2>
-                <span
-                  className={cn(
-                    "text-[9px] font-bold px-2 py-0.5 rounded-full",
-                    relay.activeResume.reused
-                      ? "text-muted-foreground bg-secondary"
-                      : "text-violet-700 bg-violet-500/10",
-                  )}
-                >
-                  {relay.activeResume.reused ? "reused" : "generated"}
-                </span>
-              </div>
-              <object
-                data={`data:${relay.activeResume.file.mimeType};base64,${relay.activeResume.file.base64}`}
-                type={relay.activeResume.file.mimeType}
-                className="w-full h-[280px] bg-secondary/20"
-                aria-label="Generated résumé preview"
-              >
-                <div className="p-4 text-[11px] text-muted-foreground">Preview unavailable.</div>
-              </object>
-              <div className="px-4 py-2 border-t border-border/60 flex items-center justify-between gap-2">
-                <span className="text-[10px] text-muted-foreground truncate" title={relay.activeResume.file.name}>
-                  {relay.activeResume.file.name}
-                </span>
-                <a
-                  href={`data:${relay.activeResume.file.mimeType};base64,${relay.activeResume.file.base64}`}
-                  download={relay.activeResume.file.name}
-                  className="text-[10px] font-semibold text-violet-600 hover:text-violet-700 shrink-0"
-                >
-                  Download
-                </a>
-              </div>
-            </div>
-          )}
 
           {/* Event log */}
           <div className="flex-1 rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden flex flex-col min-h-[240px]">

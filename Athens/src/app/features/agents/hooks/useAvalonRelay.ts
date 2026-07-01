@@ -50,6 +50,7 @@ export interface JobResume {
   file: AttachedFile;
   reused: boolean;
   generationId: string | null;
+  resumePdfPath?: string | null;
 }
 
 /** Manual/link-only jobs have no Mongo id or JD, so no tailored résumé is generated. */
@@ -101,14 +102,22 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [appliedJobIds, setAppliedJobIds] = useState<Set<string>>(new Set());
   const [resumesByJobId, setResumesByJobId] = useState<Record<string, JobResume>>({});
   const [resumeJobId, setResumeJobId] = useState<string | null>(null);
+  const [generatingResume, setGeneratingResume] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
+  const [relaySocket, setRelaySocket] = useState<Socket | null>(null);
   const applyingRef = useRef(false);
   const pendingActionsRef = useRef<Map<string, (result: ActionResult) => void>>(new Map());
+  const resumeGenByJobIdRef = useRef<Map<string, Promise<AttachedFile>>>(new Map());
   const sessionIdRef = useRef(sessionId);
   const selectedTabIdRef = useRef(selectedTabId);
+  const jobQueueRef = useRef(jobQueue);
+  const activeJobIndexRef = useRef(activeJobIndex);
   sessionIdRef.current = sessionId;
   selectedTabIdRef.current = selectedTabId;
+  jobQueueRef.current = jobQueue;
+  activeJobIndexRef.current = activeJobIndex;
 
   const canExecute = connected && peers.extension;
   const executeDisabledReason = !connected
@@ -151,6 +160,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       reconnectionDelay: 1000,
     });
     socketRef.current = next;
+    setRelaySocket(next);
 
     next.on("connect", () => {
       setConnected(true);
@@ -169,6 +179,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
 
     next.on("disconnect", (reason) => {
       setConnected(false);
+      setRelaySocket(null);
       setPeers({ extension: false, controller: false });
       if (reason !== "io client disconnect") {
         pushLog(`Disconnected (${reason})`);
@@ -251,7 +262,17 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     });
 
     next.on(SOCKET_EVENTS.APPLY_PROGRESS, (progress: ApplyProgress) => {
-      setApplyPhase(progress);
+      setApplyPhase((prev) => {
+        if (
+          prev?.phase === "error" &&
+          progress.phase !== "error" &&
+          progress.phase !== "done" &&
+          progress.phase !== "submitted"
+        ) {
+          return prev;
+        }
+        return progress;
+      });
       pushLog(progress.message, progress.phase !== "error");
     });
 
@@ -270,6 +291,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     return () => {
       socketRef.current?.removeAllListeners();
       socketRef.current?.disconnect();
+      setRelaySocket(null);
     };
   }, [connect]);
 
@@ -315,11 +337,156 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     });
   }, [emitAction, probeComboboxes, selectedTabId]);
 
+  const getActiveQueuedJob = useCallback((): QueuedJob | null => {
+    const queue = jobQueueRef.current;
+    const idx = activeJobIndexRef.current;
+    return queue[idx] ?? null;
+  }, []);
+
+  /**
+   * Generate (or reuse) a per-job résumé via the Resume Generator pipeline.
+   * Throws on failure — apply must abort (no bundled fallback).
+   */
+  const ensureJobResume = useCallback(
+    async (job: QueuedJob, options?: { forceRegenerate?: boolean }): Promise<AttachedFile> => {
+      if (!applierName) throw new Error("Select an applier profile before applying");
+      if (isManualJob(job)) throw new Error(`"${job.title}" is a manual job — résumé generation requires a saved job with description`);
+
+      if (!options?.forceRegenerate) {
+        const cached = resumesByJobId[job.id];
+        if (cached) {
+          setResumeJobId(job.id);
+          setResumeError(null);
+          return cached.file;
+        }
+      } else {
+        resumeGenByJobIdRef.current.delete(job.id);
+        setResumesByJobId((prev) => {
+          const next = { ...prev };
+          delete next[job.id];
+          return next;
+        });
+      }
+
+      const jd = await fetchJobDescription(job.id);
+      if (!jd) throw new Error(`No job description for "${job.title}" — cannot generate tailored résumé`);
+
+      pushLog(
+        options?.forceRegenerate
+          ? `Regenerating tailored résumé for "${job.title}" (Resume Generator + JD)…`
+          : `Generating tailored résumé for "${job.title}" (Resume Generator config)…`,
+        true,
+      );
+      const gen = await generateJobResume({
+        applierName,
+        jobId: job.id,
+        jobDescription: jd,
+        forceRegenerate: options?.forceRegenerate,
+      });
+      const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
+      setResumesByJobId((prev) => ({
+        ...prev,
+        [job.id]: {
+          jobId: job.id,
+          file,
+          reused: gen.reused,
+          generationId: gen.generationId,
+          resumePdfPath: gen.resumePdfPath ?? null,
+        },
+      }));
+      setResumeJobId(job.id);
+      setResumeError(null);
+      const modelNote = gen.model ? ` · ${gen.provider ? `${gen.provider}/` : ""}${gen.model}` : "";
+      const pathNote = gen.resumePdfPath ? ` · saved ${gen.resumePdfPath}` : "";
+      pushLog(`Résumé ${gen.reused ? "reused" : "generated"} for "${job.title}"${modelNote}${pathNote}`, true);
+      return file;
+    },
+    [applierName, pushLog, resumesByJobId],
+  );
+
+  /** Start résumé generation for a queued job (deduped per job id). */
+  const startResumeForJob = useCallback(
+    (job: QueuedJob, options?: { forceRegenerate?: boolean }): Promise<AttachedFile | null> => {
+      if (isManualJob(job)) return Promise.resolve(null);
+      if (!options?.forceRegenerate) {
+        const inflight = resumeGenByJobIdRef.current.get(job.id);
+        if (inflight) return inflight.then((file) => file);
+      }
+
+      const promise = (async () => {
+        setGeneratingResume(true);
+        setResumeJobId(job.id);
+        setResumeError(null);
+        try {
+          return await ensureJobResume(job, options);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "Résumé generation failed";
+          setResumeError(msg);
+          pushLog(msg, false);
+          throw error;
+        } finally {
+          setGeneratingResume(false);
+          resumeGenByJobIdRef.current.delete(job.id);
+        }
+      })();
+
+      resumeGenByJobIdRef.current.set(job.id, promise);
+      return promise;
+    },
+    [ensureJobResume, pushLog],
+  );
+
+  // Step 1: generate tailored résumé when the active queue job changes (before opening the job URL).
+  useEffect(() => {
+    const job = jobQueue[activeJobIndex];
+    if (!job || isManualJob(job) || !applierName) return;
+    void startResumeForJob(job).catch(() => {
+      /* errors logged in startResumeForJob */
+    });
+  }, [activeJobIndex, applierName, jobQueue, startResumeForJob]);
+
+  const generateActiveJobResume = useCallback(
+    async (forceRegenerate = false) => {
+      const job = getActiveQueuedJob();
+      if (!job) {
+        pushLog("Select a queued job first", false);
+        return;
+      }
+      if (isManualJob(job)) {
+        pushLog(`"${job.title}" is manual — résumé generation needs a MongoDB job with description`, false);
+        return;
+      }
+      try {
+        await startResumeForJob(job, { forceRegenerate });
+      } catch {
+        /* logged in startResumeForJob */
+      }
+    },
+    [getActiveQueuedJob, pushLog, startResumeForJob],
+  );
+
+  const getResumeForJob = useCallback(
+    (job: QueuedJob): AttachedFile | null => {
+      const entry = resumesByJobId[job.id];
+      return entry?.file?.base64 ? entry.file : null;
+    },
+    [resumesByJobId],
+  );
+
   const analyzeTree = useCallback(async () => {
     if (!actionableTree?.length) {
       pushLog("Fetch an actionable tree first", false);
       return;
     }
+    if (!treePage?.tabId) {
+      pushLog("No page context — scan the form on the target tab first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot execute", false);
+      return;
+    }
+
     setAnalyzing(true);
     try {
       const result = await analyzeFormFields({
@@ -342,7 +509,15 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     } finally {
       setAnalyzing(false);
     }
-  }, [actionableTree, applicantContext, buildPlanFromFields, pushLog]);
+  }, [
+    actionableTree,
+    applicantContext,
+    buildPlanFromFields,
+    canExecute,
+    executeDisabledReason,
+    pushLog,
+    treePage,
+  ]);
 
   const generatePlan = useCallback((): InjectionPlan | null => {
     if (!formAnalysis?.fields.length) {
@@ -351,57 +526,6 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     }
     return buildPlanFromFields(formAnalysis.fields);
   }, [buildPlanFromFields, formAnalysis?.fields.length, pushLog]);
-
-  const applyActionPlan = useCallback(async () => {
-    if (!actionableTree?.length || !formAnalysis?.fields.length) {
-      pushLog("Analyze the form first to build an action plan", false);
-      return;
-    }
-    if (!treePage?.tabId) {
-      pushLog("No page context — fetch the actionable tree on the target tab first", false);
-      return;
-    }
-    if (!canExecute) {
-      pushLog(executeDisabledReason ?? "Cannot execute", false);
-      return;
-    }
-
-    applyingRef.current = true;
-    setApplying(true);
-
-    try {
-      const plan = injectionPlan ?? generatePlan();
-      if (!plan || plan.steps.length === 0) {
-        applyingRef.current = false;
-        setApplying(false);
-        pushLog("No fill plan to apply", false);
-        return;
-      }
-
-      const payload = buildApplyInjectionPlanPayload(plan, treePage);
-      emitAction({
-        id: createActionId(),
-        tabId: treePage.tabId,
-        action: "apply_injection_plan",
-        payload: payload as unknown as Record<string, unknown>,
-      });
-      pushLog(`Applying fill plan (${plan.steps.length} steps) on tab ${treePage.tabId}…`);
-    } catch (error) {
-      applyingRef.current = false;
-      setApplying(false);
-      pushLog(error instanceof Error ? error.message : "Apply failed", false);
-    }
-  }, [
-    actionableTree?.length,
-    canExecute,
-    emitAction,
-    executeDisabledReason,
-    formAnalysis?.fields.length,
-    generatePlan,
-    injectionPlan,
-    pushLog,
-    treePage,
-  ]);
 
   const highlightControl = useCallback(
     (control: TargetSelector) => {
@@ -487,6 +611,128 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       }),
     [pushLog],
   );
+
+  const runApplyWithPlan = useCallback(
+    async (plan: InjectionPlan, page: ActionablePageContext, resumeFile: AttachedFile) => {
+      applyingRef.current = true;
+      setApplying(true);
+      try {
+        const payload = buildApplyInjectionPlanPayload(plan, page, { autoSubmit: true, resumeFile });
+        const applyRes = await emitActionAsync(
+          {
+            id: createActionId(),
+            tabId: page.tabId,
+            action: "apply_injection_plan",
+            payload: payload as unknown as Record<string, unknown>,
+          },
+          180000,
+        );
+        if (!applyRes.success) throw new Error(applyRes.error || "Apply failed");
+        const applyData = applyRes.data as
+          | { submitted?: boolean; filesFound?: number; filesAttached?: number }
+          | undefined;
+        const filesFound = applyData?.filesFound ?? 0;
+        const filesAttached = applyData?.filesAttached ?? 0;
+        if (filesFound > 0 && filesAttached === 0) {
+          throw new Error(`Résumé was not attached (${filesAttached}/${filesFound})`);
+        }
+        if (filesFound > 0) {
+          pushLog(`Résumé uploaded to ${filesAttached}/${filesFound} field(s)`, filesAttached > 0);
+        }
+        pushLog(
+          applyData?.submitted ? "Fill plan applied and submitted" : "Fill plan applied — review before submit",
+          true,
+        );
+      } finally {
+        applyingRef.current = false;
+        setApplying(false);
+      }
+    },
+    [emitActionAsync, pushLog],
+  );
+
+  const applyActionPlan = useCallback(async () => {
+    if (!actionableTree?.length || !formAnalysis?.fields.length) {
+      pushLog("Analyze the form first to build an action plan", false);
+      return;
+    }
+    if (!treePage?.tabId) {
+      pushLog("No page context — fetch the actionable tree on the target tab first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot execute", false);
+      return;
+    }
+
+    const plan = injectionPlan ?? generatePlan();
+    if (!plan || plan.steps.length === 0) {
+      pushLog("No fill plan to apply", false);
+      return;
+    }
+
+    const job = getActiveQueuedJob();
+    if (!job || isManualJob(job)) {
+      pushLog("Select a queued MongoDB job with a drafted résumé", false);
+      return;
+    }
+
+    const resumeFile = getResumeForJob(job);
+    if (!resumeFile) {
+      pushLog("Generate tailored résumé first (step 1) — preview the PDF before applying", false);
+      return;
+    }
+
+    try {
+      await runApplyWithPlan(plan, treePage, resumeFile);
+    } catch (error) {
+      pushLog(error instanceof Error ? error.message : "Apply failed", false);
+    }
+  }, [
+    actionableTree?.length,
+    canExecute,
+    executeDisabledReason,
+    formAnalysis?.fields.length,
+    generatePlan,
+    getActiveQueuedJob,
+    getResumeForJob,
+    injectionPlan,
+    pushLog,
+    runApplyWithPlan,
+    treePage,
+  ]);
+
+  /** Open the active queue job URL in a new browser tab (step 2 — after résumé preview). */
+  const openActiveJob = useCallback(async () => {
+    const job = getActiveQueuedJob();
+    if (!job) {
+      pushLog("Select a queued job first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot open job — extension not connected", false);
+      return;
+    }
+    const resumeFile = getResumeForJob(job);
+    if (!resumeFile) {
+      pushLog("Generate and preview tailored résumé before opening the job link", false);
+      return;
+    }
+    try {
+      const opened = await emitActionAsync({
+        id: createActionId(),
+        action: "open_tab",
+        payload: { url: job.url },
+      });
+      if (!opened.success) throw new Error(opened.error || "Failed to open tab");
+      const openedData = opened.data as { tabId?: number; page?: ActionablePageContext };
+      if (openedData.tabId) setSelectedTabId(openedData.tabId);
+      if (openedData.page) setTreePage(openedData.page);
+      pushLog(`Opened "${job.title}" — scan the form next`, true);
+    } catch (error) {
+      pushLog(error instanceof Error ? error.message : "Failed to open job", false);
+    }
+  }, [canExecute, emitActionAsync, executeDisabledReason, getActiveQueuedJob, getResumeForJob, pushLog]);
 
   /** Read the post-submit page (innerText + remaining control count) via execute_script. */
   const readApplyPageState = useCallback(
@@ -654,49 +900,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   );
 
   /**
-   * Generate (or reuse) a per-job résumé tailored to the JD and cache it for
-   * attach + preview. Returns null for manual/link-only jobs or on any failure —
-   * the executor then falls back to the bundled default résumé.
-   */
-  const ensureJobResume = useCallback(
-    async (job: QueuedJob): Promise<AttachedFile | null> => {
-      if (!applierName || isManualJob(job)) return null;
-      const cached = resumesByJobId[job.id];
-      if (cached) {
-        setResumeJobId(job.id);
-        return cached.file;
-      }
-      try {
-        const jd = await fetchJobDescription(job.id);
-        if (!jd) {
-          pushLog(`No job description for "${job.title}" — using default résumé`, false);
-          return null;
-        }
-        pushLog(`Generating tailored résumé for "${job.title}"…`, true);
-        const gen = await generateJobResume({ applierName, jobId: job.id, jobDescription: jd });
-        const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
-        setResumesByJobId((prev) => ({
-          ...prev,
-          [job.id]: { jobId: job.id, file, reused: gen.reused, generationId: gen.generationId },
-        }));
-        setResumeJobId(job.id);
-        pushLog(`Résumé ${gen.reused ? "reused" : "generated"} for "${job.title}"`, true);
-        return file;
-      } catch (error) {
-        pushLog(
-          `Résumé generation failed for "${job.title}" — using default résumé: ${error instanceof Error ? error.message : error}`,
-          false,
-        );
-        return null;
-      }
-    },
-    [applierName, pushLog, resumesByJobId],
-  );
-
-  /**
-   * Drive one job end-to-end: open a fresh tab, wait for load, scan the form,
-   * analyze with the AI, generate a tailored résumé, fill, auto-submit, then
-   * confirm + mark Applied.
+   * Drive one job end-to-end: draft résumé → open tab → scan → analyze → fill → submit.
    */
   const applyJob = useCallback(
     async (job: QueuedJob) => {
@@ -706,11 +910,14 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       }
       setApplying(true);
       applyingRef.current = true;
-      // Start résumé generation immediately so the LLM round-trip overlaps the
-      // tab open + scan + analyze rather than blocking before submit.
-      const resumePromise = ensureJobResume(job);
       try {
         pushLog(`Applying to "${job.title}"…`, true);
+        let resumeFile = getResumeForJob(job);
+        if (!resumeFile) {
+          resumeFile = await startResumeForJob(job);
+        }
+        if (!resumeFile) throw new Error("Tailored résumé PDF is required but was not generated");
+
         const opened = await emitActionAsync({
           id: createActionId(),
           action: "open_tab",
@@ -746,11 +953,6 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         setGeneratedScript(built.preview);
         if (!built.plan.steps.length) throw new Error("Plan has no fillable steps");
 
-        // Wait for the tailored résumé (started in parallel above) so the file
-        // step uploads the AI-generated PDF; null falls back to the bundled one.
-        const resumeFile = (await resumePromise) ?? undefined;
-
-        // Fill everything, then auto-submit (5s countdown handled in the executor).
         const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, { autoSubmit: true, resumeFile });
         const applyRes = await emitActionAsync(
           {
@@ -771,18 +973,25 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         // Make the résumé-upload outcome explicit — the #1 silent failure.
         const filesFound = applyData?.filesFound ?? 0;
         const filesAttached = applyData?.filesAttached ?? 0;
-        if (resumeFile) {
-          if (filesFound === 0) {
-            pushLog(`⚠ Résumé not uploaded — no file field found on "${job.title}"`, false);
-          } else {
-            pushLog(`Résumé uploaded to ${filesAttached}/${filesFound} field(s)`, filesAttached > 0);
-          }
+        if (filesFound === 0) {
+          pushLog(`⚠ Résumé not uploaded — no file field found on "${job.title}"`, false);
+        } else {
+          pushLog(`Résumé uploaded to ${filesAttached}/${filesFound} field(s)`, filesAttached > 0);
         }
 
-        // Read the post-submit page and decide success vs needs-retry.
+        if (filesFound > 0 && filesAttached === 0) {
+          throw new Error(`Résumé was not attached (${filesAttached}/${filesFound})`);
+        }
+
         const pageState = await readApplyPageState(tabId, submitted);
-        const outcome = classifyApplyOutcome(pageState);
-        if (outcome.applied) {
+        const outcome = classifyApplyOutcome({
+          ...pageState,
+          filesExpected: filesFound,
+          filesAttached,
+        });
+        if (outcome.applied && filesFound > 0 && filesAttached === 0) {
+          pushLog(`"${job.title}" submit clicked but résumé missing — not marking applied`, false);
+        } else if (outcome.applied) {
           pushLog(`"${job.title}" applied — ${outcome.reason}`, true);
           await markJobApplied(job);
         } else {
@@ -805,7 +1014,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         applyingRef.current = false;
       }
     },
-    [applicantContext, canExecute, emitActionAsync, ensureJobResume, executeDisabledReason, markJobApplied, probeComboboxes, pushLog, readApplyPageState, runRecoveryLoop],
+    [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, markJobApplied, probeComboboxes, pushLog, readApplyPageState, runRecoveryLoop],
   );
 
   /** Apply every queued job in sequence — each opens its own tab and auto-submits. */
@@ -853,14 +1062,19 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     appliedJobIds,
     resumesByJobId,
     activeResume: resumeJobId ? resumesByJobId[resumeJobId] ?? null : null,
+    generatingResume,
+    resumeError,
     applyPhase,
     monitorMode,
     setMonitorMode,
+    relaySocket,
     socketRef,
     connect,
     fetchActionableTree,
     analyzeTree,
     generatePlan,
+    generateActiveJobResume,
+    openActiveJob,
     applyActionPlan,
     selectTreeTarget,
     requestTabs,

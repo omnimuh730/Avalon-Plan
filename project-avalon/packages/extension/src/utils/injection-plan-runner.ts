@@ -41,6 +41,41 @@ function resolveControl(step: InjectionStep): HTMLElement {
   return resolveInputTarget(matched);
 }
 
+/**
+ * Locate the real <input type="file"> for an attach step. The visible affordance
+ * is often an "Attach"/"Upload"/drop-zone button with the actual (hidden) input as
+ * a SIBLING inside the same field group, not a descendant — so a self/descendant
+ * lookup misses it. This is purely structural (self → label[for] → descendant →
+ * ancestor subtrees), no vendor/label strings, per Guide.md.
+ */
+function findFileInput(element: HTMLElement): HTMLInputElement | null {
+  const isFile = (el: Element | null): el is HTMLInputElement =>
+    el instanceof HTMLInputElement && el.type === 'file';
+
+  if (isFile(element)) return element;
+
+  // A <label for=…> (or any element) pointing at a file input by id.
+  const forId = element.getAttribute('for');
+  if (forId) {
+    const byId = document.getElementById(forId);
+    if (isFile(byId)) return byId;
+  }
+
+  // A file input nested under the control.
+  const descendant = element.querySelector<HTMLInputElement>('input[type="file"]');
+  if (descendant) return descendant;
+
+  // Climb the field group and search each ancestor's subtree — catches the
+  // hidden input sitting beside the visible upload button.
+  let node: HTMLElement | null = element.parentElement;
+  for (let depth = 0; depth < 6 && node; depth += 1) {
+    const found = node.querySelector<HTMLInputElement>('input[type="file"]');
+    if (found) return found;
+    node = node.parentElement;
+  }
+  return null;
+}
+
 /** After typing into an autocomplete, click the option whose text best matches. */
 function pickComboboxOption(input: HTMLInputElement, label: string): boolean {
   const listbox = findListboxForInput(input);
@@ -107,13 +142,12 @@ async function runStep(
       return;
 
     case 'attachFile': {
-      // Resolve the file input and tag it — the actual `input.files` assignment
-      // is done by the background in the page's MAIN world (the isolated content
-      // world silently no-ops `input.files`). Returns true to mark the tag done.
-      const fileInput =
-        element instanceof HTMLInputElement && element.type === 'file'
-          ? element
-          : element.querySelector<HTMLInputElement>('input[type="file"]');
+      // Find the real (usually hidden) <input type="file"> — self, a label[for]
+      // target, a descendant, or a sibling within the field group. We do NOT click
+      // the visible "Attach"/"Upload" affordance: on most forms that opens the
+      // native OS file picker, which blocks the page and the automation. Setting
+      // the pre-existing hidden input's files directly (MAIN world) is what works.
+      const fileInput = findFileInput(element);
       if (!fileInput) throw new Error(`No file input for ${step.label || step.id}`);
       fileInput.setAttribute(FILE_TARGET_ATTR, '1');
       return;

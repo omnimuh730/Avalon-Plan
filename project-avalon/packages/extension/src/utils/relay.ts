@@ -38,6 +38,15 @@ function emitApplyProgress(progress: Omit<ApplyProgress, 'at' | 'sessionId'>) {
 
 const OFFSCREEN_PATH = 'offscreen.html';
 
+interface ArmedCapture {
+  tabId: number;
+  streamId: string;
+  armedAt: number;
+}
+
+let armedCapture: ArmedCapture | null = null;
+const ARM_TTL_MS = 120_000;
+
 async function ensureOffscreenDocument(): Promise<void> {
   // chrome.offscreen is only present in MV3 Chromium.
   const offscreen = (chrome as unknown as { offscreen?: typeof chrome.offscreen }).offscreen;
@@ -51,31 +60,81 @@ async function ensureOffscreenDocument(): Promise<void> {
   });
 }
 
+async function getMediaStreamIdForTab(tabId: number): Promise<string> {
+  await focusTab(tabId);
+  const tabCapture = (chrome as unknown as { tabCapture?: typeof chrome.tabCapture }).tabCapture;
+  if (!tabCapture?.getMediaStreamId) throw new Error('tabCapture unavailable');
+  return new Promise<string>((resolve, reject) => {
+    tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) =>
+      chrome.runtime.lastError || !id
+        ? reject(new Error(chrome.runtime.lastError?.message ?? 'Could not get tab stream'))
+        : resolve(id),
+    );
+  });
+}
+
+function getArmedCapture(tabId: number): ArmedCapture | null {
+  if (!armedCapture) return null;
+  if (Date.now() - armedCapture.armedAt > ARM_TTL_MS) {
+    armedCapture = null;
+    return null;
+  }
+  return armedCapture.tabId === tabId ? armedCapture : null;
+}
+
+/**
+ * Store a stream id obtained in the side panel (user gesture) and start offscreen WebRTC.
+ */
+export async function setArmedLiveCapture(tabId: number, streamId: string): Promise<void> {
+  await ensureOffscreenDocument();
+  armedCapture = { tabId, streamId, armedAt: Date.now() };
+  await chrome.runtime.sendMessage({ type: EXTENSION_MESSAGES.WEBRTC_START, streamId });
+}
+
+/**
+ * @deprecated Prefer setArmedLiveCapture from the side panel click handler.
+ */
+export async function armLiveCapture(tabId?: number): Promise<number> {
+  await ensureOffscreenDocument();
+  const resolved =
+    typeof tabId === 'number'
+      ? tabId
+      : (await browser.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
+  if (!resolved) throw new Error('No tab to capture');
+  const streamId = await getMediaStreamIdForTab(resolved);
+  await setArmedLiveCapture(resolved, streamId);
+  return resolved;
+}
+
+export function getLiveCaptureStatus(tabId?: number): { armed: boolean; tabId?: number } {
+  if (typeof tabId !== 'number') {
+    return { armed: armedCapture != null && Date.now() - armedCapture.armedAt <= ARM_TTL_MS, tabId: armedCapture?.tabId };
+  }
+  const armed = getArmedCapture(tabId);
+  return { armed: Boolean(armed), tabId: armed?.tabId };
+}
+
 /** Handle a signaling message arriving from the viewer (controller) over the socket. */
 async function handleWebRtcSignalFromViewer(signal: WebRtcSignal): Promise<void> {
   try {
     if (signal.kind === 'request') {
-      await ensureOffscreenDocument();
       const tabId =
         typeof signal.tabId === 'number'
           ? signal.tabId
           : (await browser.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
       if (!tabId) throw new Error('No tab to capture');
-      // tabCapture requires the target tab to be active in its window.
-      await focusTab(tabId);
-      const tabCapture = (chrome as unknown as { tabCapture?: typeof chrome.tabCapture }).tabCapture;
-      if (!tabCapture?.getMediaStreamId) throw new Error('tabCapture unavailable');
-      const streamId = await new Promise<string>((resolve, reject) => {
-        tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) =>
-          chrome.runtime.lastError || !id
-            ? reject(new Error(chrome.runtime.lastError?.message ?? 'Could not get tab stream'))
-            : resolve(id),
+      const armed = getArmedCapture(tabId);
+      if (!armed) {
+        throw new Error(
+          'Extension has not been invoked for the current page (see activeTab permission). Open the Avalon side panel on the job tab and click Start live view.',
         );
-      });
-      await chrome.runtime.sendMessage({ type: EXTENSION_MESSAGES.WEBRTC_START, streamId });
+      }
+      await ensureOffscreenDocument();
+      await chrome.runtime.sendMessage({ type: EXTENSION_MESSAGES.WEBRTC_START, streamId: armed.streamId });
       return;
     }
     if (signal.kind === 'stop') {
+      armedCapture = null;
       await chrome.runtime.sendMessage({ type: EXTENSION_MESSAGES.WEBRTC_STOP }).catch(() => {});
       return;
     }

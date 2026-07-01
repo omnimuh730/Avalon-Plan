@@ -9,6 +9,14 @@ interface LiveTabViewProps {
   canExecute: boolean;
 }
 
+function friendlyLiveViewError(message: string | null | undefined): string | null {
+  if (!message) return null;
+  if (/not been invoked|activeTab/i.test(message)) {
+    return "Open the Avalon extension side panel on the job tab and click Start live view, then retry.";
+  }
+  return message;
+}
+
 /**
  * Live tab view consumer. The extension's offscreen document captures the tab and
  * acts as the WebRTC offerer; this component answers and renders the stream.
@@ -76,7 +84,7 @@ export function LiveTabView({ socket, sessionId, tabId, canExecute }: LiveTabVie
           else pendingIce.push(candidate);
         } else if (signal.kind === "error") {
           setStatus("error");
-          setErrorMsg(signal.message ?? "The extension could not capture the tab.");
+          setErrorMsg(friendlyLiveViewError(signal.message) ?? "The extension could not capture the tab.");
           clearTimeout(connectTimeout);
         }
       } catch (err) {
@@ -121,8 +129,8 @@ export function LiveTabView({ socket, sessionId, tabId, canExecute }: LiveTabVie
             {!canExecute
               ? "Connect the extension to start the live view."
               : errorMsg
-                ? errorMsg
-                : "The extension streams the active tab here. Switch to Screenshot mode if the live feed doesn't start."}
+                ? friendlyLiveViewError(errorMsg) ?? errorMsg
+                : "Arm capture from the extension side panel (Start live view), then switch to Live here."}
           </p>
         </div>
       )}

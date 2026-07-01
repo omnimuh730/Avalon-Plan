@@ -727,6 +727,30 @@ export async function deleteGeneration(req, res) {
   }
 }
 
+/** GET /personal/agent-job-resume/:jobId/pdf?applierName= — stream on-disk draft PDF for Agent preview. */
+export async function getAgentJobResumePdf(req, res) {
+  try {
+    const applierName = cleanString(req.query?.applierName);
+    const jobId = cleanString(req.params?.jobId);
+    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
+    if (!jobId) return res.status(400).json({ success: false, error: "jobId is required" });
+
+    const { resolveAgentJobDraftPdf } = await import("../services/agentResumeGenService.js");
+    const draft = await resolveAgentJobDraftPdf({ applierName, jobId });
+    if (!draft?.buffer?.length) {
+      return res.status(404).json({ success: false, error: "No draft PDF for this job yet — generate résumé first" });
+    }
+
+    const safeName = applierName.replace(/[^\w.\-()+ ]+/g, "_").trim() || "resume";
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}-${jobId.slice(0, 8)}.pdf"`);
+    return res.end(draft.buffer);
+  } catch (err) {
+    console.warn("GET /api/personal/agent-job-resume/:jobId/pdf error:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
 /** POST /personal/resume-generate/for-agent-job — agent autobid per-job resume (reuse or generate). */
 export async function generateResumeForAgentJob(req, res) {
   try {
@@ -738,9 +762,13 @@ export async function generateResumeForAgentJob(req, res) {
     if (!jobId) return res.status(400).json({ success: false, error: "jobId is required" });
     if (!jobDescription) return res.status(400).json({ success: false, error: "jobDescription is required" });
 
-    const modelOverride = cleanString(body.model);
     const { ensureAgentJobResume } = await import("../services/agentResumeGenService.js");
-    const result = await ensureAgentJobResume({ applierName, jobId, jobDescription, modelOverride });
+    const result = await ensureAgentJobResume({
+      applierName,
+      jobId,
+      jobDescription,
+      forceRegenerate: Boolean(body.forceRegenerate),
+    });
     return res.json({ success: true, ...result });
   } catch (err) {
     const status = Number.isInteger(err?.status) ? err.status : 500;

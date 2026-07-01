@@ -33,7 +33,8 @@ Resume / CV file upload (TOP PRIORITY — MANDATORY):
 - Any field labeled Resume, CV, Resume/CV, or similar file upload is the highest-priority action on the form.
 - Always action FileUpload with shouldSkip No — never skip Resume/CV even if the field appears optional.
 - value = "resume" (or the exact label purpose). The automation attaches the candidate document separately.
-- Cover letter file uploads: shouldSkip No when present; resume takes precedence if only one upload can be prioritized.
+- Cover letter file uploads: shouldSkip Yes — automation only supplies a tailored resume PDF, not a cover letter.
+- Autofill-from-resume widgets (upload to autofill other fields): shouldSkip Yes — not the application resume field.
 
 ShouldSkip Yes when:
 - Informational / disclosure / external links (definitions, OFCCP, dol.gov, learn more)

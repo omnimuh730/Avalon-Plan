@@ -4,12 +4,8 @@
 // template from the generated sections + identity + the SAME saved config, then feed the same
 // paged-Chromium renderer (htmlToPdf). Each PDF is saved to a timestamped folder for review.
 
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { htmlToPdf } from "../controllers/resumePdfController.js";
-
-const REVIEW_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".local", "agent-resumes");
+import { writeAgentDraftPdf } from "./agentResumeDraftService.js";
 
 const esc = (v) =>
   String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -137,18 +133,11 @@ export async function renderAgentResumePdf({ sections, identity, applierName, jo
     fontLinks: fontLinks(theme.font),
   });
 
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const reviewDir = path.join(REVIEW_ROOT, stamp);
-  const safe = (s) => String(s || "").replace(/[^\w.\- ]+/g, "_").slice(0, 60);
-  const base = `${safe(applierName) || "resume"}-${safe(jobId) || "job"}`;
-  let savedPath = "";
-  try {
-    fs.mkdirSync(reviewDir, { recursive: true });
-    savedPath = path.join(reviewDir, `${base}.pdf`);
-    fs.writeFileSync(savedPath, buffer);
-    fs.writeFileSync(path.join(reviewDir, `${base}.html`), html, "utf8");
-  } catch {
-    /* review copy is best-effort */
-  }
-  return { buffer, savedPath, reviewDir };
+  const { draftPath, reviewPath } = writeAgentDraftPdf({
+    buffer,
+    applierName,
+    jobId,
+    html,
+  });
+  return { buffer, savedPath: draftPath, reviewPath };
 }

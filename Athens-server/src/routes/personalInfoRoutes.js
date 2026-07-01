@@ -21,6 +21,7 @@ import {
   generateResume,
   generateResumeStream,
   generateResumeForAgentJob,
+  getAgentJobResumePdf,
   getGeneratorConfig,
 	saveGeneratorConfig,
   listGenerations,
@@ -65,6 +66,7 @@ router.get('/personal/llm-models', getLlmModels);
 router.post('/personal/resume-generate', generateResume);
 router.post('/personal/resume-generate/stream', generateResumeStream);
 router.post('/personal/resume-generate/for-agent-job', generateResumeForAgentJob);
+router.get('/personal/agent-job-resume/:jobId/pdf', getAgentJobResumePdf);
 router.get('/personal/resume-generator/config', getGeneratorConfig);
 router.put('/personal/resume-generator/config', saveGeneratorConfig);
 router.get('/personal/resume-generations', listGenerations);
