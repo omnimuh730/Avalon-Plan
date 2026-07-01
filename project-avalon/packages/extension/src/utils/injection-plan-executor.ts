@@ -37,12 +37,13 @@ async function runPlanInTab(tabId: number, plan: InjectionPlan): Promise<Injecti
  * setter (React-safe) and fires both `change` and a synthetic `drop` so plain file
  * inputs AND drag-and-drop zones (react-dropzone) both register the file.
  */
-function setFilesInMainWorld(attr: string, base64: string, name: string, mime: string) {
+async function setFilesInMainWorld(attr: string, base64: string, name: string, mime: string) {
   const result: { attached: number; found: number; errors: string[] } = {
     attached: 0,
     found: 0,
     errors: [],
   };
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   try {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
@@ -53,27 +54,31 @@ function setFilesInMainWorld(attr: string, base64: string, name: string, mime: s
     result.found = nodes.length;
     const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
 
+    // Assign via the native setter (React-safe), then fire input + change. This
+    // works for plain file inputs AND drag-and-drop zones (their input onChange).
+    // We deliberately do NOT fire a synthetic `drop`: some dropzones reset the
+    // input during their drop handler, which would clear the file we just set.
+    const assign = (input: HTMLInputElement) => {
+      const dt = new DataTransfer();
+      dt.items.add(makeFile());
+      if (desc && desc.set) desc.set.call(input, dt.files);
+      else input.files = dt.files;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
     for (const node of nodes) {
       const input = node as HTMLInputElement;
       try {
-        const dt = new DataTransfer();
-        dt.items.add(makeFile());
-        if (desc && desc.set) desc.set.call(input, dt.files);
-        else input.files = dt.files;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-
-        // Drag-and-drop zones react to a `drop`, not `change`. Fire once on the
-        // closest wrapper so it bubbles to the dropzone root exactly once.
-        const zone = input.parentElement ?? input;
-        const dropDt = new DataTransfer();
-        dropDt.items.add(makeFile());
-        for (const type of ['dragenter', 'dragover', 'drop']) {
-          zone.dispatchEvent(
-            new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dropDt }),
-          );
+        assign(input);
+        // A framework's onChange can transiently reset the input mid-dispatch;
+        // let it settle, and re-assign once if the file didn't stick. Judging
+        // success synchronously (as before) produced false failures.
+        await wait(80);
+        if (!input.files || input.files.length === 0) {
+          assign(input);
+          await wait(120);
         }
-
         if (input.files && input.files.length > 0) result.attached += 1;
         else result.errors.push(`files empty after assign: ${input.id || input.name || 'input'}`);
       } catch (err) {
@@ -104,6 +109,58 @@ async function attachTaggedFiles(tabId: number, resume: AttachedFile): Promise<n
     console.warn('[Avalon] MAIN-world attach errors:', res.errors);
   }
   return res.attached ?? 0;
+}
+
+/**
+ * Resolves once the page's DOM has been quiet for `quietMs` (no mutations), or
+ * after `maxMs`. Runs in the MAIN world. Some uploaders parse the résumé and
+ * RE-RENDER the whole form a few seconds later; filling before that re-render
+ * lands the values on soon-to-be-discarded nodes (they end up blank). Waiting for
+ * quiescence is a generic, portable way to fill AFTER the form has settled — no
+ * vendor/site strings involved.
+ */
+function domSettleInMainWorld(quietMs: number, maxMs: number): Promise<string> {
+  return new Promise((resolve) => {
+    let quietTimer: ReturnType<typeof setTimeout>;
+    const finish = (reason: string) => {
+      try {
+        observer.disconnect();
+      } catch {
+        /* already gone */
+      }
+      clearTimeout(quietTimer);
+      clearTimeout(hardTimer);
+      resolve(reason);
+    };
+    const bump = () => {
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => finish('quiet'), quietMs);
+    };
+    const observer = new MutationObserver(bump);
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true,
+    });
+    const hardTimer = setTimeout(() => finish('timeout'), maxMs);
+    bump();
+  });
+}
+
+/** Wait for the page to stop mutating (e.g. a résumé-parse re-render) before filling. */
+async function waitForDomSettle(tabId: number, quietMs = 1200, maxMs = 15000): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: domSettleInMainWorld,
+      args: [quietMs, maxMs],
+    });
+  } catch {
+    // Best-effort: if settle detection fails, fall back to a short fixed wait.
+    await sleep(FILE_SETTLE_MS);
+  }
 }
 
 export async function executeInjectionPlan(
@@ -149,34 +206,44 @@ export async function executeInjectionPlan(
     if (filesFound > 0) {
       filesAttached = await attachTaggedFiles(tabId, payload.resumeFile);
       fileFailed = filesFound - filesAttached;
-      failed += fileFailed;
       emit({
         phase: 'files',
-        message: `Résumé set on ${filesAttached}/${filesFound} input(s) — waiting for upload…`,
+        message: `Résumé set on ${filesAttached}/${filesFound} input(s) — waiting for upload to finish…`,
         appliedSteps: applied,
         totalSteps,
       });
-      await sleep(FILE_SETTLE_MS);
+      // Wait for the upload + any résumé-parse re-render to settle BEFORE filling
+      // fields, so values aren't wiped by a late re-render.
+      await waitForDomSettle(tabId);
     }
 
-    const fileErrorMsg =
-      filesFound === 0
-        ? 'Plan expected a résumé field but none was found on the page'
-        : fileFailed > 0
-          ? `Résumé attach failed on ${fileFailed}/${filesFound} input(s)`
-          : null;
-
-    if (fileErrorMsg) {
-      emit({ phase: 'error', message: fileErrorMsg, appliedSteps: applied, totalSteps });
-      throw new Error(fileErrorMsg);
+    // NON-FATAL: a 0/1 "attach" reading is often a false negative (a dropzone
+    // briefly resets the input during its onChange, or the confirmation is async).
+    // Aborting here would kill an otherwise-valid application, so we only WARN and
+    // continue — the field fill + submit + verify still run, and the verify step
+    // reports the true outcome (e.g. a genuine "résumé required").
+    if (filesFound === 0) {
+      emit({
+        phase: 'files',
+        message: 'No résumé field found in the plan — continuing without a file',
+        appliedSteps: applied,
+        totalSteps,
+      });
+    } else if (fileFailed > 0) {
+      emit({
+        phase: 'files',
+        message: `Résumé attach unconfirmed on ${fileFailed}/${filesFound} input(s) — continuing`,
+        appliedSteps: applied,
+        totalSteps,
+      });
+    } else {
+      emit({
+        phase: 'files',
+        message: `Résumé attached (${resumeName})`,
+        appliedSteps: applied,
+        totalSteps,
+      });
     }
-
-    emit({
-      phase: 'files',
-      message: `Résumé attached (${resumeName})`,
-      appliedSteps: applied,
-      totalSteps,
-    });
   } else {
     emit({
       phase: 'files',
