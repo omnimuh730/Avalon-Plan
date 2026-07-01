@@ -64,3 +64,64 @@ export async function removeJobs(ids: string[]): Promise<{ success?: boolean; de
   });
   return parseJson(res);
 }
+
+/** Fetch a job's full detail (incl. description) by Mongo id. Returns "" if unavailable. */
+export async function fetchJobDescription(jobId: string): Promise<string> {
+  try {
+    const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`);
+    if (!res.ok) return "";
+    const data = (await res.json()) as { data?: { description?: string; jobDescription?: string } };
+    return String(data.data?.description ?? data.data?.jobDescription ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+export interface GeneratedJobResume {
+  pdfBase64: string;
+  fileName: string;
+  mimeType: string;
+  reused: boolean;
+  generationId: string | null;
+}
+
+/**
+ * Generate (or reuse) a per-job résumé tailored to the JD, using the profile's
+ * saved resume-generator config (DeepSeek/OpenAI). Idempotent per (applier, jobId).
+ * Returns the PDF as base64 for attaching + previewing. Throws on failure so the
+ * caller can fall back to the bundled résumé.
+ */
+export async function generateJobResume(params: {
+  applierName: string;
+  jobId: string;
+  jobDescription: string;
+  model?: string;
+}): Promise<GeneratedJobResume> {
+  const res = await fetch(`${API_BASE}/personal/resume-generate/for-agent-job`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      applierName: params.applierName,
+      jobId: params.jobId,
+      jobDescription: params.jobDescription,
+      ...(params.model ? { model: params.model } : {}),
+    }),
+  });
+  const data = (await res.json()) as {
+    success?: boolean;
+    error?: string;
+    pdfBase64?: string;
+    fileName?: string;
+    reused?: boolean;
+    generationId?: string | null;
+  };
+  if (!res.ok || !data.success) throw new Error(data.error || `Résumé generation failed (${res.status})`);
+  if (!data.pdfBase64) throw new Error("Résumé generated but no PDF was returned");
+  return {
+    pdfBase64: data.pdfBase64,
+    fileName: (data.fileName || `${params.applierName}.pdf`).replace(/[^\w.\-()+ ]+/g, "_"),
+    mimeType: "application/pdf",
+    reused: Boolean(data.reused),
+    generationId: data.generationId ?? null,
+  };
+}
