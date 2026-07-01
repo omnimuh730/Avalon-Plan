@@ -38,6 +38,11 @@ export function LiveTabView({ socket, sessionId, tabId, canExecute }: LiveTabVie
 
     const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
     pcRef.current = pc;
+    // ICE candidates from the offerer can arrive before we've applied its offer;
+    // addIceCandidate then rejects and the connection silently never forms. Queue
+    // candidates until the remote description is set, then flush.
+    const pendingIce: RTCIceCandidateInit[] = [];
+    let remoteSet = false;
 
     pc.ontrack = (event) => {
       if (videoRef.current && event.streams[0]) {
@@ -57,18 +62,26 @@ export function LiveTabView({ socket, sessionId, tabId, canExecute }: LiveTabVie
       try {
         if (signal.kind === "offer") {
           await pc.setRemoteDescription(signal.data as RTCSessionDescriptionInit);
+          remoteSet = true;
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           send("answer", answer);
+          // Flush any ICE candidates that arrived before the offer was applied.
+          for (const cand of pendingIce.splice(0)) {
+            await pc.addIceCandidate(cand).catch(() => {});
+          }
         } else if (signal.kind === "ice" && signal.data) {
-          await pc.addIceCandidate(signal.data as RTCIceCandidateInit);
+          const candidate = signal.data as RTCIceCandidateInit;
+          if (remoteSet) await pc.addIceCandidate(candidate).catch(() => {});
+          else pendingIce.push(candidate);
         } else if (signal.kind === "error") {
           setStatus("error");
           setErrorMsg(signal.message ?? "The extension could not capture the tab.");
           clearTimeout(connectTimeout);
         }
-      } catch {
+      } catch (err) {
         setStatus("error");
+        setErrorMsg(err instanceof Error ? err.message : "Live view negotiation failed");
       }
     };
 

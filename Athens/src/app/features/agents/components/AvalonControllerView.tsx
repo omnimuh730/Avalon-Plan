@@ -25,6 +25,7 @@ import { cn } from "../../../lib/utils";
 import { formatApplierProfile } from "../avalon/ai/profile";
 import { useAvalonRelay, type QueuedJob } from "../hooks/useAvalonRelay";
 import { LiveTabView } from "./LiveTabView";
+import { ApplyStatusPanel } from "./ApplyStatusPanel";
 
 function applyDisabledReason(relay: ReturnType<typeof useAvalonRelay>, hasPlan: boolean): string | null {
   if (!hasPlan) return "Run Analyze first to build a fill plan.";
@@ -111,7 +112,7 @@ export function AvalonControllerView({
     [applier?.autoBidProfile],
   );
 
-  const relay = useAvalonRelay(applicantContext);
+  const relay = useAvalonRelay(applicantContext, applier?.name ?? "");
 
   useEffect(() => {
     if (initialJobs?.length) relay.enqueueJobs(initialJobs);
@@ -232,6 +233,15 @@ export function AvalonControllerView({
         </div>
       </div>
 
+      {/* Live apply pipeline status */}
+      <ApplyStatusPanel
+        applying={relay.applying}
+        analyzing={relay.analyzing}
+        applyPhase={relay.applyPhase}
+        activeResume={relay.activeResume}
+        jobTitle={activeJob?.title}
+      />
+
       {applyBlocked && hasPlan && (
         <div className="rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-2">
           <span>{applyBlocked}</span>
@@ -301,6 +311,7 @@ export function AvalonControllerView({
             ) : (
               relay.jobQueue.map((job, i) => {
                 const active = i === relay.activeJobIndex;
+                const applied = relay.appliedJobIds.has(job.id);
                 return (
                   <div
                     key={job.id}
@@ -339,17 +350,23 @@ export function AvalonControllerView({
                         <ExternalLink className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
                       </div>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        relay.setActiveJobIndex(i);
-                        void relay.applyJob(job);
-                      }}
-                      disabled={!relay.canExecute || relay.applying}
-                      className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold text-violet-700 bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-40"
-                    >
-                      Apply (fill, pause before submit)
-                    </button>
+                    {applied ? (
+                      <div className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold text-emerald-700 bg-emerald-500/10">
+                        ✓ Applied
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          relay.setActiveJobIndex(i);
+                          void relay.applyJob(job);
+                        }}
+                        disabled={!relay.canExecute || relay.applying}
+                        className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold text-violet-700 bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-40"
+                      >
+                        Apply (auto-submit)
+                      </button>
+                    )}
                   </div>
                 );
               })
@@ -467,16 +484,6 @@ export function AvalonControllerView({
               </button>
             </div>
           </div>
-
-          <label className="flex items-center gap-2 px-4 py-2 border-t border-border/60 text-[11px] text-muted-foreground cursor-pointer hover:bg-secondary/30">
-            <input
-              type="checkbox"
-              checked={relay.probeComboboxes}
-              onChange={(e) => relay.setProbeComboboxes(e.target.checked)}
-              className="accent-violet-600 rounded"
-            />
-            Probe comboboxes (slower — reads dropdown options live)
-          </label>
         </section>
 
         {/* Right — activity + actions */}
@@ -520,6 +527,48 @@ export function AvalonControllerView({
               </p>
             )}
           </div>
+
+          {/* Tailored résumé preview */}
+          {relay.activeResume && (
+            <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-border/60 flex items-center justify-between gap-2">
+                <h2 className="text-xs font-bold text-foreground flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                  Tailored résumé
+                </h2>
+                <span
+                  className={cn(
+                    "text-[9px] font-bold px-2 py-0.5 rounded-full",
+                    relay.activeResume.reused
+                      ? "text-muted-foreground bg-secondary"
+                      : "text-violet-700 bg-violet-500/10",
+                  )}
+                >
+                  {relay.activeResume.reused ? "reused" : "generated"}
+                </span>
+              </div>
+              <object
+                data={`data:${relay.activeResume.file.mimeType};base64,${relay.activeResume.file.base64}`}
+                type={relay.activeResume.file.mimeType}
+                className="w-full h-[280px] bg-secondary/20"
+                aria-label="Generated résumé preview"
+              >
+                <div className="p-4 text-[11px] text-muted-foreground">Preview unavailable.</div>
+              </object>
+              <div className="px-4 py-2 border-t border-border/60 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-muted-foreground truncate" title={relay.activeResume.file.name}>
+                  {relay.activeResume.file.name}
+                </span>
+                <a
+                  href={`data:${relay.activeResume.file.mimeType};base64,${relay.activeResume.file.base64}`}
+                  download={relay.activeResume.file.name}
+                  className="text-[10px] font-semibold text-violet-600 hover:text-violet-700 shrink-0"
+                >
+                  Download
+                </a>
+              </div>
+            </div>
+          )}
 
           {/* Event log */}
           <div className="flex-1 rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden flex flex-col min-h-[240px]">

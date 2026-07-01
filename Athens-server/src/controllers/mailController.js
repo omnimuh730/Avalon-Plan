@@ -29,6 +29,7 @@ import {
 	folderToMailbox,
 } from '../services/mail/mailSyncService.js';
 import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
+import { extractVerificationCode } from '../services/mail/verificationCode.js';
 
 function parsePageQuery(req) {
 	const page = Math.max(1, Number.parseInt(String(req.query.page || '1'), 10) || 1);
@@ -177,6 +178,67 @@ export async function syncMail(req, res) {
 		});
 	} catch (err) {
 		console.error('POST /api/mail/sync error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+/**
+ * POST /api/mail/verification-code — pull the newest mail and return the most
+ * recent one-time / verification code (Phase D: OTP handling for auto-apply).
+ * Body: { applierName, sinceMs? }. Generic — matches on verification vocabulary,
+ * not on any sender or vendor.
+ */
+export async function getVerificationCode(req, res) {
+	try {
+		if (!mailMessagesCollection) {
+			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
+		const applierName = await requireApplier(req, res);
+		if (!applierName) return;
+
+		const creds = await resolveMailCredentials(applierName);
+		if (!creds.ok) {
+			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
+		}
+
+		// Best-effort pull of the newest messages before we scan.
+		await runIncrementalSync(applierName, { force: true }).catch((err) => {
+			console.warn('[verification-code] sync failed (continuing with cache):', err.message);
+		});
+
+		const sinceMs = Math.min(60 * 60 * 1000, Math.max(60 * 1000, Number(req.body?.sinceMs) || 15 * 60 * 1000));
+		const cutoff = new Date(Date.now() - sinceMs);
+		const docs = await mailMessagesCollection
+			.find({ applierName, date: { $gte: cutoff } })
+			.sort({ date: -1 })
+			.limit(10)
+			.toArray();
+
+		for (const doc of docs) {
+			let text = `${doc.subject || ''}\n${doc.snippet || ''}\n${doc.bodyText || ''}`;
+			let code = extractVerificationCode(text);
+			// Codes often live only in the body — fetch it lazily for likely candidates.
+			if (!code && !doc.bodyText && doc.uid) {
+				const bodyResult = await ensureMessageBody(applierName, doc.uid, doc.mailbox).catch(() => null);
+				if (bodyResult?.message?.bodyText) {
+					text += `\n${bodyResult.message.bodyText}`;
+					code = extractVerificationCode(text);
+				}
+			}
+			if (code) {
+				return res.json({
+					success: true,
+					code,
+					subject: doc.subject || null,
+					from: doc.from?.address || doc.from?.text || null,
+					date: doc.date || null,
+				});
+			}
+		}
+
+		return res.json({ success: true, code: null });
+	} catch (err) {
+		console.error('POST /api/mail/verification-code error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }

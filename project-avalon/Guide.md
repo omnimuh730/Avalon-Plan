@@ -76,6 +76,19 @@ Helpers: `findField`, `setValue`, `setRichText`, `click`, `typeCombobox`, `setCh
 
 If a widget is hard to fill, fix **DOM discovery** (`dom-analytics.ts`) or the **Analyze prompt** — never add site-specific `if (deel)` or class-name checks.
 
+## Self-healing recovery = AI-authored `execute_script` (allowed, recommended)
+
+The **first-pass fill above stays declarative** — values + skip decisions → typed `InjectionPlan`, no scripts. That is unchanged and non-negotiable.
+
+But when an apply **does not confirm** (validation errors, a required field the plan missed, a verification/OTP step, a soft block), a static declarative plan cannot always recover, because the fix depends on DOM state that only exists at runtime. For this **recovery path only**, the AI is **allowed and encouraged to author a JavaScript snippet** that runs via the executor's `execute_script` action (`new Function(source)()` in the page/content-script world). The recovery agent receives the **live re-scanned DOM + the previous plan + the per-step failures** and returns a corrective snippet; the loop retries up to 10× (`recover-apply.ts` + `useAvalonRelay.runRecoveryLoop`).
+
+This is **not** a licence to hardcode. The distinction:
+
+- ✅ The **AI authors recovery JS at runtime** by reading the live DOM it was handed (querySelector, roles, labels, aria-\*). Same code path works on any site because it derives selectors from the DOM, not from a vendor.
+- ❌ **We** (contributors) still never write `if (greenhouse)`, a vendor CSS class, or a fixed label string into build-time code — not in the plan builder, not in the executor, not in the recovery prompt.
+
+So: declarative for the first pass; AI-authored `execute_script` for dynamic recovery; vendor/site/label hardcoding forbidden everywhere, at build time, always.
+
 ## Rules for contributors
 
 1. **Never add vendor class names** to production logic.

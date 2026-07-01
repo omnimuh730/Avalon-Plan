@@ -13,6 +13,7 @@ import {
 	putMailLabels,
 	checkMailCredentials,
 	getMailFolderCounts,
+	getVerificationCode,
 } from '../controllers/mailController.js';
 
 const router = express.Router();
@@ -22,6 +23,7 @@ router.get('/mail/messages/:uid', getMailMessage);
 router.get('/mail/credentials', checkMailCredentials);
 router.get('/mail/folder-counts', getMailFolderCounts);
 router.post('/mail/sync', syncMail);
+router.post('/mail/verification-code', getVerificationCode);
 router.post('/mail/sync/initial', syncMailInitial);
 router.post('/mail/sync/older', syncMailOlder);
 router.post('/mail/send', sendMailMessage);

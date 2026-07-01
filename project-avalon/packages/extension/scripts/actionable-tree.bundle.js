@@ -162,10 +162,11 @@ var AvalonActionable = (() => {
       if (el.type === "file") return !isStructurallyHidden(el);
       if (isAssociatedChoiceInput(el)) return !isStructurallyHidden(el);
       if (isChoiceInput(el)) {
-        if (isAssociatedChoiceInput(el) || el.closest('label, [role="checkbox"], [class*="Checkbox"]')) {
-          return !isStructurallyHidden(el);
-        }
-        return false;
+        if (isStructurallyHidden(el)) return false;
+        if (isAssociatedChoiceInput(el) || el.closest("label")) return true;
+        if (el.getAttribute("tabindex") === "-1") return false;
+        const rect2 = el.getBoundingClientRect();
+        return rect2.width > 0 && rect2.height > 0;
       }
     }
     if (isHiddenByStyle(el)) return false;
@@ -286,6 +287,11 @@ var AvalonActionable = (() => {
       const labelText = label?.textContent?.trim().replace(/\*+/g, "").trim();
       if (labelText) return labelText;
     }
+    const wrappingLabel = el.closest("label");
+    if (wrappingLabel) {
+      const labelText = wrappingLabel.textContent?.trim().replace(/\*+/g, "").trim();
+      if (labelText && !isGenericPlaceholder(labelText)) return labelText;
+    }
     const fieldRoot = findFieldRoot(el);
     if (fieldRoot) {
       const fieldTitle = getFieldTitle(fieldRoot);
@@ -394,7 +400,7 @@ var AvalonActionable = (() => {
   function isFileUploadTriggerButton(btn) {
     const text = visibleText(btn).toLowerCase();
     const aria = (btn.getAttribute("aria-label") ?? "").toLowerCase();
-    if (text.includes("dropbox") || text.includes("google drive") || text.includes("enter manually") || text.includes("paste") || text.includes("linkedin") || text.includes("manual")) {
+    if (text.includes("enter manually") || text.includes("paste") || text.includes("manual")) {
       return false;
     }
     if (aria.includes("upload") || aria.includes("attach") || aria.includes("browse")) return true;
@@ -436,8 +442,8 @@ var AvalonActionable = (() => {
   }
   function findCountryToggle(container) {
     for (const btn of container.querySelectorAll("button")) {
-      const label = (btn.getAttribute("aria-label") ?? "").toLowerCase();
-      if (label.includes("country") || label.includes("toggle") || label.includes("flyout")) {
+      const haspopup = btn.getAttribute("aria-haspopup");
+      if (btn.hasAttribute("aria-expanded") || haspopup !== null && haspopup !== "false") {
         return btn;
       }
     }
@@ -565,7 +571,8 @@ var AvalonActionable = (() => {
 
   // src/utils/combobox-input.ts
   function setNativeInputValue(input, value) {
-    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    const proto = input.tagName === "TEXTAREA" && typeof HTMLTextAreaElement !== "undefined" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
     descriptor?.set?.call(input, value);
     const view = input.ownerDocument.defaultView;
     if (view && typeof view.InputEvent !== "undefined") {
@@ -879,18 +886,20 @@ var AvalonActionable = (() => {
     const ownLabel = elementText(el) || visibleText(el) || el.getAttribute("aria-label")?.trim() || el.getAttribute("title")?.trim() || el.getAttribute("value")?.trim();
     return !ownLabel;
   }
-  function isSubmitChrome(el) {
+  function isEditorChrome(el) {
     if (el.tagName !== "BUTTON") return false;
-    const text = visibleText(el).toLowerCase();
-    return text === "apply" || text === "submit" || el.getAttribute("type") === "submit";
+    if (el.closest('[contenteditable="true"]')) return true;
+    const fieldRoot = findFieldRoot(el);
+    return Boolean(fieldRoot?.querySelector('[contenteditable="true"][role="textbox"]'));
   }
-  function isRichTextChrome(el) {
+  var SUBMIT_LIKE_TEXT = /^(submit|apply|send|finish|complete)\b|\b(application|now)$/i;
+  function isSubmitButton(el) {
     if (el.tagName !== "BUTTON") return false;
-    return Boolean(
-      el.closest(
-        '[contenteditable="true"], .ProseMirror, .rich-text-area-inner-wrapper, [class*="rich-text"]'
-      )
+    if (el.getAttribute("type") === "submit") return true;
+    const label = normalizeWhitespace(
+      elementText(el) || el.getAttribute("aria-label") || el.getAttribute("value") || ""
     );
+    return Boolean(label) && SUBMIT_LIKE_TEXT.test(label);
   }
   function seedHasOwnLabel(seed) {
     if (getComboboxInput(seed)) return "";
@@ -1042,6 +1051,50 @@ var AvalonActionable = (() => {
     }
     return content;
   }
+  function collectSectionTextByGroup(scope, groupParents) {
+    const result = /* @__PURE__ */ new Map();
+    if (groupParents.length === 0) return result;
+    const groupSet = new Set(groupParents);
+    const ordered = [...groupParents].sort(
+      (a, b) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+    );
+    const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const current = node;
+      node = walker.nextNode();
+      const text = (current.textContent ?? "").trim();
+      const host = current.parentElement;
+      if (!text || !host) continue;
+      if (host.tagName === "SCRIPT" || host.tagName === "STYLE") continue;
+      let owned = false;
+      for (let p = host; p && p !== scope; p = p.parentElement) {
+        if (groupSet.has(p) || isListboxInternalNoise(p)) {
+          owned = true;
+          break;
+        }
+      }
+      if (owned) continue;
+      const target = ordered.find(
+        (gp) => current.compareDocumentPosition(gp) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
+      if (!target) continue;
+      const prev = result.get(target);
+      result.set(target, prev ? `${prev} ${text}` : text);
+    }
+    return result;
+  }
+  function clamp(text) {
+    return text.length > MAX_GROUP_CONTENT_LENGTH ? `${text.slice(0, MAX_GROUP_CONTENT_LENGTH).trim()}\u2026` : text;
+  }
+  function mergeSectionContext(lead, base) {
+    const leadText = normalizeWhitespace(lead ?? "");
+    if (!leadText) return base;
+    if (!base) return clamp(leadText);
+    if (base.includes(leadText)) return clamp(base);
+    if (leadText.includes(base)) return clamp(leadText);
+    return clamp(`${leadText} ${base}`);
+  }
   function getFieldContextText(parent, childUnit, scope, seed, siblingChildUnits) {
     if (isScopeRoot(parent, scope)) {
       return getAccessibleName(seed) || getSectionContextText(seed) || (elementText(childUnit) || visibleText(childUnit)).replace(/\*+/g, "").trim();
@@ -1142,10 +1195,7 @@ var AvalonActionable = (() => {
         const option = getChoiceOptionLabel(input);
         if (option) return option;
         const section = getSectionContextText(seed);
-        if (section) {
-          const sentence = section.match(/I have read[^.]*\./i)?.[0] || section.match(/I (?:agree|acknowledge|understand)[^.]*\./i)?.[0] || section;
-          return sentence.length > 120 ? `${sentence.slice(0, 120).trim()}\u2026` : sentence;
-        }
+        if (section) return section.length > 120 ? `${section.slice(0, 120).trim()}\u2026` : section;
       }
       if (input.type === "file") {
         const label = fileWidgetLabel(input);
@@ -1249,8 +1299,8 @@ var AvalonActionable = (() => {
       fileInputs.add(widget.fileInput);
     }
     const raw = Array.from(root.querySelectorAll(SEED_SELECTOR)).filter((el) => {
-      if (isRichTextChrome(el)) return false;
-      if (isSubmitChrome(el)) return false;
+      if (isEditorChrome(el)) return false;
+      if (isSubmitButton(el)) return false;
       if (el.getAttribute("role") === "combobox" && el.tagName !== "INPUT") {
         const input = getComboboxInput(el);
         return input ? isRenderedSeed(input, fileInputs) : false;
@@ -1378,6 +1428,7 @@ var AvalonActionable = (() => {
       phoneFields,
       fetchOptions
     );
+    const sectionTextByGroup = collectSectionTextByGroup(scope, parentOrder);
     const groups = [];
     for (const parent of parentOrder) {
       const children = parentToChildren.get(parent) ?? [];
@@ -1400,7 +1451,7 @@ var AvalonActionable = (() => {
         );
       }
       groups.push({
-        content: getGroupContent(parent, childSet, scope),
+        content: mergeSectionContext(sectionTextByGroup.get(parent), getGroupContent(parent, childSet, scope)),
         contentHtml: stripChildrenHtml(parent, childSet),
         children: childEntries
       });

@@ -9,6 +9,7 @@ import {
   type ActionableTree,
   type ActionResult,
   type ApplyProgress,
+  type AttachedFile,
   type InjectionPlan,
   type RegisteredPayload,
   type RemoteAction,
@@ -20,6 +21,41 @@ import { buildApplyInjectionPlanPayload } from "../avalon/ai/apply-injection-pla
 import { buildFormInjectionPlan } from "../avalon/ai/generate-injection-plan";
 import type { FieldActionPlan, FormAnalysisResult } from "../avalon/ai/types";
 import { avalonRelayUrl } from "../../../services/agentApi";
+import { applyToJob, fetchJobDescription, generateJobResume } from "../../../api/jobs";
+import { requestVerificationCode } from "../../../api/mail";
+import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
+import { generateRecoveryScript } from "../avalon/ai/recover-apply";
+
+/** Max self-healing retries for a single failed apply (per Phase C). */
+const MAX_RECOVERY_ATTEMPTS = 10;
+
+/**
+ * Generic cues that a page is asking for an emailed verification / one-time code
+ * (Phase D). Language-based only — no sender/vendor strings, per Guide.md.
+ */
+const VERIFICATION_CUE =
+  /\b(verification code|verify your (email|identity)|one[- ]?time (code|password|passcode)|enter the code|check your (email|inbox)|we (sent|emailed|texted) you a code|confirmation code|security code|otp\b|passcode|6[- ]digit|4[- ]digit)\b/i;
+
+interface StepRunResult {
+  id: string;
+  label: string;
+  op: string;
+  ok: boolean;
+  error?: string;
+}
+
+/** A generated per-job résumé held for attach + preview. */
+export interface JobResume {
+  jobId: string;
+  file: AttachedFile;
+  reused: boolean;
+  generationId: string | null;
+}
+
+/** Manual/link-only jobs have no Mongo id or JD, so no tailored résumé is generated. */
+function isManualJob(job: QueuedJob): boolean {
+  return job.source === "manual" || job.id.startsWith("manual:");
+}
 
 export interface AvalonLogEntry {
   id: string;
@@ -36,7 +72,7 @@ export interface QueuedJob {
   source: string;
 }
 
-export function useAvalonRelay(applicantContext: string) {
+export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [serverUrl, setServerUrl] = useState(() => avalonRelayUrl());
   const [sessionId, setSessionId] = useState("");
   const [connected, setConnected] = useState(false);
@@ -44,7 +80,9 @@ export function useAvalonRelay(applicantContext: string) {
   const [peers, setPeers] = useState({ extension: false, controller: false });
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [selectedTabId, setSelectedTabId] = useState<number | "">("");
-  const [probeComboboxes, setProbeComboboxes] = useState(false);
+  // Combobox option probing is always on — it's what makes Greenhouse/Ashby
+  // dropdowns fillable, and the small extra scan time is worth it on every site.
+  const probeComboboxes = true;
   const [logs, setLogs] = useState<AvalonLogEntry[]>([]);
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [actionableTree, setActionableTree] = useState<ActionableTree | null>(null);
@@ -60,6 +98,9 @@ export function useAvalonRelay(applicantContext: string) {
   const [activeJobIndex, setActiveJobIndex] = useState(0);
   const [applyPhase, setApplyPhase] = useState<ApplyProgress | null>(null);
   const [monitorMode, setMonitorMode] = useState<"webrtc" | "screenshot">("screenshot");
+  const [appliedJobIds, setAppliedJobIds] = useState<Set<string>>(new Set());
+  const [resumesByJobId, setResumesByJobId] = useState<Record<string, JobResume>>({});
+  const [resumeJobId, setResumeJobId] = useState<string | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
   const applyingRef = useRef(false);
@@ -447,9 +488,215 @@ export function useAvalonRelay(applicantContext: string) {
     [pushLog],
   );
 
+  /** Read the post-submit page (innerText + remaining control count) via execute_script. */
+  const readApplyPageState = useCallback(
+    async (tabId: number, submitted: boolean) => {
+      try {
+        const res = await emitActionAsync(
+          {
+            id: createActionId(),
+            tabId,
+            action: "execute_script",
+            payload: {
+              source:
+                "const c=document.querySelectorAll('input:not([type=hidden]):not([disabled]),textarea,select,[contenteditable=\"true\"]');return {text:(document.body.innerText||'').slice(0,4000),controlCount:c.length};",
+            },
+          },
+          15000,
+        );
+        const data = (res.data as { text?: string; controlCount?: number } | undefined) ?? {};
+        return { text: data.text ?? "", controlCount: data.controlCount ?? 0, submitted };
+      } catch {
+        return { text: "", controlCount: 0, submitted };
+      }
+    },
+    [emitActionAsync],
+  );
+
+  /** Mark a (non-manual) queued job Applied in the pipeline and badge it locally. */
+  const markJobApplied = useCallback(
+    async (job: QueuedJob) => {
+      setAppliedJobIds((prev) => new Set(prev).add(job.id));
+      if (job.source === "manual" || job.id.startsWith("manual:") || !applierName) return;
+      try {
+        await applyToJob(job.id, applierName);
+      } catch (error) {
+        pushLog(`Could not mark "${job.title}" applied: ${error instanceof Error ? error.message : error}`, false);
+      }
+    },
+    [applierName, pushLog],
+  );
+
+  /** Re-scan the page's actionable tree (probing on) for the recovery loop. */
+  const rescanTree = useCallback(
+    async (tabId: number): Promise<ActionableTree | null> => {
+      try {
+        const res = await emitActionAsync(
+          {
+            id: createActionId(),
+            tabId,
+            action: "fetch_actionable_tree",
+            payload: { probeComboboxes },
+          },
+          60000,
+        );
+        const data = res.data as { tree?: ActionableTree } | undefined;
+        return data?.tree ?? null;
+      } catch {
+        return null;
+      }
+    },
+    [emitActionAsync, probeComboboxes],
+  );
+
+  /**
+   * Phase C — self-healing retry. When an apply doesn't confirm, hand the AI the
+   * live DOM + previous plan + failures; it authors an `execute_script` recovery
+   * snippet (which also clicks Submit). Re-read + re-classify each round, up to 10×.
+   * Returns true if the application was confirmed and marked Applied.
+   */
+  const runRecoveryLoop = useCallback(
+    async (params: {
+      tabId: number;
+      job: QueuedJob;
+      planSteps: InjectionPlan["steps"];
+      firstState: ApplyPageState;
+      firstReason: string;
+      firstResults?: StepRunResult[];
+    }): Promise<boolean> => {
+      const { tabId, job, planSteps } = params;
+      let state = params.firstState;
+      let reason = params.firstReason;
+      let lastResults: StepRunResult[] = params.firstResults ?? [];
+
+      for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {
+        setApplyPhase({
+          phase: "fields",
+          message: `Self-healing attempt ${attempt}/${MAX_RECOVERY_ATTEMPTS} — ${reason}`,
+          at: Date.now(),
+        });
+
+        const tree = await rescanTree(tabId);
+        if (!tree) {
+          pushLog(`Recovery ${attempt}: could not re-scan the page`, false);
+          break;
+        }
+
+        // Phase D — if the page is asking for an emailed code, pull the latest
+        // one from the applier's inbox (IMAP) so the recovery script can fill it.
+        let otpCode: string | null = null;
+        if (applierName && VERIFICATION_CUE.test(state.text)) {
+          pushLog(`Recovery ${attempt}: verification code requested — checking email…`, true);
+          const otp = await requestVerificationCode(applierName);
+          otpCode = otp.code;
+          pushLog(
+            otpCode ? `Recovery ${attempt}: got code from email` : `Recovery ${attempt}: no code found in email yet`,
+            Boolean(otpCode),
+          );
+        }
+
+        let recovery;
+        try {
+          recovery = await generateRecoveryScript({
+            jobTitle: job.title,
+            pageUrl: job.url,
+            pageText: state.text,
+            outcomeReason: reason,
+            previousPlan: planSteps.map((s) => ({ id: s.id, label: s.label, op: s.op, value: s.value })),
+            stepResults: lastResults,
+            tree,
+            attempt,
+            maxAttempts: MAX_RECOVERY_ATTEMPTS,
+            applicantContext: applicantContext || undefined,
+            otpCode,
+          });
+        } catch (error) {
+          pushLog(`Recovery ${attempt}: AI failed — ${error instanceof Error ? error.message : error}`, false);
+          continue;
+        }
+
+        if (recovery.reasoning) pushLog(`Recovery ${attempt}: ${recovery.reasoning}`, true);
+
+        try {
+          const scriptRes = await emitActionAsync(
+            {
+              id: createActionId(),
+              tabId,
+              action: "execute_script",
+              payload: { source: recovery.script },
+            },
+            60000,
+          );
+          if (!scriptRes.success) {
+            pushLog(`Recovery ${attempt}: script error — ${scriptRes.error}`, false);
+          }
+        } catch (error) {
+          pushLog(`Recovery ${attempt}: script threw — ${error instanceof Error ? error.message : error}`, false);
+        }
+
+        // Give the page a moment to react/navigate, then re-read + re-classify.
+        await emitActionAsync({ id: createActionId(), tabId, action: "wait", payload: { ms: 1500 } }).catch(() => {});
+        state = await readApplyPageState(tabId, true);
+        lastResults = [];
+        const outcome = classifyApplyOutcome(state);
+        if (outcome.applied) {
+          pushLog(`"${job.title}" recovered on attempt ${attempt} — ${outcome.reason}`, true);
+          await markJobApplied(job);
+          return true;
+        }
+        reason = outcome.reason;
+      }
+
+      pushLog(`"${job.title}" still unconfirmed after ${MAX_RECOVERY_ATTEMPTS} recovery attempts`, false);
+      return false;
+    },
+    [applicantContext, applierName, emitActionAsync, markJobApplied, pushLog, readApplyPageState, rescanTree],
+  );
+
+  /**
+   * Generate (or reuse) a per-job résumé tailored to the JD and cache it for
+   * attach + preview. Returns null for manual/link-only jobs or on any failure —
+   * the executor then falls back to the bundled default résumé.
+   */
+  const ensureJobResume = useCallback(
+    async (job: QueuedJob): Promise<AttachedFile | null> => {
+      if (!applierName || isManualJob(job)) return null;
+      const cached = resumesByJobId[job.id];
+      if (cached) {
+        setResumeJobId(job.id);
+        return cached.file;
+      }
+      try {
+        const jd = await fetchJobDescription(job.id);
+        if (!jd) {
+          pushLog(`No job description for "${job.title}" — using default résumé`, false);
+          return null;
+        }
+        pushLog(`Generating tailored résumé for "${job.title}"…`, true);
+        const gen = await generateJobResume({ applierName, jobId: job.id, jobDescription: jd });
+        const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
+        setResumesByJobId((prev) => ({
+          ...prev,
+          [job.id]: { jobId: job.id, file, reused: gen.reused, generationId: gen.generationId },
+        }));
+        setResumeJobId(job.id);
+        pushLog(`Résumé ${gen.reused ? "reused" : "generated"} for "${job.title}"`, true);
+        return file;
+      } catch (error) {
+        pushLog(
+          `Résumé generation failed for "${job.title}" — using default résumé: ${error instanceof Error ? error.message : error}`,
+          false,
+        );
+        return null;
+      }
+    },
+    [applierName, pushLog, resumesByJobId],
+  );
+
   /**
    * Drive one job end-to-end: open a fresh tab, wait for load, scan the form,
-   * analyze with the AI, then fill — stopping BEFORE submit for manual review.
+   * analyze with the AI, generate a tailored résumé, fill, auto-submit, then
+   * confirm + mark Applied.
    */
   const applyJob = useCallback(
     async (job: QueuedJob) => {
@@ -459,6 +706,9 @@ export function useAvalonRelay(applicantContext: string) {
       }
       setApplying(true);
       applyingRef.current = true;
+      // Start résumé generation immediately so the LLM round-trip overlaps the
+      // tab open + scan + analyze rather than blocking before submit.
+      const resumePromise = ensureJobResume(job);
       try {
         pushLog(`Applying to "${job.title}"…`, true);
         const opened = await emitActionAsync({
@@ -496,8 +746,12 @@ export function useAvalonRelay(applicantContext: string) {
         setGeneratedScript(built.preview);
         if (!built.plan.steps.length) throw new Error("Plan has no fillable steps");
 
-        // autoSubmit:false → executor fills everything but stops before the submit click.
-        const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, { autoSubmit: false });
+        // Wait for the tailored résumé (started in parallel above) so the file
+        // step uploads the AI-generated PDF; null falls back to the bundled one.
+        const resumeFile = (await resumePromise) ?? undefined;
+
+        // Fill everything, then auto-submit (5s countdown handled in the executor).
+        const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, { autoSubmit: true, resumeFile });
         const applyRes = await emitActionAsync(
           {
             id: createActionId(),
@@ -508,7 +762,41 @@ export function useAvalonRelay(applicantContext: string) {
           180000,
         );
         if (!applyRes.success) throw new Error(applyRes.error || "Apply failed");
-        pushLog(`Filled "${job.title}" — paused before submit for your review`, true);
+        const applyData = applyRes.data as
+          | { submitted?: boolean; result?: StepRunResult[]; filesFound?: number; filesAttached?: number }
+          | undefined;
+        const submitted = Boolean(applyData?.submitted);
+        const firstResults = Array.isArray(applyData?.result) ? applyData!.result : [];
+
+        // Make the résumé-upload outcome explicit — the #1 silent failure.
+        const filesFound = applyData?.filesFound ?? 0;
+        const filesAttached = applyData?.filesAttached ?? 0;
+        if (resumeFile) {
+          if (filesFound === 0) {
+            pushLog(`⚠ Résumé not uploaded — no file field found on "${job.title}"`, false);
+          } else {
+            pushLog(`Résumé uploaded to ${filesAttached}/${filesFound} field(s)`, filesAttached > 0);
+          }
+        }
+
+        // Read the post-submit page and decide success vs needs-retry.
+        const pageState = await readApplyPageState(tabId, submitted);
+        const outcome = classifyApplyOutcome(pageState);
+        if (outcome.applied) {
+          pushLog(`"${job.title}" applied — ${outcome.reason}`, true);
+          await markJobApplied(job);
+        } else {
+          // Phase C — hand off to the self-healing retry loop (up to 10×).
+          pushLog(`"${job.title}" not confirmed — ${outcome.reason}; starting self-healing`, false);
+          await runRecoveryLoop({
+            tabId,
+            job,
+            planSteps: built.plan.steps,
+            firstState: pageState,
+            firstReason: outcome.reason,
+            firstResults,
+          });
+        }
       } catch (error) {
         pushLog(error instanceof Error ? error.message : "Apply failed", false);
       } finally {
@@ -517,10 +805,10 @@ export function useAvalonRelay(applicantContext: string) {
         applyingRef.current = false;
       }
     },
-    [applicantContext, canExecute, emitActionAsync, executeDisabledReason, probeComboboxes, pushLog],
+    [applicantContext, canExecute, emitActionAsync, ensureJobResume, executeDisabledReason, markJobApplied, probeComboboxes, pushLog, readApplyPageState, runRecoveryLoop],
   );
 
-  /** Apply every queued job in sequence (each opens its own tab; none auto-submits). */
+  /** Apply every queued job in sequence — each opens its own tab and auto-submits. */
   const applyQueue = useCallback(async () => {
     if (!jobQueue.length) {
       pushLog("Queue is empty — add jobs first", false);
@@ -530,7 +818,7 @@ export function useAvalonRelay(applicantContext: string) {
       setActiveJobIndex(i);
       await applyJob(jobQueue[i]);
     }
-    pushLog(`Queue complete · ${jobQueue.length} job(s) filled (awaiting your review)`, true);
+    pushLog(`Queue complete · ${jobQueue.length} job(s) processed`, true);
   }, [applyJob, jobQueue, pushLog]);
 
   return {
@@ -544,8 +832,6 @@ export function useAvalonRelay(applicantContext: string) {
     tabs,
     selectedTabId,
     setSelectedTabId,
-    probeComboboxes,
-    setProbeComboboxes,
     logs,
     screenshot,
     actionableTree,
@@ -564,6 +850,9 @@ export function useAvalonRelay(applicantContext: string) {
     jobQueue,
     activeJobIndex,
     setActiveJobIndex,
+    appliedJobIds,
+    resumesByJobId,
+    activeResume: resumeJobId ? resumesByJobId[resumeJobId] ?? null : null,
     applyPhase,
     monitorMode,
     setMonitorMode,

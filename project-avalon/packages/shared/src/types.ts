@@ -143,6 +143,19 @@ export interface ApplyInjectionPlanPayload {
   autoSubmit?: boolean;
   /** Delay before the auto-submit click, surfaced as a countdown. Defaults to 5000ms. */
   submitDelayMs?: number;
+  /**
+   * Résumé bytes to attach for any `attachFile` step. When present, the executor
+   * uploads these instead of the bundled default résumé — this is how the per-job
+   * AI-generated résumé is delivered.
+   */
+  resumeFile?: AttachedFile;
+}
+
+/** A file delivered inline (base64) for attachFile steps. */
+export interface AttachedFile {
+  name: string;
+  mimeType: string;
+  base64: string;
 }
 
 export interface RemoteAction {

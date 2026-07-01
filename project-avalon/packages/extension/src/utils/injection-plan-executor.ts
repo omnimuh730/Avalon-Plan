@@ -2,6 +2,7 @@ import {
   type ApplyInjectionPlanPayload,
   type ActionResult,
   type ApplyProgress,
+  type AttachedFile,
   type InjectionPlan,
 } from '@avalon/shared';
 import { EXTENSION_MESSAGES } from './constants';
@@ -9,6 +10,8 @@ import { ensureContentScript } from './tab-messages';
 import { FILE_TARGET_ATTR, type InjectionPlanRunResult } from './injection-plan-runner';
 
 const DEFAULT_SUBMIT_DELAY_MS = 5000;
+/** After the résumé bytes are set, give async uploaders (S3 dropzones) time to finish. */
+const FILE_SETTLE_MS = 2500;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -73,14 +76,19 @@ function attachFilesInMainWorld(attr: string, base64: string, name: string, mime
   return attached;
 }
 
-/** Set files on the content-script-tagged inputs from the MAIN world. */
-async function attachTaggedFiles(tabId: number): Promise<number> {
-  const base64 = await readDefaultFileBase64();
+/**
+ * Set files on the content-script-tagged inputs from the MAIN world. Uploads the
+ * per-job résumé bytes when provided (the AI-generated PDF), else the bundled default.
+ */
+async function attachTaggedFiles(tabId: number, resume?: AttachedFile): Promise<number> {
+  const base64 = resume?.base64 ?? (await readDefaultFileBase64());
+  const name = resume?.name || DEFAULT_FILE;
+  const mime = resume?.mimeType || DEFAULT_FILE_MIME;
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
     func: attachFilesInMainWorld,
-    args: [FILE_TARGET_ATTR, base64, DEFAULT_FILE, DEFAULT_FILE_MIME],
+    args: [FILE_TARGET_ATTR, base64, name, mime],
   });
   return typeof injection?.result === 'number' ? injection.result : 0;
 }
@@ -104,32 +112,56 @@ export async function executeInjectionPlan(
   const totalSteps = steps.length;
   let applied = 0;
   let failed = 0;
+  let filesFound = 0;
+  let filesAttached = 0;
   const results: InjectionPlanRunResult['results'] = [];
+  const resumeName = payload.resumeFile?.name ?? DEFAULT_FILE;
 
   // --- Phase 1: file uploads (top priority — run first and wait for completion).
   if (fileSteps.length > 0) {
-    emit({ phase: 'files', message: `Uploading ${fileSteps.length} file(s)…`, appliedSteps: 0, totalSteps });
+    emit({ phase: 'files', message: `Attaching résumé (${resumeName})…`, appliedSteps: 0, totalSteps });
     const fileRun = await runPlanInTab(tabId, { steps: fileSteps });
     results.push(...fileRun.results);
     applied += fileRun.applied;
     failed += fileRun.failed;
+    filesFound = fileRun.fileTargets.length;
 
     // The isolated content world can't assign `input.files`; the background sets
     // the bytes in the page's MAIN world. We await it, so the upload is fully
     // committed before any other field is touched.
     let fileFailed = 0;
-    if (fileRun.fileTargets.length > 0) {
-      const attached = await attachTaggedFiles(tabId);
-      fileFailed = fileRun.fileTargets.length - attached;
+    if (filesFound > 0) {
+      filesAttached = await attachTaggedFiles(tabId, payload.resumeFile);
+      fileFailed = filesFound - filesAttached;
       failed += fileFailed;
+      // Async dropzones (Greenhouse/Ashby upload to S3) need a moment; submitting
+      // before the upload settles is a common "résumé missing" failure.
+      emit({
+        phase: 'files',
+        message: `Résumé set on ${filesAttached}/${filesFound} input(s) — waiting for upload…`,
+        appliedSteps: applied,
+        totalSteps,
+      });
+      await sleep(FILE_SETTLE_MS);
     }
     emit({
-      phase: 'files',
+      phase: fileFailed > 0 || filesFound === 0 ? 'error' : 'files',
       message:
-        fileFailed > 0
-          ? `Files uploaded with ${fileFailed} failure(s)`
-          : 'Files uploaded',
+        filesFound === 0
+          ? 'Plan expected a résumé field but none was found on the page'
+          : fileFailed > 0
+            ? `Résumé attach failed on ${fileFailed}/${filesFound} input(s)`
+            : `Résumé attached (${resumeName})`,
       appliedSteps: applied,
+      totalSteps,
+    });
+  } else {
+    // No attachFile step at all — the résumé will NOT be uploaded. Surface it
+    // loudly; a silent skip reads as "resume not uploaded" with no explanation.
+    emit({
+      phase: 'error',
+      message: 'No résumé/file field detected on this form — résumé was NOT uploaded',
+      appliedSteps: 0,
       totalSteps,
     });
   }
@@ -179,5 +211,7 @@ export async function executeInjectionPlan(
     failed,
     result: results,
     submitted,
+    filesFound,
+    filesAttached,
   };
 }
