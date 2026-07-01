@@ -8,7 +8,6 @@ import {
   type RemoteAction,
   type RegisteredPayload,
   type TabInfo,
-  type WebRtcSignal,
 } from '@avalon/shared';
 import { io, type Socket } from 'socket.io-client';
 import { executeInjectionPlan } from './injection-plan-executor';
@@ -22,7 +21,6 @@ import { ensureContentScript, runActionInTab } from './tab-messages';
 
 let socket: Socket | null = null;
 let tabListenersBound = false;
-let webrtcBridgeBound = false;
 let currentSessionId: string = DEFAULT_SESSION_ID;
 
 function emitApplyProgress(progress: Omit<ApplyProgress, 'at' | 'sessionId'>) {
@@ -34,145 +32,6 @@ function emitApplyProgress(progress: Omit<ApplyProgress, 'at' | 'sessionId'>) {
   } satisfies ApplyProgress);
 }
 
-// --- WebRTC live tab view bridge (relay ↔ offscreen capturer) -----------------
-
-const OFFSCREEN_PATH = 'offscreen.html';
-
-interface ArmedCapture {
-  tabId: number;
-  streamId: string;
-  armedAt: number;
-}
-
-let armedCapture: ArmedCapture | null = null;
-const ARM_TTL_MS = 120_000;
-
-async function ensureOffscreenDocument(): Promise<void> {
-  // chrome.offscreen is only present in MV3 Chromium.
-  const offscreen = (chrome as unknown as { offscreen?: typeof chrome.offscreen }).offscreen;
-  if (!offscreen) throw new Error('offscreen API unavailable');
-  const has = await offscreen.hasDocument?.();
-  if (has) return;
-  await offscreen.createDocument({
-    url: OFFSCREEN_PATH,
-    reasons: ['USER_MEDIA' as chrome.offscreen.Reason],
-    justification: 'Stream the active tab to the Avalon controller (live view).',
-  });
-}
-
-async function getMediaStreamIdForTab(tabId: number): Promise<string> {
-  await focusTab(tabId);
-  const tabCapture = (chrome as unknown as { tabCapture?: typeof chrome.tabCapture }).tabCapture;
-  if (!tabCapture?.getMediaStreamId) throw new Error('tabCapture unavailable');
-  return new Promise<string>((resolve, reject) => {
-    tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) =>
-      chrome.runtime.lastError || !id
-        ? reject(new Error(chrome.runtime.lastError?.message ?? 'Could not get tab stream'))
-        : resolve(id),
-    );
-  });
-}
-
-function getArmedCapture(tabId: number): ArmedCapture | null {
-  if (!armedCapture) return null;
-  if (Date.now() - armedCapture.armedAt > ARM_TTL_MS) {
-    armedCapture = null;
-    return null;
-  }
-  return armedCapture.tabId === tabId ? armedCapture : null;
-}
-
-/**
- * Store a stream id obtained in the side panel (user gesture) and start offscreen WebRTC.
- */
-export async function setArmedLiveCapture(tabId: number, streamId: string): Promise<void> {
-  await ensureOffscreenDocument();
-  armedCapture = { tabId, streamId, armedAt: Date.now() };
-  await chrome.runtime.sendMessage({ type: EXTENSION_MESSAGES.WEBRTC_START, streamId });
-}
-
-/**
- * @deprecated Prefer setArmedLiveCapture from the side panel click handler.
- */
-export async function armLiveCapture(tabId?: number): Promise<number> {
-  await ensureOffscreenDocument();
-  const resolved =
-    typeof tabId === 'number'
-      ? tabId
-      : (await browser.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
-  if (!resolved) throw new Error('No tab to capture');
-  const streamId = await getMediaStreamIdForTab(resolved);
-  await setArmedLiveCapture(resolved, streamId);
-  return resolved;
-}
-
-export function getLiveCaptureStatus(tabId?: number): { armed: boolean; tabId?: number } {
-  if (typeof tabId !== 'number') {
-    return { armed: armedCapture != null && Date.now() - armedCapture.armedAt <= ARM_TTL_MS, tabId: armedCapture?.tabId };
-  }
-  const armed = getArmedCapture(tabId);
-  return { armed: Boolean(armed), tabId: armed?.tabId };
-}
-
-/** Handle a signaling message arriving from the viewer (controller) over the socket. */
-async function handleWebRtcSignalFromViewer(signal: WebRtcSignal): Promise<void> {
-  try {
-    if (signal.kind === 'request') {
-      const tabId =
-        typeof signal.tabId === 'number'
-          ? signal.tabId
-          : (await browser.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
-      if (!tabId) throw new Error('No tab to capture');
-      const armed = getArmedCapture(tabId);
-      if (!armed) {
-        throw new Error(
-          'Extension has not been invoked for the current page (see activeTab permission). Open the Avalon side panel on the job tab and click Start live view.',
-        );
-      }
-      await ensureOffscreenDocument();
-      await chrome.runtime.sendMessage({ type: EXTENSION_MESSAGES.WEBRTC_START, streamId: armed.streamId });
-      return;
-    }
-    if (signal.kind === 'stop') {
-      armedCapture = null;
-      await chrome.runtime.sendMessage({ type: EXTENSION_MESSAGES.WEBRTC_STOP }).catch(() => {});
-      return;
-    }
-    // answer / ice from the viewer → forward into the offscreen peer.
-    await chrome.runtime
-      .sendMessage({
-        type: EXTENSION_MESSAGES.WEBRTC_TO_OFFSCREEN,
-        payload: { kind: signal.kind, data: signal.data },
-      })
-      .catch(() => {});
-  } catch (error) {
-    console.error('[Avalon] webrtc signal failed', error);
-    // Tell the viewer instead of leaving it stuck on "connecting".
-    socket?.emit(SOCKET_EVENTS.WEBRTC_SIGNAL, {
-      sessionId: currentSessionId,
-      kind: 'error',
-      message: error instanceof Error ? error.message : String(error),
-    } satisfies WebRtcSignal);
-  }
-}
-
-/** Bind the offscreen→background message bridge once: forward offer/ice to the viewer. */
-function bindWebRtcBridge(): void {
-  if (webrtcBridgeBound) return;
-  webrtcBridgeBound = true;
-  chrome.runtime.onMessage.addListener(
-    (message: { type?: string; payload?: { kind: WebRtcSignal['kind']; data?: unknown; message?: string } }) => {
-      if (message?.type !== EXTENSION_MESSAGES.WEBRTC_FROM_OFFSCREEN || !message.payload) return;
-      if (!socket?.connected) return;
-      socket.emit(SOCKET_EVENTS.WEBRTC_SIGNAL, {
-        sessionId: currentSessionId,
-        kind: message.payload.kind,
-        data: message.payload.data,
-        message: message.payload.message,
-      } satisfies WebRtcSignal);
-    },
-  );
-}
 
 function bindTabListeners() {
   if (tabListenersBound) return;
@@ -291,10 +150,88 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
     return { actionId: action.id, success: true, data: { reloaded: true } };
   }
 
+  if (action.action === 'close_tab') {
+    try {
+      await browser.tabs.remove(tabId);
+    } catch {
+      /* tab may already be gone */
+    }
+    return { actionId: action.id, success: true, data: { closed: true } };
+  }
+
   if (action.action === 'screenshot') {
     await focusTab(tabId);
     const dataUrl = await browser.tabs.captureVisibleTab(undefined, { format: 'png' });
     return { actionId: action.id, success: true, data: { dataUrl } };
+  }
+
+  // execute_script handled here (not via content script) to bypass page CSP.
+  // new Function() in the service worker is not subject to the page's CSP;
+  // chrome.scripting.executeScript injects the serialized function at the
+  // browser level, which also bypasses the page's CSP 'unsafe-eval' restriction.
+  if (action.action === 'execute_script') {
+    await focusTab(tabId);
+    const source = String(action.payload?.source ?? 'true');
+    let fn: Function;
+    try {
+      fn = new Function(source);
+    } catch (error) {
+      return {
+        actionId: action.id,
+        success: false,
+        error: `Script compilation failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: fn as () => unknown,
+      });
+      return {
+        actionId: action.id,
+        success: true,
+        data: { result: results[0]?.result },
+      };
+    } catch (error) {
+      return {
+        actionId: action.id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  // read_page_state is a CSP-safe replacement for reading page text via
+  // execute_script. It uses a hardcoded function (no eval needed) injected
+  // via chrome.scripting.executeScript, so it works on pages that block
+  // 'unsafe-eval' in their CSP (e.g. Greenhouse).
+  if (action.action === 'read_page_state') {
+    await focusTab(tabId);
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const controls = document.querySelectorAll(
+            'input:not([type=hidden]):not([disabled]),textarea,select,[contenteditable="true"]',
+          );
+          return {
+            text: (document.body?.innerText ?? '').slice(0, 6000),
+            controlCount: controls.length,
+          };
+        },
+      });
+      return {
+        actionId: action.id,
+        success: true,
+        data: results[0]?.result ?? { text: '', controlCount: 0 },
+      };
+    } catch (error) {
+      return {
+        actionId: action.id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   if (action.action === 'fetch_actionable_tree') {
@@ -360,7 +297,6 @@ export async function connectRelay(
   socket?.disconnect();
   socket = io(serverUrl, { transports: ['websocket', 'polling'] });
   bindTabListeners();
-  bindWebRtcBridge();
 
   socket.on('connect', () => {
     socket?.emit(
@@ -383,9 +319,6 @@ export async function connectRelay(
     socket?.emit(SOCKET_EVENTS.ACTION_RESULT, result);
   });
 
-  socket.on(SOCKET_EVENTS.WEBRTC_SIGNAL, (signal: WebRtcSignal) => {
-    void handleWebRtcSignalFromViewer(signal);
-  });
 
   socket.on(SOCKET_EVENTS.REQUEST_TABS, async () => {
     const tabs = await collectTabs();

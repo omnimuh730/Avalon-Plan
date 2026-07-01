@@ -25,6 +25,14 @@ import { applyToJob, fetchJobDescription, generateJobResume } from "../../../api
 import { requestVerificationCode } from "../../../api/mail";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
+import { verifyApplyOutcome, type ApplyVerifyResult } from "../avalon/ai/verify-apply";
+import { validateJobPage, type PageValidityResult } from "../avalon/ai/validate-page";
+import { postApplyLog, type ApplyLogEvent } from "../../../api/avalonLog";
+
+/** Short unique id for one apply run (used to correlate the debug log file + Mongo doc). */
+function newRunId(): string {
+  return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
 /** Max self-healing retries for a single failed apply (per Phase C). */
 const MAX_RECOVERY_ATTEMPTS = 10;
@@ -42,6 +50,18 @@ interface StepRunResult {
   op: string;
   ok: boolean;
   error?: string;
+}
+
+/**
+ * Result of the manual "Verify result" step (pipeline step 6). Three outcomes:
+ *  - success:    the application was submitted/received.
+ *  - failed:     rejected or unconfirmed — `reason` explains why.
+ *  - additional: an extra step is required (OTP / email verification code / link).
+ */
+export interface ManualVerifyResult {
+  kind: "success" | "failed" | "additional";
+  reason: string;
+  detail?: string;
 }
 
 /** A generated per-job résumé held for attach + preview. */
@@ -98,18 +118,23 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [jobQueue, setJobQueue] = useState<QueuedJob[]>([]);
   const [activeJobIndex, setActiveJobIndex] = useState(0);
   const [applyPhase, setApplyPhase] = useState<ApplyProgress | null>(null);
-  const [monitorMode, setMonitorMode] = useState<"webrtc" | "screenshot">("screenshot");
   const [appliedJobIds, setAppliedJobIds] = useState<Set<string>>(new Set());
   const [resumesByJobId, setResumesByJobId] = useState<Record<string, JobResume>>({});
   const [resumeJobId, setResumeJobId] = useState<string | null>(null);
   const [generatingResume, setGeneratingResume] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const [verifyResult, setVerifyResult] = useState<ManualVerifyResult | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
-  const [relaySocket, setRelaySocket] = useState<Socket | null>(null);
   const applyingRef = useRef(false);
   const pendingActionsRef = useRef<Map<string, (result: ActionResult) => void>>(new Map());
   const resumeGenByJobIdRef = useRef<Map<string, Promise<AttachedFile>>>(new Map());
+  // Debug run-logging: current run id, its job, a buffered event list + flush timer.
+  const runIdRef = useRef<string | null>(null);
+  const runJobRef = useRef<QueuedJob | null>(null);
+  const runEventsRef = useRef<ApplyLogEvent[]>([]);
+  const runFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef(sessionId);
   const selectedTabIdRef = useRef(selectedTabId);
   const jobQueueRef = useRef(jobQueue);
@@ -126,17 +151,101 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       ? `Extension not on session "${sessionId || DEFAULT_SESSION_ID}". Install the Avalon extension and match the session ID.`
       : null;
 
-  const pushLog = useCallback((message: string, success?: boolean) => {
-    setLogs((prev) => [
-      {
-        id: `${Date.now()}_${Math.random()}`,
-        at: new Date().toLocaleTimeString(),
-        message,
-        success,
-      },
-      ...prev.slice(0, 49),
-    ]);
-  }, []);
+  /** Flush buffered run-log events to the backend (local JSONL + Mongo). */
+  const flushRunLog = useCallback(
+    (extra?: { status?: string; finished?: boolean }) => {
+      const runId = runIdRef.current;
+      if (!runId) return;
+      const events = runEventsRef.current.splice(0);
+      if (!events.length && !extra?.status && !extra?.finished) return;
+      void postApplyLog({
+        runId,
+        applierName: applierName || undefined,
+        job: runJobRef.current ?? undefined,
+        events,
+        ...extra,
+      });
+    },
+    [applierName],
+  );
+
+  const scheduleRunFlush = useCallback(() => {
+    if (runFlushTimerRef.current) return;
+    runFlushTimerRef.current = setTimeout(() => {
+      runFlushTimerRef.current = null;
+      flushRunLog();
+    }, 800);
+  }, [flushRunLog]);
+
+  const pushLog = useCallback(
+    (message: string, success?: boolean) => {
+      setLogs((prev) => [
+        {
+          id: `${Date.now()}_${Math.random()}`,
+          at: new Date().toLocaleTimeString(),
+          message,
+          success,
+        },
+        ...prev.slice(0, 49),
+      ]);
+      // Mirror every UI log line into the active run's debug log.
+      if (runIdRef.current) {
+        runEventsRef.current.push({
+          at: new Date().toISOString(),
+          level: success === false ? "error" : success === true ? "success" : "info",
+          message,
+        });
+        scheduleRunFlush();
+      }
+    },
+    [scheduleRunFlush],
+  );
+
+  /** Begin a new debug run (starts a JSONL file + Mongo doc via the meta event). */
+  const startRunLog = useCallback(
+    (job: QueuedJob, meta: Record<string, unknown>) => {
+      const runId = newRunId();
+      runIdRef.current = runId;
+      runJobRef.current = job;
+      runEventsRef.current = [];
+      void postApplyLog({
+        runId,
+        applierName: applierName || undefined,
+        job,
+        meta: { startedAt: new Date().toISOString(), ...meta },
+        status: "running",
+      });
+      return runId;
+    },
+    [applierName],
+  );
+
+  /** Log a structured, data-rich event to the active run (no UI line). */
+  const logRunData = useCallback(
+    (phase: string, data: unknown, message?: string) => {
+      if (!runIdRef.current) return;
+      runEventsRef.current.push({
+        at: new Date().toISOString(),
+        level: "info",
+        phase,
+        message: message ?? `[${phase}]`,
+        data,
+      });
+      scheduleRunFlush();
+    },
+    [scheduleRunFlush],
+  );
+
+  /** Close out the current debug run and flush everything. */
+  const endRunLog = useCallback(
+    (status: string) => {
+      if (!runIdRef.current) return;
+      flushRunLog({ status, finished: true });
+      runIdRef.current = null;
+      runJobRef.current = null;
+    },
+    [flushRunLog],
+  );
 
   const emitAction = useCallback(
     (remoteAction: RemoteAction) => {
@@ -160,7 +269,6 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       reconnectionDelay: 1000,
     });
     socketRef.current = next;
-    setRelaySocket(next);
 
     next.on("connect", () => {
       setConnected(true);
@@ -179,7 +287,6 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
 
     next.on("disconnect", (reason) => {
       setConnected(false);
-      setRelaySocket(null);
       setPeers({ extension: false, controller: false });
       if (reason !== "io client disconnect") {
         pushLog(`Disconnected (${reason})`);
@@ -291,7 +398,6 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     return () => {
       socketRef.current?.removeAllListeners();
       socketRef.current?.disconnect();
-      setRelaySocket(null);
     };
   }, [connect]);
 
@@ -703,6 +809,67 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   ]);
 
   /** Open the active queue job URL in a new browser tab (step 2 — after résumé preview). */
+  /** Close a tab (best-effort) via the extension. */
+  const closeTab = useCallback(
+    async (tabId: number) => {
+      await emitActionAsync({ id: createActionId(), tabId, action: "close_tab", payload: {} }, 10000).catch(() => {});
+    },
+    [emitActionAsync],
+  );
+
+  /**
+   * Validity gate — after a job tab is opened, read the page + scan its structure
+   * and let the AI decide whether it's a live application form. Returns the scanned
+   * tree/page so callers can reuse them (no double scan). Probing is off (fast).
+   */
+  const validateOpenedTab = useCallback(
+    async (
+      tabId: number,
+      job: QueuedJob,
+    ): Promise<{ validity: PageValidityResult; tree: ActionableTree | null; pageCtx: ActionablePageContext | null }> => {
+      let text = "";
+      let controlCount = 0;
+      try {
+        const st = await emitActionAsync(
+          { id: createActionId(), tabId, action: "read_page_state", payload: {} },
+          15000,
+        );
+        const d = (st.data as { text?: string; controlCount?: number } | undefined) ?? {};
+        text = d.text ?? "";
+        controlCount = d.controlCount ?? 0;
+      } catch {
+        /* read failed → treated as low signal below */
+      }
+
+      let tree: ActionableTree | null = null;
+      let pageCtx: ActionablePageContext | null = null;
+      try {
+        const tr = await emitActionAsync(
+          { id: createActionId(), tabId, action: "fetch_actionable_tree", payload: { probeComboboxes: false } },
+          60000,
+        );
+        const d = (tr.data as { tree?: ActionableTree; page?: ActionablePageContext } | undefined) ?? {};
+        tree = d.tree ?? null;
+        pageCtx = d.page ?? null;
+      } catch {
+        /* scan failed */
+      }
+      const fieldCount = tree
+        ? tree.reduce((n, g) => n + g.children.filter((c) => c.controlType !== "link").length, 0)
+        : 0;
+
+      const validity = await validateJobPage({
+        text,
+        title: pageCtx?.title,
+        url: pageCtx?.url ?? job.url,
+        fieldCount,
+        controlCount,
+      });
+      return { validity, tree, pageCtx };
+    },
+    [emitActionAsync],
+  );
+
   const openActiveJob = useCallback(async () => {
     const job = getActiveQueuedJob();
     if (!job) {
@@ -726,15 +893,50 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       });
       if (!opened.success) throw new Error(opened.error || "Failed to open tab");
       const openedData = opened.data as { tabId?: number; page?: ActionablePageContext };
-      if (openedData.tabId) setSelectedTabId(openedData.tabId);
+      const tabId = openedData.tabId;
+      if (tabId) setSelectedTabId(tabId);
       if (openedData.page) setTreePage(openedData.page);
-      pushLog(`Opened "${job.title}" — scan the form next`, true);
+
+      // Validity gate: skip dead/expired/non-form links instead of scanning them.
+      if (tabId) {
+        pushLog(`Checking "${job.title}" link is a live application form…`, true);
+        const { validity, pageCtx } = await validateOpenedTab(tabId, job);
+        if (!validity.valid) {
+          pushLog(`"${job.title}" skipped — ${validity.kind}: ${validity.reason}`, false);
+          setVerifyResult({ kind: "failed", reason: `Link not usable (${validity.kind})`, detail: validity.reason });
+          await closeTab(tabId);
+          // Mark handled so the queue moves on (per requested flow).
+          setAppliedJobIds((prev) => new Set(prev).add(job.id));
+          if (!isManualJob(job) && applierName) {
+            try {
+              await applyToJob(job.id, applierName);
+            } catch {
+              /* non-fatal */
+            }
+          }
+          return;
+        }
+        // Valid — keep the page context; the user runs "3 · Scan form" next (that
+        // scan probes dropdown options, which the fast validity scan skips).
+        if (pageCtx) setTreePage(pageCtx);
+        pushLog(`"${job.title}" is a valid form — scan the form next`, true);
+      }
     } catch (error) {
       pushLog(error instanceof Error ? error.message : "Failed to open job", false);
     }
-  }, [canExecute, emitActionAsync, executeDisabledReason, getActiveQueuedJob, getResumeForJob, pushLog]);
+  }, [
+    applierName,
+    canExecute,
+    closeTab,
+    emitActionAsync,
+    executeDisabledReason,
+    getActiveQueuedJob,
+    getResumeForJob,
+    pushLog,
+    validateOpenedTab,
+  ]);
 
-  /** Read the post-submit page (innerText + remaining control count) via execute_script. */
+  /** Read the post-submit page (innerText + remaining control count) via CSP-safe read_page_state. */
   const readApplyPageState = useCallback(
     async (tabId: number, submitted: boolean) => {
       try {
@@ -742,11 +944,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           {
             id: createActionId(),
             tabId,
-            action: "execute_script",
-            payload: {
-              source:
-                "const c=document.querySelectorAll('input:not([type=hidden]):not([disabled]),textarea,select,[contenteditable=\"true\"]');return {text:(document.body.innerText||'').slice(0,4000),controlCount:c.length};",
-            },
+            action: "read_page_state",
+            payload: {},
           },
           15000,
         );
@@ -773,7 +972,109 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     [applierName, pushLog],
   );
 
-  /** Re-scan the page's actionable tree (probing on) for the recovery loop. */
+  /**
+   * Verify the post-submit outcome with the AI: wait for the page to settle after
+   * the submit click, read its innerText, and let the model decide success vs a
+   * verification-code step vs errors — far more reliable than phrase matching.
+   * Falls back to the heuristic classifier only if the AI call fails.
+   */
+  const verifyAfterSubmit = useCallback(
+    async (
+      tabId: number,
+      job: QueuedJob,
+      submitted: boolean,
+      settleMs = 5000,
+    ): Promise<{ verdict: ApplyVerifyResult; state: ApplyPageState }> => {
+      await emitActionAsync(
+        { id: createActionId(), tabId, action: "wait", payload: { ms: settleMs } },
+        settleMs + 5000,
+      ).catch(() => {});
+      const state = await readApplyPageState(tabId, submitted);
+      try {
+        const verdict = await verifyApplyOutcome({ pageText: state.text, jobTitle: job.title, controlCount: state.controlCount });
+        pushLog(`Verify (AI): ${verdict.status} — ${verdict.reason}`, verdict.status === "success");
+        return { verdict, state };
+      } catch (error) {
+        const outcome = classifyApplyOutcome(state);
+        pushLog(
+          `Verify (AI failed, using heuristic): ${outcome.applied ? "success" : "unconfirmed"} — ${error instanceof Error ? error.message : error}`,
+          outcome.applied,
+        );
+        return {
+          verdict: { status: outcome.applied ? "success" : "incomplete", reason: outcome.reason },
+          state,
+        };
+      }
+    },
+    [emitActionAsync, pushLog, readApplyPageState],
+  );
+
+  /**
+   * Manual pipeline step 6 — "Verify result". Reads the current page and classifies
+   * the outcome into one of three results the user asked for: success / failed
+   * (with reason) / additional process required (OTP, email verification code/link).
+   */
+  const verifyActiveResult = useCallback(async () => {
+    const job = getActiveQueuedJob();
+    const tabId = treePage?.tabId ?? (typeof selectedTabId === "number" ? selectedTabId : undefined);
+    if (!tabId) {
+      pushLog("No tab to verify — open the job and scan the form first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot verify — extension not connected", false);
+      return;
+    }
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const jobForVerify: QueuedJob =
+        job ?? { id: "", title: treePage?.title ?? "this application", company: "", url: treePage?.url ?? "", source: "" };
+      // Short settle — by step 6 the page has already been submitted by step 5.
+      const { verdict } = await verifyAfterSubmit(tabId, jobForVerify, true, 1500);
+
+      let result: ManualVerifyResult;
+      if (verdict.status === "success") {
+        result = { kind: "success", reason: verdict.reason || "Application submitted." };
+        if (job) await markJobApplied(job);
+      } else if (verdict.status === "needs_verification") {
+        let detail = "The page requires an emailed verification code or link. Check the applicant inbox.";
+        if (applierName) {
+          const otp = await requestVerificationCode(applierName);
+          if (otp.code) {
+            detail = `Verification code from email: ${otp.code}${otp.subject ? ` (“${otp.subject}”)` : ""}`;
+          }
+        }
+        result = { kind: "additional", reason: verdict.reason || "Verification step required.", detail };
+      } else {
+        result = { kind: "failed", reason: verdict.reason || "Could not confirm the application." };
+      }
+      setVerifyResult(result);
+      pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Verify failed";
+      setVerifyResult({ kind: "failed", reason: msg });
+      pushLog(msg, false);
+    } finally {
+      setVerifying(false);
+    }
+  }, [
+    applierName,
+    canExecute,
+    executeDisabledReason,
+    getActiveQueuedJob,
+    markJobApplied,
+    pushLog,
+    selectedTabId,
+    treePage,
+    verifyAfterSubmit,
+  ]);
+
+  /**
+   * Re-scan the page's actionable tree for the recovery loop. Dropdown/combobox
+   * option probing is intentionally OFF here — recovery only needs the field
+   * structure + labels, and probing adds latency the retry loop can't afford.
+   */
   const rescanTree = useCallback(
     async (tabId: number): Promise<ActionableTree | null> => {
       try {
@@ -782,7 +1083,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             id: createActionId(),
             tabId,
             action: "fetch_actionable_tree",
-            payload: { probeComboboxes },
+            payload: { probeComboboxes: false },
           },
           60000,
         );
@@ -792,7 +1093,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         return null;
       }
     },
-    [emitActionAsync, probeComboboxes],
+    [emitActionAsync],
   );
 
   /**
@@ -809,11 +1110,38 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       firstState: ApplyPageState;
       firstReason: string;
       firstResults?: StepRunResult[];
+      resumeFile?: AttachedFile;
+      pageCtx?: ActionablePageContext;
     }): Promise<boolean> => {
-      const { tabId, job, planSteps } = params;
+      const { tabId, job, planSteps, resumeFile, pageCtx } = params;
       let state = params.firstState;
       let reason = params.firstReason;
       let lastResults: StepRunResult[] = params.firstResults ?? [];
+
+      // The AI recovery script runs in the isolated world and CANNOT set
+      // input.files. So on the first recovery pass, re-run the résumé attach via
+      // the executor's MAIN-world path — this fixes a genuine upload miss (which
+      // recovery could otherwise never repair).
+      const fileSteps = planSteps.filter((s) => s.op === "attachFile");
+      if (fileSteps.length > 0 && resumeFile) {
+        try {
+          pushLog(`Recovery: re-attaching résumé via MAIN world…`, true);
+          await emitActionAsync(
+            {
+              id: createActionId(),
+              tabId,
+              action: "apply_injection_plan",
+              payload: buildApplyInjectionPlanPayload({ steps: fileSteps }, pageCtx ?? { tabId, url: job.url }, {
+                autoSubmit: false,
+                resumeFile,
+              }) as unknown as Record<string, unknown>,
+            },
+            60000,
+          );
+        } catch (error) {
+          pushLog(`Recovery: résumé re-attach failed — ${error instanceof Error ? error.message : error}`, false);
+        }
+      }
 
       for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {
         setApplyPhase({
@@ -828,17 +1156,52 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           break;
         }
 
-        // Phase D — if the page is asking for an emailed code, pull the latest
-        // one from the applier's inbox (IMAP) so the recovery script can fill it.
+        // Phase D — if the page is asking for an emailed code, pull the latest one
+        // from the applier's inbox (IMAP). The email lags the submit by a few
+        // seconds, so poll a few times before giving up this attempt.
+        // Also check the re-scanned tree for verification-code input patterns as a
+        // fallback (e.g. "Security code", single-char inputs) in case the page text
+        // is incomplete or the regex missed the cue.
         let otpCode: string | null = null;
-        if (applierName && VERIFICATION_CUE.test(state.text)) {
-          pushLog(`Recovery ${attempt}: verification code requested — checking email…`, true);
-          const otp = await requestVerificationCode(applierName);
-          otpCode = otp.code;
+        const treeHasVerificationInputs = tree.some((g) =>
+          g.children.some(
+            (c) =>
+              /\b(security code|verification code|enter the code|one[- ]?time code|otp|passcode)\b/i.test(
+                c.target,
+              ) ||
+              (c.controlType === 'text' &&
+                c.target.includes('code') &&
+                g.children.filter((cc) => cc.controlType === 'text').length >= 4),
+          ),
+        );
+        const shouldCheckEmail =
+          applierName &&
+          (VERIFICATION_CUE.test(state.text) || treeHasVerificationInputs);
+
+        if (shouldCheckEmail) {
           pushLog(
-            otpCode ? `Recovery ${attempt}: got code from email` : `Recovery ${attempt}: no code found in email yet`,
-            Boolean(otpCode),
+            `Recovery ${attempt}: verification detected — checking email (${treeHasVerificationInputs ? 'tree' : 'text'} cue)…`,
+            true,
           );
+          for (let poll = 0; poll < 5 && !otpCode; poll += 1) {
+            if (poll > 0) {
+              await emitActionAsync({ id: createActionId(), tabId, action: "wait", payload: { ms: 5000 } }).catch(() => {});
+            }
+            // Widen the email lookback window on later polls — verification emails
+            // can take 30-60s to arrive, and Gmail's IMAP sync has inherent latency.
+            const sinceMs = poll < 2 ? undefined : (poll + 1) * 60_000;
+            const otp = await requestVerificationCode(applierName, sinceMs);
+            otpCode = otp.code;
+            if (otpCode) {
+              pushLog(
+                `Recovery ${attempt}: got code from email (poll ${poll + 1}, subject: ${otp.subject ?? 'unknown'})`,
+                true,
+              );
+            }
+          }
+          if (!otpCode) {
+            pushLog(`Recovery ${attempt}: no verification code in email after 5 polls`, false);
+          }
         }
 
         let recovery;
@@ -863,6 +1226,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
 
         if (recovery.reasoning) pushLog(`Recovery ${attempt}: ${recovery.reasoning}`, true);
 
+        let scriptError: string | null = null;
         try {
           const scriptRes = await emitActionAsync(
             {
@@ -874,29 +1238,40 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             60000,
           );
           if (!scriptRes.success) {
+            scriptError = scriptRes.error ?? "unknown";
             pushLog(`Recovery ${attempt}: script error — ${scriptRes.error}`, false);
           }
         } catch (error) {
-          pushLog(`Recovery ${attempt}: script threw — ${error instanceof Error ? error.message : error}`, false);
+          scriptError = error instanceof Error ? error.message : String(error);
+          pushLog(`Recovery ${attempt}: script threw — ${scriptError}`, false);
         }
+        logRunData("recovery", {
+          attempt,
+          reason,
+          otpCode: otpCode ? "(fetched)" : null,
+          reasoning: recovery.reasoning,
+          script: recovery.script,
+          scriptError,
+          pageTextBefore: state.text,
+        });
 
-        // Give the page a moment to react/navigate, then re-read + re-classify.
-        await emitActionAsync({ id: createActionId(), tabId, action: "wait", payload: { ms: 1500 } }).catch(() => {});
-        state = await readApplyPageState(tabId, true);
+        // Re-verify with the AI (settles the page, reads innerText, classifies).
         lastResults = [];
-        const outcome = classifyApplyOutcome(state);
-        if (outcome.applied) {
-          pushLog(`"${job.title}" recovered on attempt ${attempt} — ${outcome.reason}`, true);
+        const { verdict, state: newState } = await verifyAfterSubmit(tabId, job, true, 3000);
+        state = newState;
+        logRunData("recovery-verify", { attempt, status: verdict.status, reason: verdict.reason, pageText: newState.text });
+        if (verdict.status === "success") {
+          pushLog(`"${job.title}" recovered on attempt ${attempt} — ${verdict.reason}`, true);
           await markJobApplied(job);
           return true;
         }
-        reason = outcome.reason;
+        reason = verdict.reason || verdict.status;
       }
 
       pushLog(`"${job.title}" still unconfirmed after ${MAX_RECOVERY_ATTEMPTS} recovery attempts`, false);
       return false;
     },
-    [applicantContext, applierName, emitActionAsync, markJobApplied, pushLog, readApplyPageState, rescanTree],
+    [applicantContext, applierName, emitActionAsync, markJobApplied, pushLog, rescanTree, verifyAfterSubmit, logRunData],
   );
 
   /**
@@ -910,13 +1285,23 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       }
       setApplying(true);
       applyingRef.current = true;
+      startRunLog(job, { url: job.url, company: job.company, source: job.source });
+      let finalStatus = "failed";
       try {
         pushLog(`Applying to "${job.title}"…`, true);
         let resumeFile = getResumeForJob(job);
+        const preGenerated = Boolean(resumeFile);
         if (!resumeFile) {
           resumeFile = await startResumeForJob(job);
         }
         if (!resumeFile) throw new Error("Tailored résumé PDF is required but was not generated");
+        logRunData("resume", {
+          fileName: resumeFile.name,
+          mimeType: resumeFile.mimeType,
+          base64Bytes: resumeFile.base64?.length ?? 0,
+          preGenerated,
+          reused: resumesByJobId[job.id]?.reused ?? null,
+        });
 
         const opened = await emitActionAsync({
           id: createActionId(),
@@ -929,6 +1314,18 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         if (!tabId) throw new Error("open_tab returned no tab id");
         setSelectedTabId(tabId);
 
+        // Validity gate — skip dead/expired/non-form links (close tab + mark handled).
+        const gate = await validateOpenedTab(tabId, job);
+        logRunData("validity", { kind: gate.validity.kind, valid: gate.validity.valid, reason: gate.validity.reason });
+        if (!gate.validity.valid) {
+          pushLog(`"${job.title}" skipped — ${gate.validity.kind}: ${gate.validity.reason}`, false);
+          setVerifyResult({ kind: "failed", reason: `Link not usable (${gate.validity.kind})`, detail: gate.validity.reason });
+          await closeTab(tabId);
+          await markJobApplied(job);
+          finalStatus = `skipped-${gate.validity.kind}`;
+          return;
+        }
+
         const treeRes = await emitActionAsync({
           id: createActionId(),
           tabId,
@@ -940,6 +1337,13 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         const tree = treeData.tree;
         const pageCtx = treeData.page ?? openedData.page;
         if (!tree?.length || !pageCtx) throw new Error("No fillable fields found on the page");
+        logRunData("scan", {
+          url: pageCtx.url,
+          groups: tree.length,
+          fields: tree.flatMap((g) =>
+            g.children.map((c) => ({ group: g.content?.slice(0, 40), target: c.target, controlType: c.controlType })),
+          ),
+        });
 
         setAnalyzing(true);
         const analysis = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined });
@@ -947,11 +1351,19 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         setActionableTree(tree);
         setTreePage(pageCtx);
         setFormAnalysis(analysis);
+        logRunData("analyze", {
+          fields: analysis.fields.map((f) => ({ id: f.id, action: f.action, shouldSkip: f.shouldSkip, value: f.value })),
+          usage: analysis.usage ?? null,
+        });
 
         const built = buildFormInjectionPlan({ tree, fields: analysis.fields });
         setInjectionPlan(built.plan);
         setGeneratedScript(built.preview);
         if (!built.plan.steps.length) throw new Error("Plan has no fillable steps");
+        logRunData("plan", {
+          steps: built.plan.steps.map((s) => ({ id: s.id, label: s.label, op: s.op, value: s.value })),
+          fileSteps: built.plan.steps.filter((s) => s.op === "attachFile").length,
+        });
 
         const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, { autoSubmit: true, resumeFile });
         const applyRes = await emitActionAsync(
@@ -970,51 +1382,54 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         const submitted = Boolean(applyData?.submitted);
         const firstResults = Array.isArray(applyData?.result) ? applyData!.result : [];
 
-        // Make the résumé-upload outcome explicit — the #1 silent failure.
+        // Résumé-upload status — informational only. A 0/N reading is often a
+        // false negative (a dropzone briefly resets the input), so we NEVER abort
+        // on it; the AI verify below reads the real page and decides the outcome.
         const filesFound = applyData?.filesFound ?? 0;
         const filesAttached = applyData?.filesAttached ?? 0;
+        logRunData("apply-result", { filesFound, filesAttached, submitted, results: firstResults });
         if (filesFound === 0) {
-          pushLog(`⚠ Résumé not uploaded — no file field found on "${job.title}"`, false);
+          pushLog(`Résumé: no file field detected on "${job.title}"`, false);
         } else {
-          pushLog(`Résumé uploaded to ${filesAttached}/${filesFound} field(s)`, filesAttached > 0);
+          pushLog(`Résumé attach reported ${filesAttached}/${filesFound} — verifying on page…`, filesAttached > 0);
         }
 
-        if (filesFound > 0 && filesAttached === 0) {
-          throw new Error(`Résumé was not attached (${filesAttached}/${filesFound})`);
-        }
-
-        const pageState = await readApplyPageState(tabId, submitted);
-        const outcome = classifyApplyOutcome({
-          ...pageState,
-          filesExpected: filesFound,
-          filesAttached,
-        });
-        if (outcome.applied && filesFound > 0 && filesAttached === 0) {
-          pushLog(`"${job.title}" submit clicked but résumé missing — not marking applied`, false);
-        } else if (outcome.applied) {
-          pushLog(`"${job.title}" applied — ${outcome.reason}`, true);
+        // AI verify: wait 5s for the page to settle, read innerText, classify.
+        const { verdict, state: pageState } = await verifyAfterSubmit(tabId, job, submitted, 5000);
+        logRunData("verify", { status: verdict.status, reason: verdict.reason, pageText: pageState.text, controlCount: pageState.controlCount });
+        if (verdict.status === "success") {
+          pushLog(`"${job.title}" applied — ${verdict.reason}`, true);
           await markJobApplied(job);
+          finalStatus = "applied";
         } else {
-          // Phase C — hand off to the self-healing retry loop (up to 10×).
-          pushLog(`"${job.title}" not confirmed — ${outcome.reason}; starting self-healing`, false);
-          await runRecoveryLoop({
+          // needs_verification / error / incomplete → self-healing loop (OTP,
+          // missing fields, blocks). Re-scan uses probe-off; up to 10×.
+          pushLog(`"${job.title}" not confirmed (${verdict.status}) — ${verdict.reason}; starting self-healing`, false);
+          const recovered = await runRecoveryLoop({
             tabId,
             job,
             planSteps: built.plan.steps,
             firstState: pageState,
-            firstReason: outcome.reason,
+            firstReason: verdict.reason || verdict.status,
             firstResults,
+            resumeFile,
+            pageCtx,
           });
+          finalStatus = recovered ? "applied-recovered" : "unconfirmed";
         }
       } catch (error) {
-        pushLog(error instanceof Error ? error.message : "Apply failed", false);
+        const msg = error instanceof Error ? error.message : "Apply failed";
+        pushLog(msg, false);
+        logRunData("error", { message: msg, stack: error instanceof Error ? error.stack : null });
+        finalStatus = "error";
       } finally {
         setAnalyzing(false);
         setApplying(false);
         applyingRef.current = false;
+        endRunLog(finalStatus);
       }
     },
-    [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, markJobApplied, probeComboboxes, pushLog, readApplyPageState, runRecoveryLoop],
+    [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, markJobApplied, probeComboboxes, pushLog, runRecoveryLoop, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
   );
 
   /** Apply every queued job in sequence — each opens its own tab and auto-submits. */
@@ -1065,9 +1480,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     generatingResume,
     resumeError,
     applyPhase,
-    monitorMode,
-    setMonitorMode,
-    relaySocket,
+    verifyResult,
+    verifying,
+    verifyActiveResult,
+    setVerifyResult,
     socketRef,
     connect,
     fetchActionableTree,

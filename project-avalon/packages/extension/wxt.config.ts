@@ -17,9 +17,6 @@ export default defineConfig({
       'contextMenus',
       'notifications',
       'unlimitedStorage',
-      'tabCapture',
-      'desktopCapture',
-      'offscreen',
     ],
     host_permissions: ['<all_urls>', 'http://localhost/*', 'ws://localhost/*'],
     action: {

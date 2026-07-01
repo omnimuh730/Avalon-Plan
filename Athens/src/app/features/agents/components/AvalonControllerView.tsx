@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   ArrowRight,
   CheckCircle2,
   ChevronDown,
@@ -24,7 +25,6 @@ import { useApplier } from "@/context/applier-context";
 import { cn } from "../../../lib/utils";
 import { formatApplierProfile } from "../avalon/ai/profile";
 import { useAvalonRelay, type QueuedJob } from "../hooks/useAvalonRelay";
-import { LiveTabView } from "./LiveTabView";
 import { ApplyStatusPanel } from "./ApplyStatusPanel";
 import { AgentResumePdfPreview, agentJobResumePdfUrl } from "./AgentResumePdfPreview";
 
@@ -400,24 +400,7 @@ export function AvalonControllerView({
           <div className="px-4 py-2.5 border-b border-border/60 flex items-center justify-between gap-2 bg-secondary/20">
             <div className="flex items-center gap-2 min-w-0">
               <Monitor className="w-4 h-4 text-muted-foreground shrink-0" />
-              <span className="text-xs font-bold text-foreground truncate">Live browser</span>
-              <div className="ml-2 inline-flex rounded-lg border border-border bg-background p-0.5">
-                {(["webrtc", "screenshot"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => relay.setMonitorMode(mode)}
-                    className={cn(
-                      "px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors",
-                      relay.monitorMode === mode
-                        ? "bg-violet-600 text-white"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {mode === "webrtc" ? "Live" : "Screenshot"}
-                  </button>
-                ))}
-              </div>
+              <span className="text-xs font-bold text-foreground truncate">Browser (screenshot)</span>
             </div>
             {relay.tabs.length > 0 && (
               <select
@@ -434,14 +417,6 @@ export function AvalonControllerView({
             )}
           </div>
 
-          {relay.monitorMode === "webrtc" && (
-            <div className="mx-4 mt-2 rounded-lg border border-amber-200/80 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
-              Live view requires a one-time capture from the{" "}
-              <strong>Avalon extension side panel</strong> — open it on the job tab and click{" "}
-              <strong>Start live view</strong>, then return here.
-            </div>
-          )}
-
           <div className="relative flex-1 min-h-[280px] bg-[#0f1117] flex items-center justify-center p-3">
             {/* Browser chrome mock */}
             <div className="absolute top-3 left-3 right-3 flex items-center gap-1.5 z-10">
@@ -455,14 +430,7 @@ export function AvalonControllerView({
               </div>
             </div>
 
-            {relay.monitorMode === "webrtc" ? (
-              <LiveTabView
-                socket={relay.relaySocket}
-                sessionId={relay.registered?.sessionId ?? relay.sessionId}
-                tabId={relay.selectedTabId === "" ? undefined : Number(relay.selectedTabId)}
-                canExecute={relay.canExecute}
-              />
-            ) : relay.screenshot ? (
+            {relay.screenshot ? (
               <img
                 src={relay.screenshot}
                 alt="Tab screenshot"
@@ -480,20 +448,16 @@ export function AvalonControllerView({
 
             {/* Floating toolbar */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 p-1 rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 shadow-xl">
-              {relay.monitorMode === "screenshot" && (
-                <>
-                  <button
-                    type="button"
-                    onClick={relay.requestScreenshot}
-                    disabled={!relay.canExecute}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-semibold text-white/90 hover:bg-white/10 disabled:opacity-40"
-                  >
-                    <Image className="w-3.5 h-3.5" />
-                    Capture
-                  </button>
-                  <div className="w-px h-5 bg-white/10" />
-                </>
-              )}
+              <button
+                type="button"
+                onClick={relay.requestScreenshot}
+                disabled={!relay.canExecute}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-semibold text-white/90 hover:bg-white/10 disabled:opacity-40"
+              >
+                <Image className="w-3.5 h-3.5" />
+                Capture
+              </button>
+              <div className="w-px h-5 bg-white/10" />
               <button
                 type="button"
                 onClick={relay.fetchActionableTree}
@@ -654,6 +618,45 @@ export function AvalonControllerView({
               {relay.applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
               {relay.applying ? "Injecting…" : "5 · Apply fill plan"}
             </button>
+            <button
+              type="button"
+              onClick={() => void relay.verifyActiveResult()}
+              disabled={!relay.canExecute || relay.verifying || relay.applying}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-500/40 text-emerald-700 text-sm font-bold hover:bg-emerald-500/10 disabled:opacity-40"
+            >
+              {relay.verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              {relay.verifying ? "Verifying…" : "6 · Verify result"}
+            </button>
+            {relay.verifyResult && (
+              <div
+                className={cn(
+                  "rounded-xl border px-3 py-2 text-[11px] space-y-1",
+                  relay.verifyResult.kind === "success" && "border-emerald-300/70 bg-emerald-50 text-emerald-900",
+                  relay.verifyResult.kind === "failed" && "border-red-300/70 bg-red-50 text-red-900",
+                  relay.verifyResult.kind === "additional" && "border-amber-300/70 bg-amber-50 text-amber-900",
+                )}
+              >
+                <div className="flex items-center gap-1.5 font-bold">
+                  {relay.verifyResult.kind === "success" ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Success
+                    </>
+                  ) : relay.verifyResult.kind === "additional" ? (
+                    <>
+                      <AlertTriangle className="w-3.5 h-3.5" /> Additional step required
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="w-3.5 h-3.5" /> Failed
+                    </>
+                  )}
+                </div>
+                <p className="leading-snug">{relay.verifyResult.reason}</p>
+                {relay.verifyResult.detail && (
+                  <p className="leading-snug font-medium">{relay.verifyResult.detail}</p>
+                )}
+              </div>
+            )}
             {hasPlan && relay.injectionPlan && (
               <p className="text-[10px] text-center text-muted-foreground pt-1">
                 {relay.injectionPlan.steps.length} steps · uses drafted PDF

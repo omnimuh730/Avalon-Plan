@@ -27,6 +27,7 @@ let mailMessagesCollection;
 let mailSyncStateCollection;
 let mailUserLabelsCollection;
 let userResumesCollection;
+let avalonRunsCollection;
 
 async function ensureMailCollectionsIndexes() {
 	if (mailMessagesCollection) {
@@ -110,6 +111,14 @@ async function initMongo() {
 	mailSyncStateCollection = db.collection('mail_sync_state');
 	mailUserLabelsCollection = db.collection('mail_user_labels');
 	userResumesCollection = db.collection('user_resumes');
+	avalonRunsCollection = db.collection('avalon_apply_runs');
+	try {
+		await avalonRunsCollection.createIndex({ runId: 1 }, { unique: true });
+		await avalonRunsCollection.createIndex({ applierName: 1, startedAt: -1 });
+		await avalonRunsCollection.createIndex({ 'job.id': 1, startedAt: -1 });
+	} catch (err) {
+		console.warn('[avalon_apply_runs] index creation failed:', err.message);
+	}
 	await ensureJobMarketIndexes(jobsCollection);
 	await ensureSkillCollectionsIndexes();
 	await ensureMailCollectionsIndexes();
@@ -237,5 +246,6 @@ export {
 	mailSyncStateCollection,
 	mailUserLabelsCollection,
 	userResumesCollection,
+	avalonRunsCollection,
 	closeMongo
 };

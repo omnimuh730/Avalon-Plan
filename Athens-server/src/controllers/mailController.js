@@ -202,16 +202,27 @@ export async function getVerificationCode(req, res) {
 		}
 
 		// Best-effort pull of the newest messages before we scan.
+		// Force a full sync so we pick up emails that landed in Gmail categories
+		// (Updates, Promotions, Forums) — Greenhouse verification emails often
+		// get categorized outside the primary inbox.
 		await runIncrementalSync(applierName, { force: true }).catch((err) => {
 			console.warn('[verification-code] sync failed (continuing with cache):', err.message);
 		});
 
-		const sinceMs = Math.min(60 * 60 * 1000, Math.max(60 * 1000, Number(req.body?.sinceMs) || 15 * 60 * 1000));
+		// Brief grace period for MongoDB write concern after sync.
+		await new Promise((r) => setTimeout(r, 500));
+
+		// Default lookback: 30 minutes (wider than the old 15 min default).
+		// Verification emails can take 30-60s to arrive, and Gmail's IMAP sync
+		// has inherent latency, so a wider window catches codes that arrive late.
+		const sinceMs = Math.min(2 * 60 * 60 * 1000, Math.max(30 * 1000, Number(req.body?.sinceMs) || 30 * 60 * 1000));
 		const cutoff = new Date(Date.now() - sinceMs);
+		// Search ALL applier mail (not filtered by folder) since Greenhouse emails
+		// may land in Updates/Promotions tabs (Gmail categories → IMAP labels).
 		const docs = await mailMessagesCollection
 			.find({ applierName, date: { $gte: cutoff } })
 			.sort({ date: -1 })
-			.limit(10)
+			.limit(25)
 			.toArray();
 
 		for (const doc of docs) {
