@@ -30,6 +30,7 @@ import {
 } from '../services/mail/mailSyncService.js';
 import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
 import { extractVerificationCode } from '../services/mail/verificationCode.js';
+import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js';
 
 function parsePageQuery(req) {
 	const page = Math.max(1, Number.parseInt(String(req.query.page || '1'), 10) || 1);
@@ -53,6 +54,7 @@ export async function getMailThreads(req, res) {
 		const search = req.query.search ? String(req.query.search) : undefined;
 		const { page, pageSize } = parsePageQuery(req);
 		const cacheOnly = req.query.cacheOnly === 'true' || req.query.cacheOnly === '1';
+		const forceRefresh = req.query.force === 'true' || req.query.force === '1';
 
 		const creds = await resolveMailCredentials(applierName);
 		if (!creds.ok) {
@@ -70,7 +72,7 @@ export async function getMailThreads(req, res) {
 		} else if (label || search) {
 			result = await loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize });
 		} else {
-			result = await loadFolderPage(applierName, folder, page, pageSize);
+			result = await loadFolderPage(applierName, folder, page, pageSize, { forceRefresh });
 		}
 
 		if (!result.ok) {
@@ -225,29 +227,64 @@ export async function getVerificationCode(req, res) {
 			.limit(25)
 			.toArray();
 
+		// Materialize bodies for the recent messages (needed for both regex + AI).
+		const enriched = [];
 		for (const doc of docs) {
-			let text = `${doc.subject || ''}\n${doc.snippet || ''}\n${doc.bodyText || ''}`;
-			let code = extractVerificationCode(text);
-			// Codes often live only in the body — fetch it lazily for likely candidates.
-			if (!code && !doc.bodyText && doc.uid) {
+			let bodyText = doc.bodyText || '';
+			if (!bodyText && doc.uid) {
 				const bodyResult = await ensureMessageBody(applierName, doc.uid, doc.mailbox).catch(() => null);
-				if (bodyResult?.message?.bodyText) {
-					text += `\n${bodyResult.message.bodyText}`;
-					code = extractVerificationCode(text);
-				}
+				bodyText = bodyResult?.message?.bodyText || bodyResult?.message?.bodyHtml || '';
 			}
+			enriched.push({ doc, bodyText });
+		}
+
+		// Pass 1 — fast, cheap regex (clean digit/alnum codes).
+		for (const { doc, bodyText } of enriched) {
+			const code = extractVerificationCode(`${doc.subject || ''}\n${doc.snippet || ''}\n${bodyText}`);
 			if (code) {
 				return res.json({
 					success: true,
 					code,
+					link: null,
 					subject: doc.subject || null,
 					from: doc.from?.address || doc.from?.text || null,
 					date: doc.date || null,
+					via: 'regex',
+					scanned: enriched.length,
 				});
 			}
 		}
 
-		return res.json({ success: true, code: null });
+		// Pass 2 — AI extraction (alphanumeric/lowercase/boxed codes AND verify links).
+		// Only consider recent messages whose subject/body has verification vocabulary.
+		const candidates = enriched
+			.filter(({ doc, bodyText }) => /verif|confirm|security|one[- ]?time|otp|passcode|\bcode\b|activate|sign[- ]?in/i.test(`${doc.subject || ''} ${bodyText}`))
+			.slice(0, 12)
+			.map(({ doc, bodyText }) => ({ from: doc.from?.address || doc.from?.text || '', subject: doc.subject || '', body: bodyText, date: doc.date }));
+
+		if (candidates.length > 0) {
+			try {
+				const acc = await findAccountByApplierName(applierName);
+				const ai = await aiExtractVerification(candidates, acc?.autoBidProfile || {});
+				if (ai.found) {
+					const src = ai.emailIndex != null ? candidates[ai.emailIndex] : null;
+					return res.json({
+						success: true,
+						code: ai.code,
+						link: ai.link,
+						subject: src?.subject || null,
+						from: src?.from || null,
+						date: src?.date || null,
+						via: 'ai',
+						scanned: candidates.length,
+					});
+				}
+			} catch (aiErr) {
+				console.warn('[verification-code] AI extraction failed:', aiErr.message);
+			}
+		}
+
+		return res.json({ success: true, code: null, link: null, scanned: enriched.length });
 	} catch (err) {
 		console.error('POST /api/mail/verification-code error', err);
 		return res.status(500).json({ success: false, error: err.message });

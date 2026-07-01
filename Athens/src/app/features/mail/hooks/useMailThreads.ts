@@ -58,7 +58,7 @@ export function useMailThreads(applierName: string | undefined) {
   const bodyCache = useRef(new Map<string, MailThread>());
 
   const loadThreads = useCallback(
-    async (opts: Partial<LoadOpts> & { folder: MailFolderId; labelFilter: string | null; search: string }) => {
+    async (opts: Partial<LoadOpts> & { folder: MailFolderId; labelFilter: string | null; search: string; forceRefresh?: boolean }) => {
       if (!applierName) return;
       const merged: LoadOpts = {
         page: opts.page ?? lastLoadOpts.current.page,
@@ -75,6 +75,7 @@ export function useMailThreads(applierName: string | undefined) {
       const gen = ++loadGen.current;
       setError(null);
       setSyncing(true);
+      setLoading(true);
 
       const queryOpts = {
         folder: merged.folder,
@@ -82,34 +83,17 @@ export function useMailThreads(applierName: string | undefined) {
         search: merged.search || undefined,
         page: merged.page,
         pageSize: merged.pageSize,
+        force: opts.forceRefresh ? "true" : undefined,
       };
 
-      let showedCache = false;
       try {
-        const cached = await fetchMailThreads(applierName, { ...queryOpts, cacheOnly: true });
+        const result = await fetchMailThreads(applierName, queryOpts);
         if (gen !== loadGen.current) return;
-        if (cached.threads.length > 0) {
-          setThreads((prev) => mergeThreads(prev, cached.threads));
-          setTotal(cached.total);
-          setLoading(false);
-          showedCache = true;
-        } else {
-          setLoading(true);
-        }
-      } catch {
-        setLoading(true);
-      }
-
-      try {
-        const fresh = await fetchMailThreads(applierName, queryOpts);
-        if (gen !== loadGen.current) return;
-        setThreads((prev) => mergeThreads(prev, fresh.threads));
-        setTotal(fresh.total);
+        setThreads((prev) => mergeThreads(prev, result.threads));
+        setTotal(result.total);
       } catch (e) {
         if (gen !== loadGen.current) return;
-        if (!showedCache) {
-          setError(e instanceof Error ? e.message : "Failed to load mail");
-        }
+        setError(e instanceof Error ? e.message : "Failed to load mail");
       } finally {
         if (gen === loadGen.current) {
           setLoading(false);
@@ -119,6 +103,16 @@ export function useMailThreads(applierName: string | undefined) {
     },
     [applierName],
   );
+
+  /** Prepend new threads from a delta sync (used after incremental sync on page 1). */
+  const prependThreads = useCallback((newThreads: MailThread[]) => {
+    setThreads((prev) => {
+      const existingIds = new Set(prev.map((t) => t.id));
+      const fresh = newThreads.filter((t) => !existingIds.has(t.id));
+      if (!fresh.length) return prev;
+      return [...fresh, ...prev];
+    });
+  }, []);
 
   const fetchThreadBody = useCallback(
     async (uid: string, folder: MailFolderId) => {
@@ -255,6 +249,7 @@ export function useMailThreads(applierName: string | undefined) {
     setPageSize,
     currentFolder,
     loadThreads,
+    prependThreads,
     fetchThreadBody,
     getCachedThreadBody,
     cancelBodyFetch,

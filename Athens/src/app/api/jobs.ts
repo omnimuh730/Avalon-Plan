@@ -77,6 +77,14 @@ export async function fetchJobDescription(jobId: string): Promise<string> {
   }
 }
 
+export interface GeneratedResumeUsage {
+  promptTokens: number;
+  cachedTokens?: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd?: number;
+}
+
 export interface GeneratedJobResume {
   pdfBase64: string;
   fileName: string;
@@ -86,6 +94,7 @@ export interface GeneratedJobResume {
   resumePdfPath?: string | null;
   model?: string | null;
   provider?: string | null;
+  usage?: GeneratedResumeUsage;
 }
 
 /**
@@ -119,6 +128,14 @@ export async function generateJobResume(params: {
     resumePdfPath?: string | null;
     model?: string | null;
     provider?: string | null;
+    usage?: {
+      inputTokens?: number;
+      cachedTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+      costUsd?: number;
+      cost?: number;
+    };
   };
   if (!res.ok || !data.success) throw new Error(data.error || `Résumé generation failed (${res.status})`);
   if (!data.pdfBase64) throw new Error("Résumé generated but no PDF was returned");
@@ -126,6 +143,7 @@ export async function generateJobResume(params: {
     .replace(/\.txt\.pdf$/i, '.pdf')
     .replace(/[^\w.\-()+ ]+/g, '_');
   const finalName = fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`;
+  const u = data.usage;
   return {
     pdfBase64: data.pdfBase64,
     fileName: finalName,
@@ -135,5 +153,14 @@ export async function generateJobResume(params: {
     resumePdfPath: data.resumePdfPath ?? null,
     model: data.model ?? null,
     provider: data.provider ?? null,
+    usage: u
+      ? {
+          promptTokens: u.inputTokens ?? 0,
+          cachedTokens: u.cachedTokens,
+          completionTokens: u.outputTokens ?? 0,
+          totalTokens: u.totalTokens ?? 0,
+          costUsd: u.costUsd ?? u.cost,
+        }
+      : undefined,
   };
 }

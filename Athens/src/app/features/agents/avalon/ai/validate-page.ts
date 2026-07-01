@@ -1,5 +1,6 @@
 import { chatCompletion } from "./client";
 import type { JsonSchemaDefinition } from "./chat-types";
+import { toAiUsage, type AiUsage } from "./verify-apply";
 
 /**
  * AI check that an opened job link is actually a live application form worth
@@ -51,6 +52,7 @@ export interface PageValidityResult {
   kind: PageValidityKind;
   valid: boolean;
   reason: string;
+  usage?: AiUsage;
 }
 
 export async function validateJobPage(params: {
@@ -85,14 +87,16 @@ export async function validateJobPage(params: {
     temperature: 0,
   });
 
+  const usage = toAiUsage(response.usage);
   const structured = response.structured as { kind?: PageValidityKind; reason?: string } | undefined;
   const kind = structured?.kind;
   const valid = kind === "application_form";
-  if (kind) return { kind, valid, reason: structured?.reason || "" };
+  if (kind) return { kind, valid, reason: structured?.reason || "", usage };
   // If the classifier fails but we clearly saw form fields, don't block the apply.
   return {
     kind: params.fieldCount > 0 ? "application_form" : "error",
     valid: params.fieldCount > 0,
     reason: "Validity classifier returned no result",
+    usage,
   };
 }

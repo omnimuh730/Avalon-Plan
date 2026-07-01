@@ -7,9 +7,9 @@ import { PaginationBar } from "../../components/shared/PaginationBar";
 import { SearchField } from "../../components/shared/SearchField";
 import { PATHS } from "../../config/routes";
 import { MailSidebar } from "./components/MailSidebar";
-import { MailListRow } from "./components/MailListRow";
 import { MailDetailPane } from "./components/MailDetailPane";
 import { MailComposeSheet } from "./components/MailComposeSheet";
+import { ThreadList } from "./components/ThreadList";
 import { useMailThreads } from "./hooks/useMailThreads";
 import { useMailLabels } from "./hooks/useMailLabels";
 import { useMailSync } from "./hooks/useMailSync";
@@ -33,26 +33,49 @@ export function MailPage() {
 
   const mail = useMailThreads(applierName);
   const { labels, createLabel, removeLabel, reload: reloadLabels } = useMailLabels(applierName);
-  const { loadThreads, fetchThreadBody, getCachedThreadBody, cancelBodyFetch, page, pageSize, setPage, setPageSize, total } =
-    mail;
+  const {
+    loadThreads,
+    prependThreads,
+    fetchThreadBody,
+    getCachedThreadBody,
+    cancelBodyFetch,
+    page,
+    pageSize,
+    setPage,
+    setPageSize,
+    total,
+  } = mail;
 
   const loadCurrentPage = useCallback(() => {
     void loadThreads({ folder, labelFilter, search, page, pageSize });
   }, [loadThreads, folder, labelFilter, search, page, pageSize]);
 
-  const reload = useCallback(() => {
-    loadCurrentPage();
+  /** Force-refresh: hit IMAP synchronously (user clicked refresh button). */
+  const forceRefresh = useCallback(() => {
+    void loadThreads({ folder, labelFilter, search, page, pageSize, forceRefresh: true });
     void reloadLabels();
-    if (applierName) {
-      void fetchMailFolderCounts(applierName).then(setFolderCounts).catch(console.error);
-    }
-  }, [loadCurrentPage, reloadLabels, applierName]);
+  }, [loadThreads, reloadLabels, folder, labelFilter, search, page, pageSize]);
+
+  // Delta sync: prepend new messages instead of full page reload when on page 1
+  // of inbox with no search/label filter active.
+  const handleNewThreads = useCallback(
+    (newThreads: import("../../types").MailThread[]) => {
+      const isInboxView = folder === "inbox" && page === 1 && !labelFilter && !search;
+      if (isInboxView) {
+        prependThreads(newThreads);
+      } else {
+        // User is on a filtered/label view or a different page — full reload
+        loadCurrentPage();
+      }
+    },
+    [folder, page, labelFilter, search, prependThreads, loadCurrentPage],
+  );
 
   useMailSync({
     applierName,
     applierReady,
     enabled: credentialsConfigured === true,
-    onSyncComplete: reload,
+    onNewThreads: handleNewThreads,
   });
 
   useEffect(() => {
@@ -185,7 +208,7 @@ export function MailPage() {
             )}
             <button
               type="button"
-              onClick={reload}
+              onClick={forceRefresh}
               className="icon-btn text-muted-foreground hover:text-foreground"
               aria-label="Refresh mail"
             >
@@ -199,38 +222,16 @@ export function MailPage() {
             </div>
           )}
 
-          <div className="flex-1 overflow-y-auto subtle-scroll min-h-0">
-            {mail.loading && mail.threads.length === 0 ? (
-              <div className="p-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Loading mail…
-              </div>
-            ) : mail.threads.length === 0 ? (
-              <p className="p-6 text-sm text-muted-foreground text-center">No messages</p>
-            ) : (
-              grouped.map((group) => (
-                <div key={group.section}>
-                  {group.label && (
-                    <div className="px-4 py-1.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide bg-muted/30 border-b border-border/40">
-                      {group.label}
-                    </div>
-                  )}
-                  {group.threads.map((t) => (
-                    <MailListRow
-                      key={t.id}
-                      thread={t}
-                      selected={false}
-                      onSelect={() => openThread(t.id)}
-                      onStar={() => mail.star(t.id)}
-                      onArchive={() => mail.archive(t.id)}
-                      onTrash={() => mail.trash(t.id)}
-                      onMarkUnread={() => mail.markUnread(t.id, true)}
-                    />
-                  ))}
-                </div>
-              ))
-            )}
-          </div>
+          <ThreadList
+            grouped={grouped}
+            loading={mail.loading}
+            threadsLength={mail.threads.length}
+            onOpenThread={openThread}
+            onStar={mail.star}
+            onArchive={mail.archive}
+            onTrash={mail.trash}
+            onMarkUnread={mail.markUnread}
+          />
 
           <div className="border-t border-border flex-shrink-0 px-3">
             <PaginationBar

@@ -22,6 +22,9 @@ import {
 } from './mailStore.js';
 import { ALL_MAIL_PATH, folderToMailbox } from './folderMapper.js';
 
+const CACHE_STALE_MS = 2 * 60 * 1000; // 2 min before background IMAP refresh
+const FOLDER_COUNT_CACHE_MS = 5 * 60 * 1000; // 5 min before refreshing folder counts
+
 /**
  * Read one folder page from MongoDB cache only (instant).
  */
@@ -46,8 +49,38 @@ export async function loadCachedFolderPage(applierName, folder, page, pageSize) 
 
 /**
  * Fetch one folder page from Gmail if not fully cached; returns threads + total.
+ *
+ * Smart cache policy:
+ *  - If MongoDB has data AND the folder was refreshed < CACHE_STALE_MS ago →
+ *    serve from cache immediately, no IMAP call.
+ *  - If MongoDB has data but cache is stale → serve from cache immediately, then
+ *    fire-and-forget an IMAP refresh in the background.
+ *  - If MongoDB has NO data (first load) OR forceRefresh is true → hit IMAP
+ *    synchronously.
  */
-export async function loadFolderPage(applierName, folder, page, pageSize) {
+export async function loadFolderPage(applierName, folder, page, pageSize, { forceRefresh = false } = {}) {
+	const state = await getSyncState(applierName);
+	const lastRefreshKey = `folderRefreshedAt_${folder}`;
+	const lastRefreshed = state?.[lastRefreshKey] ? new Date(state[lastRefreshKey]).getTime() : 0;
+	const cacheAge = Date.now() - lastRefreshed;
+	const cacheIsFresh = cacheAge < CACHE_STALE_MS;
+
+	const mailboxPath = folderToMailbox(folder);
+	const cachedCount = await countMessages(applierName, { folder, mailbox: mailboxPath });
+	const hasCachedData = cachedCount > 0;
+
+	// If cache is fresh AND not forced → serve from MongoDB only (fast path)
+	if (!forceRefresh && hasCachedData && cacheIsFresh) {
+		return loadCachedFolderPage(applierName, folder, page, pageSize);
+	}
+
+	// If we have cached data but it's stale → serve cache + background refresh
+	if (!forceRefresh && hasCachedData) {
+		refreshFolderInBackground(applierName, folder, pageSize);
+		return loadCachedFolderPage(applierName, folder, page, pageSize);
+	}
+
+	// No cached data OR forced refresh → hit IMAP synchronously
 	const creds = await resolveMailCredentials(applierName);
 	if (!creds.ok) return { ok: false, error: creds.error };
 
@@ -67,10 +100,10 @@ export async function loadFolderPage(applierName, folder, page, pageSize) {
 
 		await upsertSyncState(applierName, {
 			[`folderTotal_${folder}`]: total,
+			[lastRefreshKey]: new Date(),
 			folderCountsUpdatedAt: new Date(),
 		});
 
-		const mailboxPath = folderToMailbox(folder);
 		const uids = messages.map((m) => m.uid);
 		const cachedDocs = uids.length
 			? await getMessagesByUids(applierName, uids, mailboxPath)
@@ -90,6 +123,38 @@ export async function loadFolderPage(applierName, folder, page, pageSize) {
 	}
 }
 
+/**
+ * Background IMAP refresh — fetches the latest page from Gmail and upserts into
+ * MongoDB. Errors are silently swallowed (the UI already has cached data).
+ */
+async function refreshFolderInBackground(applierName, folder, pageSize) {
+	try {
+		const creds = await resolveMailCredentials(applierName);
+		if (!creds.ok) return;
+
+		const { messages, total } = await fetchMailboxPage(
+			creds.email,
+			creds.password,
+			folder,
+			1, // always refresh page 1 (newest messages)
+			Math.min(pageSize || 25, 50),
+			applierName,
+		);
+
+		if (messages.length) {
+			await upsertMessages(messages);
+		}
+
+		await upsertSyncState(applierName, {
+			[`folderTotal_${folder}`]: total,
+			[`folderRefreshedAt_${folder}`]: new Date(),
+			folderCountsUpdatedAt: new Date(),
+		});
+	} catch {
+		// Silently ignore — the UI already has cached data
+	}
+}
+
 export async function loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize }) {
 	const total = await countMessages(applierName, { folder, label, search });
 	const docs = await listMessages(applierName, { folder, label, search, page, pageSize });
@@ -102,17 +167,37 @@ export async function loadLabelOrSearchPage(applierName, { folder, label, search
 	};
 }
 
-export async function getFolderCounts(applierName) {
+/**
+ * Get folder counts. Serves from cache sync state (instant MongoDB read) unless
+ * the cache is older than 5 minutes or force=true. Only then does it hit IMAP.
+ */
+export async function getFolderCounts(applierName, { force = false } = {}) {
+	const state = await getSyncState(applierName);
+
+	// Use cached counts when fresh enough
+	if (!force && state?.folderCounts && state?.folderCountsUpdatedAt) {
+		const age = Date.now() - new Date(state.folderCountsUpdatedAt).getTime();
+		if (age < FOLDER_COUNT_CACHE_MS) {
+			return { ok: true, counts: state.folderCounts, cached: true };
+		}
+	}
+
 	const creds = await resolveMailCredentials(applierName);
-	if (!creds.ok) return { ok: false, error: creds.error };
+	if (!creds.ok) {
+		// Fall back to stale cache if credentials unavailable
+		if (state?.folderCounts) {
+			return { ok: true, counts: state.folderCounts, cached: true };
+		}
+		return { ok: false, error: creds.error };
+	}
 
 	try {
 		const counts = await fetchFolderCounts(creds.email, creds.password);
 		await upsertSyncState(applierName, { folderCounts: counts, folderCountsUpdatedAt: new Date() });
 		return { ok: true, counts };
 	} catch (err) {
-		const state = await getSyncState(applierName);
-		if (state.folderCounts) {
+		// Fall back to stale cache on IMAP failure
+		if (state?.folderCounts) {
 			return { ok: true, counts: state.folderCounts, cached: true };
 		}
 		const message = err instanceof Error ? err.message : String(err);
@@ -222,17 +307,32 @@ export async function ensureMessageBody(applierName, uid, mailbox) {
 	}
 }
 
-/** Prefetch bodies for visible page (background). */
+/**
+ * Prefetch bodies for visible page using a single IMAP connection (batched).
+ * Caps at 10 bodies per batch to avoid IMAP timeouts on slow connections.
+ */
 export async function prefetchMessageBodies(applierName, uids, mailbox = ALL_MAIL_PATH) {
+	if (!uids.length) return;
+
 	const creds = await resolveMailCredentials(applierName);
 	if (!creds.ok) return;
 
 	const { getMessage } = await import('./mailStore.js');
+
+	// Filter to UIDs that need body fetching
+	const uncached = [];
 	for (const uid of uids) {
 		const existing = await getMessage(applierName, uid, mailbox);
-		if (existing?.hasBody) continue;
+		if (!existing?.hasBody) uncached.push(uid);
+	}
+
+	if (!uncached.length) return;
+
+	// Fetch in batches of 10 within a single connection
+	const BATCH_SIZE = 10;
+	for (let i = 0; i < Math.min(uncached.length, BATCH_SIZE); i++) {
 		try {
-			await ensureMessageBody(applierName, uid, mailbox);
+			await ensureMessageBody(applierName, uncached[i], mailbox);
 		} catch {
 			// best effort
 		}

@@ -138,6 +138,15 @@ export function AvalonControllerView({
   const applyBlocked = applyDisabledReason(relay, hasPlan);
   const canApply = hasPlan && !applyBlocked;
 
+  // Sequential step completion — each pipeline step unlocks only after the prior
+  // one is done (chained, so an out-of-order pre-generated résumé can't skip verify).
+  const done2 = Boolean(relay.treePage?.tabId); // opened
+  const done3 = done2 && Boolean(relay.tabValidity?.valid); // verified valid form
+  const done4 = done3 && hasResumeDraft; // résumé ready
+  const done5 = done4 && hasTree; // scanned
+  const done6 = done5 && hasPlan; // analyzed
+  const done7 = done6 && relay.applyDone; // applied
+
   const workflowSteps: WorkflowStep[] = [
     { id: "connect", label: "Connected", done: relay.canExecute, active: !relay.canExecute },
     {
@@ -257,6 +266,66 @@ export function AvalonControllerView({
         activeResume={relay.activeResume}
         jobTitle={activeJob?.title}
       />
+
+      {/* Token + cost usage for the current job */}
+      {relay.jobUsage.requests.length > 0 && (
+        <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border/60 flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-violet-500/5 to-transparent">
+            <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-violet-600" />
+              AI usage · this job
+              {activeJob && <span className="text-xs font-normal text-muted-foreground truncate max-w-[180px]">· {activeJob.title}</span>}
+            </h2>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="font-bold text-foreground">
+                {relay.jobUsage.totalTokens.toLocaleString()} tokens
+              </span>
+              {relay.jobUsage.cachedTokens > 0 && (
+                <span className="text-muted-foreground">({relay.jobUsage.cachedTokens.toLocaleString()} cached)</span>
+              )}
+              <span className="font-bold text-violet-700">${relay.jobUsage.totalCostUsd.toFixed(4)}</span>
+            </div>
+          </div>
+          <div className="px-2 py-1.5 max-h-[180px] overflow-y-auto">
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="text-muted-foreground text-left">
+                  <th className="font-semibold px-2 py-1">Request</th>
+                  <th className="font-semibold px-2 py-1 text-right">In</th>
+                  <th className="font-semibold px-2 py-1 text-right">Cached</th>
+                  <th className="font-semibold px-2 py-1 text-right">Out</th>
+                  <th className="font-semibold px-2 py-1 text-right">Total</th>
+                  <th className="font-semibold px-2 py-1 text-right">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {relay.jobUsage.requests.map((r, i) => (
+                  <tr key={`${r.label}-${i}`} className="border-t border-border/40">
+                    <td className="px-2 py-1 text-foreground truncate max-w-[180px]" title={`${r.label} · ${r.at}`}>
+                      {r.label}
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{r.promptTokens.toLocaleString()}</td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{r.cachedTokens ? r.cachedTokens.toLocaleString() : "—"}</td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{r.completionTokens.toLocaleString()}</td>
+                    <td className="px-2 py-1 text-right font-medium text-foreground">{r.totalTokens.toLocaleString()}</td>
+                    <td className="px-2 py-1 text-right font-medium text-violet-700">${r.costUsd.toFixed(5)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-border/60 font-bold">
+                  <td className="px-2 py-1 text-foreground">Total</td>
+                  <td className="px-2 py-1 text-right">{relay.jobUsage.promptTokens.toLocaleString()}</td>
+                  <td className="px-2 py-1 text-right">{relay.jobUsage.cachedTokens.toLocaleString()}</td>
+                  <td className="px-2 py-1 text-right">{relay.jobUsage.completionTokens.toLocaleString()}</td>
+                  <td className="px-2 py-1 text-right">{relay.jobUsage.totalTokens.toLocaleString()}</td>
+                  <td className="px-2 py-1 text-right text-violet-700">${relay.jobUsage.totalCostUsd.toFixed(4)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
 
       {applyBlocked && hasPlan && (
         <div className="rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-2">
@@ -465,7 +534,7 @@ export function AvalonControllerView({
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-semibold text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-40"
               >
                 <TreePine className="w-3.5 h-3.5" />
-                3 · Scan form
+                5 · Scan DOM
               </button>
             </div>
           </div>
@@ -590,7 +659,7 @@ export function AvalonControllerView({
             <button
               type="button"
               onClick={() => void relay.openActiveJob()}
-              disabled={!hasResumeDraft || !relay.canExecute || relay.applying}
+              disabled={!activeJob || !relay.canExecute || relay.applying}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-border text-sm font-semibold hover:bg-secondary disabled:opacity-40"
             >
               <ExternalLink className="w-4 h-4" />
@@ -598,8 +667,49 @@ export function AvalonControllerView({
             </button>
             <button
               type="button"
+              onClick={() => void relay.validateActiveTab()}
+              disabled={!done2 || !relay.canExecute || relay.validatingTab || relay.applying}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-border text-sm font-semibold hover:bg-secondary disabled:opacity-40"
+            >
+              {relay.validatingTab ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              {relay.validatingTab ? "Checking…" : "3 · Verify opened tab is a job form"}
+            </button>
+            {relay.tabValidity && (
+              <div
+                className={cn(
+                  "rounded-xl border px-3 py-2 text-[11px]",
+                  relay.tabValidity.valid
+                    ? "border-emerald-300/70 bg-emerald-50 text-emerald-900"
+                    : "border-red-300/70 bg-red-50 text-red-900",
+                )}
+              >
+                <span className="font-bold">{relay.tabValidity.valid ? "Valid form" : `Skipped (${relay.tabValidity.kind})`}</span>
+                {" — "}
+                {relay.tabValidity.reason}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => void relay.generateActiveJobResume()}
+              disabled={!done3 || relay.generatingResume || relay.applying}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-border text-sm font-semibold hover:bg-secondary disabled:opacity-40"
+            >
+              {relay.generatingResume ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {relay.generatingResume ? "Generating résumé…" : hasResumeDraft ? "4 · Résumé ready (regenerate)" : "4 · Generate / load résumé"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void relay.fetchActionableTree()}
+              disabled={!done4 || !relay.canExecute || relay.applying}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-border text-sm font-semibold hover:bg-secondary disabled:opacity-40"
+            >
+              <TreePine className="w-4 h-4" />
+              5 · Scan DOM (with dropdown probe)
+            </button>
+            <button
+              type="button"
               onClick={() => void relay.analyzeTree()}
-              disabled={!hasTree || relay.analyzing || relay.applying}
+              disabled={!done5 || relay.analyzing || relay.applying}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-sm font-bold shadow-md shadow-violet-500/20 hover:shadow-lg disabled:opacity-50 disabled:shadow-none transition-shadow"
             >
               {relay.analyzing ? (
@@ -607,25 +717,25 @@ export function AvalonControllerView({
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              {relay.analyzing ? "Analyzing…" : "4 · Analyze form"}
+              {relay.analyzing ? "Analyzing…" : "6 · Analyze form"}
             </button>
             <button
               type="button"
               onClick={() => void relay.applyActionPlan()}
-              disabled={!canApply || relay.applying || relay.analyzing}
+              disabled={!done6 || !canApply || relay.applying || relay.analyzing}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-foreground text-background text-sm font-bold hover:opacity-90 disabled:opacity-40 transition-opacity"
             >
               {relay.applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-              {relay.applying ? "Injecting…" : "5 · Apply fill plan"}
+              {relay.applying ? "Injecting…" : "7 · Apply fill plan"}
             </button>
             <button
               type="button"
               onClick={() => void relay.verifyActiveResult()}
-              disabled={!relay.canExecute || relay.verifying || relay.applying}
+              disabled={!done7 || !relay.canExecute || relay.verifying || relay.applying}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-500/40 text-emerald-700 text-sm font-bold hover:bg-emerald-500/10 disabled:opacity-40"
             >
               {relay.verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              {relay.verifying ? "Verifying…" : "6 · Verify result"}
+              {relay.verifying ? "Verifying…" : "8 · Verify result"}
             </button>
             {relay.verifyResult && (
               <div
@@ -657,6 +767,16 @@ export function AvalonControllerView({
                 )}
               </div>
             )}
+            <button
+              type="button"
+              onClick={() => void relay.markActiveJobApplied()}
+              disabled={!activeJob || relay.applying}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-500 disabled:opacity-40"
+              title="Mark this job Applied in MongoDB with the current profile"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              Mark as Applied
+            </button>
             {hasPlan && relay.injectionPlan && (
               <p className="text-[10px] text-center text-muted-foreground pt-1">
                 {relay.injectionPlan.steps.length} steps · uses drafted PDF
@@ -671,7 +791,7 @@ export function AvalonControllerView({
               </p>
             )}
             <p className="text-[9px] text-center text-muted-foreground leading-relaxed pt-1">
-              Step 3: <span className="font-semibold">Scan form</span> in the live browser after opening the job.
+              Steps run in order: open → verify tab → résumé → scan → analyze → apply → verify.
             </p>
           </div>
 

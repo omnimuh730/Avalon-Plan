@@ -46,9 +46,33 @@ export const APPLY_VERIFY_SCHEMA: JsonSchemaDefinition = {
   },
 };
 
+export interface AiUsage {
+  promptTokens: number;
+  cachedTokens?: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd?: number;
+}
+
 export interface ApplyVerifyResult {
   status: ApplyVerifyStatus;
   reason: string;
+  usage?: AiUsage;
+}
+
+/** Normalize an ai-bff usage block (with optional cached-token detail) to AiUsage. */
+export function toAiUsage(u: unknown): AiUsage | undefined {
+  const usage = u as
+    | { promptTokens?: number; completionTokens?: number; totalTokens?: number; cachedTokens?: number; cost?: { totalUsd?: number } }
+    | undefined;
+  if (!usage) return undefined;
+  return {
+    promptTokens: usage.promptTokens ?? 0,
+    cachedTokens: usage.cachedTokens,
+    completionTokens: usage.completionTokens ?? 0,
+    totalTokens: usage.totalTokens ?? 0,
+    costUsd: usage.cost?.totalUsd,
+  };
 }
 
 export async function verifyApplyOutcome(params: {
@@ -84,10 +108,11 @@ export async function verifyApplyOutcome(params: {
     temperature: 0,
   });
 
+  const usage = toAiUsage(response.usage);
   const structured = response.structured as { status?: ApplyVerifyStatus; reason?: string } | undefined;
   const status = structured?.status;
   if (status === "success" || status === "needs_verification" || status === "error" || status === "incomplete") {
-    return { status, reason: structured?.reason || "" };
+    return { status, reason: structured?.reason || "", usage };
   }
-  return { status: "incomplete", reason: "AI verifier returned no status" };
+  return { status: "incomplete", reason: "AI verifier returned no status", usage };
 }

@@ -64,6 +64,30 @@ export interface ManualVerifyResult {
   detail?: string;
 }
 
+/** One AI request's token + cost usage, for the per-job usage panel. */
+export interface UsageEntry {
+  label: string;
+  at: string;
+  promptTokens: number;
+  cachedTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+/** Loose usage shape accepted from any AI call (ai-bff, résumé gen, analyze). */
+type UsageLike =
+  | {
+      promptTokens?: number;
+      cachedTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+      costUsd?: number;
+      cost?: { totalUsd?: number } | number;
+    }
+  | undefined
+  | null;
+
 /** A generated per-job résumé held for attach + preview. */
 export interface JobResume {
   jobId: string;
@@ -125,6 +149,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<ManualVerifyResult | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [tabValidity, setTabValidity] = useState<PageValidityResult | null>(null);
+  const [validatingTab, setValidatingTab] = useState(false);
+  const [usageRequests, setUsageRequests] = useState<UsageEntry[]>([]);
+  const [applyDone, setApplyDone] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const applyingRef = useRef(false);
@@ -200,6 +228,28 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     },
     [scheduleRunFlush],
   );
+
+  /** Record one AI request's token/cost usage for the per-job usage panel. */
+  const recordUsage = useCallback((label: string, u: UsageLike) => {
+    if (!u) return;
+    const costUsd =
+      u.costUsd ?? (typeof u.cost === "number" ? u.cost : u.cost?.totalUsd) ?? 0;
+    if ((u.totalTokens ?? 0) === 0 && costUsd === 0) return;
+    setUsageRequests((prev) => [
+      ...prev,
+      {
+        label,
+        at: new Date().toLocaleTimeString(),
+        promptTokens: u.promptTokens ?? 0,
+        cachedTokens: u.cachedTokens ?? 0,
+        completionTokens: u.completionTokens ?? 0,
+        totalTokens: u.totalTokens ?? 0,
+        costUsd,
+      },
+    ]);
+  }, []);
+
+  const resetJobUsage = useCallback(() => setUsageRequests([]), []);
 
   /** Begin a new debug run (starts a JSONL file + Mongo doc via the meta event). */
   const startRunLog = useCallback(
@@ -401,6 +451,20 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     };
   }, [connect]);
 
+  /** Aggregated token + cost usage for the current job (total + per-request list). */
+  const jobUsage = useMemo(() => {
+    const sum = (k: keyof UsageEntry) =>
+      usageRequests.reduce((n, r) => n + (typeof r[k] === "number" ? (r[k] as number) : 0), 0);
+    return {
+      requests: usageRequests,
+      totalTokens: sum("totalTokens"),
+      promptTokens: sum("promptTokens"),
+      cachedTokens: sum("cachedTokens"),
+      completionTokens: sum("completionTokens"),
+      totalCostUsd: usageRequests.reduce((n, r) => n + r.costUsd, 0),
+    };
+  }, [usageRequests]);
+
   const actionPlanByFieldId = useMemo(() => {
     const map = new Map<string, FieldActionPlan>();
     for (const field of formAnalysis?.fields ?? []) {
@@ -489,6 +553,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         jobDescription: jd,
         forceRegenerate: options?.forceRegenerate,
       });
+      if (!gen.reused) recordUsage(`Résumé generation${gen.model ? ` (${gen.model})` : ""}`, gen.usage);
       const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
       setResumesByJobId((prev) => ({
         ...prev,
@@ -600,6 +665,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         applicantContext: applicantContext || undefined,
       });
       setFormAnalysis(result);
+      recordUsage("Analyze form", result.usage);
       setGeneratedScript("");
       setFieldScriptsById({});
       setInjectionPlan(null);
@@ -791,6 +857,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
 
     try {
       await runApplyWithPlan(plan, treePage, resumeFile);
+      setApplyDone(true);
     } catch (error) {
       pushLog(error instanceof Error ? error.message : "Apply failed", false);
     }
@@ -865,11 +932,13 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         fieldCount,
         controlCount,
       });
+      recordUsage("Verify tab (AI)", validity.usage);
       return { validity, tree, pageCtx };
     },
-    [emitActionAsync],
+    [emitActionAsync, recordUsage],
   );
 
+  /** Pipeline step 2 — open the active job's URL in a fresh tab (open only). */
   const openActiveJob = useCallback(async () => {
     const job = getActiveQueuedJob();
     if (!job) {
@@ -880,11 +949,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       pushLog(executeDisabledReason ?? "Cannot open job — extension not connected", false);
       return;
     }
-    const resumeFile = getResumeForJob(job);
-    if (!resumeFile) {
-      pushLog("Generate and preview tailored résumé before opening the job link", false);
-      return;
-    }
+    setTabValidity(null);
+    setVerifyResult(null);
+    setApplyDone(false);
+    resetJobUsage();
     try {
       const opened = await emitActionAsync({
         id: createActionId(),
@@ -896,16 +964,41 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       const tabId = openedData.tabId;
       if (tabId) setSelectedTabId(tabId);
       if (openedData.page) setTreePage(openedData.page);
+      pushLog(`Opened "${job.title}" — verify it's a valid application form next`, true);
+    } catch (error) {
+      pushLog(error instanceof Error ? error.message : "Failed to open job", false);
+    }
+  }, [canExecute, emitActionAsync, executeDisabledReason, getActiveQueuedJob, pushLog]);
 
-      // Validity gate: skip dead/expired/non-form links instead of scanning them.
-      if (tabId) {
-        pushLog(`Checking "${job.title}" link is a live application form…`, true);
-        const { validity, pageCtx } = await validateOpenedTab(tabId, job);
-        if (!validity.valid) {
-          pushLog(`"${job.title}" skipped — ${validity.kind}: ${validity.reason}`, false);
-          setVerifyResult({ kind: "failed", reason: `Link not usable (${validity.kind})`, detail: validity.reason });
-          await closeTab(tabId);
-          // Mark handled so the queue moves on (per requested flow).
+  /**
+   * Pipeline step 3 — verify the opened tab is a live job-application form. If it's
+   * expired / not found / an error / not a form, close the tab and mark the job
+   * handled so the queue moves on (per the requested flow).
+   */
+  const validateActiveTab = useCallback(async () => {
+    const job = getActiveQueuedJob();
+    const tabId = treePage?.tabId ?? (typeof selectedTabId === "number" ? selectedTabId : undefined);
+    if (!tabId) {
+      pushLog("Open the job link first (step 2)", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot verify — extension not connected", false);
+      return;
+    }
+    setValidatingTab(true);
+    setTabValidity(null);
+    try {
+      const jobForCheck: QueuedJob =
+        job ?? { id: "", title: treePage?.title ?? "this application", company: "", url: treePage?.url ?? "", source: "" };
+      const { validity } = await validateOpenedTab(tabId, jobForCheck);
+      setTabValidity(validity);
+      if (validity.valid) {
+        pushLog(`Valid application form — ${validity.reason}`, true);
+      } else {
+        pushLog(`Not a usable form (${validity.kind}) — ${validity.reason}; closing tab`, false);
+        await closeTab(tabId);
+        if (job) {
           setAppliedJobIds((prev) => new Set(prev).add(job.id));
           if (!isManualJob(job) && applierName) {
             try {
@@ -914,25 +1007,22 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
               /* non-fatal */
             }
           }
-          return;
         }
-        // Valid — keep the page context; the user runs "3 · Scan form" next (that
-        // scan probes dropdown options, which the fast validity scan skips).
-        if (pageCtx) setTreePage(pageCtx);
-        pushLog(`"${job.title}" is a valid form — scan the form next`, true);
       }
     } catch (error) {
-      pushLog(error instanceof Error ? error.message : "Failed to open job", false);
+      pushLog(error instanceof Error ? error.message : "Validity check failed", false);
+    } finally {
+      setValidatingTab(false);
     }
   }, [
     applierName,
     canExecute,
     closeTab,
-    emitActionAsync,
     executeDisabledReason,
     getActiveQueuedJob,
-    getResumeForJob,
     pushLog,
+    selectedTabId,
+    treePage,
     validateOpenedTab,
   ]);
 
@@ -992,6 +1082,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       const state = await readApplyPageState(tabId, submitted);
       try {
         const verdict = await verifyApplyOutcome({ pageText: state.text, jobTitle: job.title, controlCount: state.controlCount });
+        recordUsage("Verify result (AI)", verdict.usage);
         pushLog(`Verify (AI): ${verdict.status} — ${verdict.reason}`, verdict.status === "success");
         return { verdict, state };
       } catch (error) {
@@ -1038,16 +1129,72 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         result = { kind: "success", reason: verdict.reason || "Application submitted." };
         if (job) await markJobApplied(job);
       } else if (verdict.status === "needs_verification") {
-        let detail = "The page requires an emailed verification code or link. Check the applicant inbox.";
+        // OTP / email verification — pull the code OR a verify link from the inbox
+        // (regex + AI extractor), poll a few times since the email lags, then fill +
+        // submit (CSP-safe) or open the link, and re-verify.
+        let otp: Awaited<ReturnType<typeof requestVerificationCode>> = { code: null, link: null };
         if (applierName) {
-          const otp = await requestVerificationCode(applierName);
-          if (otp.code) {
-            detail = `Verification code from email: ${otp.code}${otp.subject ? ` (“${otp.subject}”)` : ""}`;
+          for (let poll = 0; poll < 4 && !otp.code && !otp.link; poll += 1) {
+            if (poll > 0) {
+              await emitActionAsync({ id: createActionId(), tabId, action: "wait", payload: { ms: 4000 } }).catch(() => {});
+            }
+            otp = await requestVerificationCode(applierName);
           }
         }
-        result = { kind: "additional", reason: verdict.reason || "Verification step required.", detail };
+        // Surface exactly what was read from the inbox (visibility the user asked for).
+        const readNote = otp.code
+          ? `Read code “${otp.code}”${otp.from ? ` from ${otp.from}` : ""}${otp.via ? ` (${otp.via})` : ""}`
+          : otp.link
+            ? `Read verify link${otp.from ? ` from ${otp.from}` : ""}${otp.via ? ` (${otp.via})` : ""}`
+            : `No code/link in the inbox yet${otp.scanned ? ` (scanned ${otp.scanned} email(s))` : ""}`;
+        pushLog(readNote, Boolean(otp.code || otp.link));
+
+        if (otp.code) {
+          pushLog(`Filling verification code ${otp.code} and submitting…`, true);
+          const fill = await emitActionAsync(
+            { id: createActionId(), tabId, action: "fill_verification_code", payload: { code: otp.code } },
+            20000,
+          ).catch((e) => ({ success: false, error: String(e) }) as ActionResult);
+          const filled = (fill.data as { filled?: number; expected?: number; clicked?: boolean } | undefined) ?? {};
+          const after = await verifyAfterSubmit(tabId, jobForVerify, true, 4000);
+          if (after.verdict.status === "success") {
+            result = { kind: "success", reason: `Verified with emailed code — ${after.verdict.reason}` };
+            if (job) await markJobApplied(job);
+          } else {
+            result = {
+              kind: "additional",
+              reason: `Entered code ${otp.code} into ${filled.filled ?? 0}/${filled.expected ?? "?"} box(es), submit ${filled.clicked ? "clicked" : "not found"}`,
+              detail: `Still not confirmed (${after.verdict.status}): ${after.verdict.reason}. Click Verify again to retry.`,
+            };
+          }
+        } else if (otp.link) {
+          // Click-to-verify flow — open the link in the same tab, then re-verify.
+          pushLog(`Opening verification link…`, true);
+          await emitActionAsync({ id: createActionId(), tabId, action: "navigate", payload: { url: otp.link } }, 30000).catch(() => {});
+          const after = await verifyAfterSubmit(tabId, jobForVerify, true, 5000);
+          if (after.verdict.status === "success") {
+            result = { kind: "success", reason: `Verified via emailed link — ${after.verdict.reason}` };
+            if (job) await markJobApplied(job);
+          } else {
+            result = {
+              kind: "additional",
+              reason: "Opened the emailed verification link",
+              detail: `Not confirmed yet (${after.verdict.status}): ${after.verdict.reason}. Click Verify again.`,
+            };
+          }
+        } else {
+          result = {
+            kind: "additional",
+            reason: verdict.reason || "Verification required.",
+            detail: `${readNote} — click Verify again once the email arrives.`,
+          };
+        }
       } else {
-        result = { kind: "failed", reason: verdict.reason || "Could not confirm the application." };
+        result = {
+          kind: "failed",
+          reason: verdict.reason || "Could not confirm the application.",
+          detail: "Re-run 5 · Scan DOM → 6 · Analyze → 7 · Apply, then 8 · Verify again.",
+        };
       }
       setVerifyResult(result);
       pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
@@ -1061,6 +1208,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   }, [
     applierName,
     canExecute,
+    emitActionAsync,
     executeDisabledReason,
     getActiveQueuedJob,
     markJobApplied,
@@ -1069,6 +1217,21 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     treePage,
     verifyAfterSubmit,
   ]);
+
+  /** Explicitly mark the active queued job Applied to MongoDB with the current profile. */
+  const markActiveJobApplied = useCallback(async () => {
+    const job = getActiveQueuedJob();
+    if (!job) {
+      pushLog("Select a queued job to mark applied", false);
+      return;
+    }
+    if (isManualJob(job) || !applierName) {
+      pushLog("Manual/link-only jobs can't be marked applied in the pipeline", false);
+      return;
+    }
+    await markJobApplied(job);
+    pushLog(`Marked "${job.title}" as Applied for ${applierName}`, true);
+  }, [applierName, getActiveQueuedJob, markJobApplied, pushLog]);
 
   /**
    * Re-scan the page's actionable tree for the recovery loop. Dropdown/combobox
@@ -1219,6 +1382,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             applicantContext: applicantContext || undefined,
             otpCode,
           });
+          recordUsage(`Recovery ${attempt} (AI)`, recovery.usage);
         } catch (error) {
           pushLog(`Recovery ${attempt}: AI failed — ${error instanceof Error ? error.message : error}`, false);
           continue;
@@ -1285,6 +1449,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       }
       setApplying(true);
       applyingRef.current = true;
+      setApplyDone(false);
+      resetJobUsage();
       startRunLog(job, { url: job.url, company: job.company, source: job.source });
       let finalStatus = "failed";
       try {
@@ -1379,6 +1545,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         const applyData = applyRes.data as
           | { submitted?: boolean; result?: StepRunResult[]; filesFound?: number; filesAttached?: number }
           | undefined;
+        setApplyDone(true);
         const submitted = Boolean(applyData?.submitted);
         const firstResults = Array.isArray(applyData?.result) ? applyData!.result : [];
 
@@ -1484,6 +1651,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     verifying,
     verifyActiveResult,
     setVerifyResult,
+    tabValidity,
+    validatingTab,
+    validateActiveTab,
+    applyDone,
+    jobUsage,
+    markActiveJobApplied,
     socketRef,
     connect,
     fetchActionableTree,

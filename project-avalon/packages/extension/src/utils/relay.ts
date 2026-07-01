@@ -214,10 +214,16 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
           const controls = document.querySelectorAll(
             'input:not([type=hidden]):not([disabled]),textarea,select,[contenteditable="true"]',
           );
-          return {
-            text: (document.body?.innerText ?? '').slice(0, 6000),
-            controlCount: controls.length,
-          };
+          const full = document.body?.innerText ?? '';
+          // Capture head AND tail: on long pages (e.g. a job description above the
+          // form) the decisive text — a confirmation, error, or "enter the code"
+          // prompt — is often at the BOTTOM, past a simple head-only slice.
+          const LIMIT = 8000;
+          const text =
+            full.length <= LIMIT * 2
+              ? full
+              : `${full.slice(0, LIMIT)}\n…\n${full.slice(-LIMIT)}`;
+          return { text, controlCount: controls.length };
         },
       });
       return {
@@ -225,6 +231,114 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
         success: true,
         data: results[0]?.result ?? { text: '', controlCount: 0 },
       };
+    } catch (error) {
+      return {
+        actionId: action.id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  // fill_verification_code is CSP-safe (hardcoded func, no eval). It distributes an
+  // emailed one-time code across the page's code inputs — a group of single-char
+  // boxes, or a single code field — using the React-safe native setter, then clicks
+  // the submit/verify control. Generic DOM heuristics only (no vendor strings).
+  if (action.action === 'fill_verification_code') {
+    await focusTab(tabId);
+    const code = String(action.payload?.code ?? '').trim();
+    if (!code) return { actionId: action.id, success: false, error: 'code is required' };
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async (codeStr: string) => {
+          const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+          const nativeSet = (el: HTMLInputElement, v: string) => {
+            const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+            if (desc?.set) desc.set.call(el, v);
+            else el.value = v;
+          };
+          // Fire a full key sequence so controlled/React OTP inputs register the
+          // character (and auto-advance focus): keydown → beforeinput → input → keyup → change.
+          const typeChar = (el: HTMLInputElement, ch: string) => {
+            el.focus();
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+            try {
+              el.dispatchEvent(new InputEvent('beforeinput', { data: ch, inputType: 'insertText', bubbles: true, cancelable: true }));
+            } catch {
+              /* older engines */
+            }
+            nativeSet(el, ch);
+            el.dispatchEvent(new InputEvent('input', { data: ch, inputType: 'insertText', bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+
+          const chars = codeStr.split('');
+          const inputs = Array.from(
+            document.querySelectorAll<HTMLInputElement>('input:not([type=hidden]):not([disabled])'),
+          ).filter((i) => ['text', 'tel', 'number', ''].includes(i.type) || i.inputMode === 'numeric');
+          const boxes = inputs.filter((i) => i.getAttribute('maxlength') === '1');
+          let filled = 0;
+          let mode = 'none';
+
+          if (boxes.length >= chars.length && boxes.length > 0) {
+            // Try a real PASTE first — many OTP widgets distribute a pasted code
+            // across the boxes in one shot.
+            try {
+              const dt = new DataTransfer();
+              dt.setData('text', codeStr);
+              boxes[0].focus();
+              boxes[0].dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+              await wait(80);
+            } catch {
+              /* paste not supported — fall through to typing */
+            }
+            const pasteWorked = boxes.slice(0, chars.length).every((b, i) => (b.value || '') === chars[i]);
+            if (!pasteWorked) {
+              for (let i = 0; i < chars.length; i += 1) {
+                typeChar(boxes[i], chars[i]);
+                await wait(30);
+              }
+            }
+            filled = boxes.slice(0, chars.length).filter((b) => (b.value || '').length > 0).length;
+            mode = pasteWorked ? 'boxes-paste' : 'boxes-type';
+          } else {
+            const labelled = inputs.find((i) =>
+              /code|verif|security|otp|passcode|pin/i.test(
+                `${i.name} ${i.id} ${i.getAttribute('aria-label') ?? ''} ${i.placeholder ?? ''}`,
+              ),
+            );
+            const single = labelled ?? inputs[0];
+            if (single) {
+              single.focus();
+              nativeSet(single, codeStr);
+              single.dispatchEvent(new InputEvent('input', { data: codeStr, inputType: 'insertText', bubbles: true }));
+              single.dispatchEvent(new Event('change', { bubbles: true }));
+              filled = (single.value || '').length > 0 ? 1 : 0;
+              mode = 'single';
+            }
+          }
+
+          // Give the framework a tick to enable the submit button, then click it.
+          await wait(120);
+          const clickable = Array.from(
+            document.querySelectorAll<HTMLElement>('button, input[type=submit], [role=button]'),
+          ).filter((b) => b.offsetParent !== null);
+          const submitBtn =
+            clickable.find((b) => (b as HTMLInputElement).type === 'submit') ??
+            clickable.find((b) => /submit|verify|confirm|continue|apply/i.test(b.textContent ?? '')) ??
+            null;
+          let clicked = false;
+          if (filled >= chars.length && submitBtn && !(submitBtn as HTMLButtonElement).disabled) {
+            submitBtn.click();
+            clicked = true;
+          }
+          return { filled, mode, clicked, boxes: boxes.length, expected: chars.length };
+        },
+        args: [code],
+      });
+      return { actionId: action.id, success: true, data: results[0]?.result ?? { filled: 0, clicked: false } };
     } catch (error) {
       return {
         actionId: action.id,

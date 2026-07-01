@@ -1,5 +1,6 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
+import { withPooledClient } from './imapPool.js';
 import {
 	ALL_MAIL_PATH,
 	FOLDER_MAILBOX,
@@ -87,18 +88,11 @@ function inlineCidImages(html, attachments) {
 }
 
 async function withMailboxPath(email, password, mailboxPath, fn) {
-	const client = await createClient(email, password);
-	const lock = await client.getMailboxLock(mailboxPath);
-	try {
-		return await fn(client);
-	} finally {
-		lock.release();
-		await client.logout();
-	}
+	return withPooledClient(email, password, mailboxPath, fn);
 }
 
 async function withMailbox(email, password, fn) {
-	return withMailboxPath(email, password, ALL_MAIL_PATH, fn);
+	return withPooledClient(email, password, ALL_MAIL_PATH, fn);
 }
 
 /**
@@ -315,12 +309,7 @@ export async function moveToInbox(email, password, uid, mailboxPath = ALL_MAIL_P
 }
 
 async function withClient(email, password, fn) {
-	const client = await createClient(email, password);
-	try {
-		return await fn(client);
-	} finally {
-		await client.logout();
-	}
+	return withPooledClient(email, password, undefined, fn);
 }
 
 /**
@@ -441,9 +430,10 @@ export async function fetchMailboxPage(email, password, folder, page, pageSize, 
  * Live folder totals from Gmail (total + unread for inbox).
  */
 export async function fetchFolderCounts(email, password) {
-	const client = await createClient(email, password);
-	const counts = {};
-	try {
+	// Use the pool directly without a pre-selected mailbox — we need to
+	// visit multiple mailboxes to count each folder.
+	return withPooledClient(email, password, undefined, async (client) => {
+		const counts = {};
 		for (const [folder, path] of Object.entries(FOLDER_MAILBOX)) {
 			const lock = await client.getMailboxLock(path);
 			try {
@@ -462,8 +452,6 @@ export async function fetchFolderCounts(email, password) {
 				lock.release();
 			}
 		}
-	} finally {
-		await client.logout();
-	}
-	return counts;
+		return counts;
+	});
 }

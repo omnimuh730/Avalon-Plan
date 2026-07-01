@@ -89,6 +89,7 @@ export type ActionType =
   | 'screenshot'
   | 'execute_script'
   | 'read_page_state'
+  | 'fill_verification_code'
   | 'fetch_actionable_tree'
   | 'apply_injection_plan';
 
@@ -274,6 +275,11 @@ export const ACTION_DEFINITIONS: Record<
   read_page_state: {
     label: 'Read page state',
     description: 'Read page innerText and control count after submit (CSP-safe via chrome.scripting)',
+    needsTarget: false,
+  },
+  fill_verification_code: {
+    label: 'Fill verification code',
+    description: 'Fill an emailed one-time/verification code into the page code inputs and submit (CSP-safe)',
     needsTarget: false,
   },
   fetch_actionable_tree: {
