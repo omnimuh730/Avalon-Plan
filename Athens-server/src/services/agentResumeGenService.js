@@ -185,7 +185,7 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
  * Generate (or reuse) a job-tailored resume for an agent run.
  * Uses saved resume-generator config; only the job description is replaced.
  */
-export async function ensureAgentJobResume({ applierName, jobId, jobDescription, forceRegenerate = false }) {
+export async function ensureAgentJobResume({ applierName, jobId, jobDescription, forceRegenerate = false, onStep }) {
   const name = cleanString(applierName);
   const parentId = cleanString(jobId);
   const jd = cleanString(jobDescription);
@@ -204,6 +204,7 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
 
   const existing = forceRegenerate ? null : await findExistingAgentJobResume(name, parentId);
   if (existing?.resume) {
+    if (onStep) onStep({ phase: "reused", name: "Existing draft" });
     const usage = usageToAgentShape(existing.generation?.usage, existing.generation?.model);
     const pdf = await pdfPayloadForAgent(
       existing.generation?.sections,
@@ -247,14 +248,17 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   }
 
   const startedAt = new Date();
-  const result = await runGeneration({
-    ...prep,
-    systemInstruction: body.systemInstruction,
-    identity,
-    applierName: name,
-    jobDescription: jd,
-    reasoningEffort: body.reasoningEffort,
-  });
+  const result = await runGeneration(
+    {
+      ...prep,
+      systemInstruction: body.systemInstruction,
+      identity,
+      applierName: name,
+      jobDescription: jd,
+      reasoningEffort: body.reasoningEffort,
+    },
+    onStep,
+  );
 
   let skillProfile = [];
   let techStack = null;
@@ -262,6 +266,7 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   const catalog = await findResumeCatalog(name);
 
   try {
+    if (onStep) onStep({ phase: "step-start", name: "Skill analysis", purpose: "skills" });
     const skillResult = await analyzeGeneratedResumeSkills({
       sections: result.sections,
       identity,
@@ -270,7 +275,9 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
       providerId: prep.providerId,
       apiKey: prep.apiKey,
       model: prep.model,
+      onProgress: onStep,
     });
+    if (onStep) onStep({ phase: "step-done", name: "Skill analysis", purpose: "skills" });
     skillProfile = skillResult.skillProfile;
     techStack = skillResult.techStack;
     result.perStep.push({ index: result.perStep.length + 1, ...skillResult.perStep });
@@ -321,6 +328,7 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   }
 
   const usage = usageToAgentShape(result.usage, prep.model);
+  if (onStep) onStep({ phase: "rendering-pdf", name: "Rendering PDF" });
   const pdf = await pdfPayloadForAgent(result.sections, identity, savedConfig, name, parentId);
   const finalName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
 

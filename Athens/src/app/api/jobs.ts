@@ -1,4 +1,5 @@
 import { API_BASE } from "@/lib/api-base";
+import { streamSSE } from "../features/resumes/lib/sse";
 import type { JobStatus } from "../types/job";
 
 export type JobApiStatus = "Applied" | "Scheduled" | "Declined";
@@ -97,6 +98,107 @@ export interface GeneratedJobResume {
   usage?: GeneratedResumeUsage;
 }
 
+export type ResumeSectionPurpose = "summary" | "skills" | "experience";
+
+export interface ResumeGenerationProgress {
+  stepLabel: string | null;
+  completedSections: Partial<Record<ResumeSectionPurpose, boolean>>;
+}
+
+function parseGeneratedJobResume(
+  data: Record<string, unknown>,
+  applierName: string,
+): GeneratedJobResume {
+  if (!data.pdfBase64) throw new Error("Résumé generated but no PDF was returned");
+  const fileName = (String(data.fileName || "") || `${applierName}.pdf`)
+    .replace(/\.txt\.pdf$/i, ".pdf")
+    .replace(/[^\w.\-()+ ]+/g, "_");
+  const finalName = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
+  const u = data.usage as
+    | {
+        inputTokens?: number;
+        cachedTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        costUsd?: number;
+        cost?: number;
+      }
+    | undefined;
+  return {
+    pdfBase64: String(data.pdfBase64),
+    fileName: finalName,
+    mimeType: "application/pdf",
+    reused: Boolean(data.reused),
+    generationId: (data.generationId as string | null) ?? null,
+    resumePdfPath: (data.resumePdfPath as string | null) ?? null,
+    model: (data.model as string | null) ?? null,
+    provider: (data.provider as string | null) ?? null,
+    usage: u
+      ? {
+          promptTokens: u.inputTokens ?? 0,
+          cachedTokens: u.cachedTokens,
+          completionTokens: u.outputTokens ?? 0,
+          totalTokens: u.totalTokens ?? 0,
+          costUsd: u.costUsd ?? u.cost,
+        }
+      : undefined,
+  };
+}
+
+/**
+ * Generate (or reuse) a per-job résumé with live SSE step progress (Editor-style).
+ */
+export async function generateJobResumeStream(
+  params: {
+    applierName: string;
+    jobId: string;
+    jobDescription: string;
+    forceRegenerate?: boolean;
+  },
+  onProgress?: (progress: ResumeGenerationProgress) => void,
+): Promise<GeneratedJobResume> {
+  let donePayload: Record<string, unknown> | null = null;
+  await streamSSE(
+    `${API_BASE}/personal/resume-generate/for-agent-job/stream`,
+    {
+      applierName: params.applierName,
+      jobId: params.jobId,
+      jobDescription: params.jobDescription,
+      ...(params.forceRegenerate ? { forceRegenerate: true } : {}),
+    },
+    (event, data) => {
+      if (event === "step") {
+        const phase = String(data.phase ?? "");
+        const name = String(data.name ?? "Step");
+        const purpose = data.purpose as ResumeSectionPurpose | undefined;
+        if (phase === "reused") {
+          onProgress?.({ stepLabel: "Reusing saved draft…", completedSections: {} });
+          return;
+        }
+        if (phase === "rendering-pdf") {
+          onProgress?.({ stepLabel: "Rendering PDF…", completedSections: {} });
+          return;
+        }
+        if (phase === "step-start") {
+          onProgress?.({ stepLabel: `Running: ${name}…`, completedSections: {} });
+          return;
+        }
+        if (phase === "step-done") {
+          const completedSections: Partial<Record<ResumeSectionPurpose, boolean>> = {};
+          if (purpose === "summary" || purpose === "skills" || purpose === "experience") {
+            completedSections[purpose] = true;
+          }
+          onProgress?.({ stepLabel: `${name} generated`, completedSections });
+        }
+      }
+      if (event === "done") donePayload = data;
+      if (event === "error") throw new Error(String(data.error ?? "Résumé generation failed"));
+    },
+  );
+  if (!donePayload) throw new Error("Résumé generation ended without a result");
+  return parseGeneratedJobResume(donePayload, params.applierName);
+}
+
 /**
  * Generate (or reuse) a per-job résumé tailored to the JD, using the profile's
  * saved Resume Generator config. Only jobDescription varies per job.
@@ -118,49 +220,7 @@ export async function generateJobResume(params: {
       ...(params.forceRegenerate ? { forceRegenerate: true } : {}),
     }),
   });
-  const data = (await res.json()) as {
-    success?: boolean;
-    error?: string;
-    pdfBase64?: string;
-    fileName?: string;
-    reused?: boolean;
-    generationId?: string | null;
-    resumePdfPath?: string | null;
-    model?: string | null;
-    provider?: string | null;
-    usage?: {
-      inputTokens?: number;
-      cachedTokens?: number;
-      outputTokens?: number;
-      totalTokens?: number;
-      costUsd?: number;
-      cost?: number;
-    };
-  };
+  const data = (await res.json()) as Record<string, unknown> & { success?: boolean; error?: string };
   if (!res.ok || !data.success) throw new Error(data.error || `Résumé generation failed (${res.status})`);
-  if (!data.pdfBase64) throw new Error("Résumé generated but no PDF was returned");
-  const fileName = (data.fileName || `${params.applierName}.pdf`)
-    .replace(/\.txt\.pdf$/i, '.pdf')
-    .replace(/[^\w.\-()+ ]+/g, '_');
-  const finalName = fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`;
-  const u = data.usage;
-  return {
-    pdfBase64: data.pdfBase64,
-    fileName: finalName,
-    mimeType: "application/pdf",
-    reused: Boolean(data.reused),
-    generationId: data.generationId ?? null,
-    resumePdfPath: data.resumePdfPath ?? null,
-    model: data.model ?? null,
-    provider: data.provider ?? null,
-    usage: u
-      ? {
-          promptTokens: u.inputTokens ?? 0,
-          cachedTokens: u.cachedTokens,
-          completionTokens: u.outputTokens ?? 0,
-          totalTokens: u.totalTokens ?? 0,
-          costUsd: u.costUsd ?? u.cost,
-        }
-      : undefined,
-  };
+  return parseGeneratedJobResume(data, params.applierName);
 }

@@ -751,6 +751,54 @@ export async function getAgentJobResumePdf(req, res) {
   }
 }
 
+/** POST /personal/resume-generate/for-agent-job/stream — SSE progress for agent résumé generation. */
+export async function generateResumeForAgentJobStream(req, res) {
+  const body = req.body || {};
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const applierName = cleanString(body.applierName);
+    const jobId = cleanString(body.jobId);
+    const jobDescription = cleanString(body.jobDescription);
+    if (!applierName) {
+      send("error", { error: "applierName is required" });
+      return res.end();
+    }
+    if (!jobId) {
+      send("error", { error: "jobId is required" });
+      return res.end();
+    }
+    if (!jobDescription) {
+      send("error", { error: "jobDescription is required" });
+      return res.end();
+    }
+
+    const { ensureAgentJobResume } = await import("../services/agentResumeGenService.js");
+    const result = await ensureAgentJobResume({
+      applierName,
+      jobId,
+      jobDescription,
+      forceRegenerate: Boolean(body.forceRegenerate),
+      onStep: (evt) => send("step", evt),
+    });
+    send("done", result);
+  } catch (err) {
+    const status = Number.isInteger(err?.status) ? err.status : 500;
+    console.warn(`POST /api/personal/resume-generate/for-agent-job/stream failed (${status}): ${err.message}`);
+    send("error", { error: err.message, status });
+  }
+  res.end();
+}
+
 /** POST /personal/resume-generate/for-agent-job — agent autobid per-job resume (reuse or generate). */
 export async function generateResumeForAgentJob(req, res) {
   try {

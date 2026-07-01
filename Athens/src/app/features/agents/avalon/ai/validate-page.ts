@@ -16,16 +16,20 @@ export type PageValidityKind =
   | "not_a_form"; // a real page but not an application form (job description only, login wall, etc.)
 
 const VALIDATE_SYSTEM_PROMPT = [
-  "You decide whether an opened URL is a LIVE job-application FORM that can be filled and submitted.",
-  "You are given the page's visible text, its title, and how many fillable form controls it has.",
+  "You decide whether an opened URL is part of an ACTIVE job-application flow worth continuing.",
+  "You are given the page's visible text, its title, and how many actionable controls were discovered.",
   "Classify into exactly one kind:",
-  "- application_form: a real, open application form with fields to fill (name/email/résumé/etc.).",
+  "- application_form: ANY page in an open application flow, including:",
+  "  (a) a fillable form with name/email/résumé/etc., OR",
+  "  (b) a job posting / intake page whose next step is an in-page Apply / Submit / Continue / Next",
+  "      control that advances toward the application (even when text fields are not visible yet).",
+  "  Do NOT reject a page merely because the user must click Apply first — that IS the application flow.",
   "- expired: the posting is closed / no longer accepting applications / position filled.",
   "- not_found: 404 / page or job does not exist / invalid link.",
-  "- error: the page failed to load, shows an error, or is blank with no form.",
-  "- not_a_form: a valid page but NOT an application form (e.g. only a job description with an",
-  "  'Apply' link not yet clicked, a login/SSO wall, a listings page).",
-  "A high control count with typical application labels strongly implies application_form.",
+  "- error: the page failed to load, shows an error, or is blank with no meaningful content.",
+  "- not_a_form: a valid page but NOT part of this job's application (e.g. a multi-job board listing,",
+  "  careers home page, unrelated article, login/SSO wall with no apply path on this page).",
+  "Prominent Apply / Apply for / Submit / Continue / Next text with a job title strongly implies application_form.",
   "A control count of 0 with 'not found', 'no longer', 'closed', 'expired' text implies expired/not_found.",
   "Judge only from the given text + control count.",
 ].join("\n");

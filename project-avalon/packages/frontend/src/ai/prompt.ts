@@ -22,12 +22,12 @@ Action rules by controlType:
   - Uncheck only options clearly unrelated — never skip the whole group with "no profile data"
   - Use groupContext + option label together (e.g. "What do you want to work on?" → Check Backend/Frontend for a full-stack engineer)
 - radio → Click (select that option), value = N/A
-- button → Click, value = N/A
+- button → Click, value = N/A. Primary in-flow navigation buttons (Apply, Apply for, Submit, Continue, Next, Proceed, Start application, Review and submit) MUST use shouldSkip No — they advance to or through the application; never skip them just because text fields are not on this screen yet.
 - Single-select option groups (radio options, or Yes/No and segmented <button> options that SHARE the same groupContext): these are ONE question split into multiple option fields. You MUST select EXACTLY ONE option per group — shouldSkip No on the chosen option and shouldSkip Yes on every OTHER option in that same group. Never leave all options in a group skipped, and never mark more than one as shouldSkip No.
   - Choose the option that matches the profile (e.g. sponsorship Yes/No from profile.sponsorship).
   - If the profile has no direct answer, still answer when the question is required (asterisk / "required") or clearly expects a choice: pick the most reasonable, low-risk answer for a qualified applicant from the groupContext (e.g. authorized-to-work → Yes; require-sponsorship → No). Do not skip a required question for "no profile data".
 - file → FileUpload, value = file purpose (e.g. "resume", "cover letter") — do not invent file bytes
-- link → Click with shouldSkip Yes, value N/A — informational links must NOT be clicked (they leave the application page)
+- link → Click. shouldSkip No when the label/groupContext is in-application navigation (Apply, Apply for, Submit, Continue, Next, Proceed, Start application, Review and submit, Save and continue) — these open or advance the application form and MUST be clicked. shouldSkip Yes only for informational/external links (definitions, OFCCP, dol.gov, privacy policy, learn more, unrelated www/http URLs) that do not advance the application.
 
 Resume / CV file upload (TOP PRIORITY — MANDATORY):
 - Any field labeled Resume, CV, Resume/CV, or similar file upload is the highest-priority action on the form.
@@ -36,8 +36,11 @@ Resume / CV file upload (TOP PRIORITY — MANDATORY):
 - Cover letter file uploads: shouldSkip Yes — automation only supplies a tailored resume PDF, not a cover letter.
 - Autofill-from-resume widgets (upload to autofill other fields): shouldSkip Yes — not the application resume field.
 
+Application navigation (MUST click — shouldSkip No):
+- Any button or link whose label clearly starts or continues the application (Apply, Apply for [job title], Submit, Submit application, Continue, Next, Proceed, Start application, Review and submit). This includes job-posting pages that only show an Apply control before name/email fields appear.
+
 ShouldSkip Yes when:
-- Informational / disclosure / external links (definitions, OFCCP, dol.gov, learn more)
+- Informational / disclosure / external links (definitions, OFCCP, dol.gov, learn more, company marketing pages off-site)
 - Optional fields with no profile data and no sensible default (only if truly skippable)
 - The NON-chosen options of a single-select group (exactly one option per group stays shouldSkip No)
 - NEVER for Resume/CV file uploads
@@ -56,10 +59,15 @@ Return one entry per field id in the request. Use value "N/A" for Click actions 
 const INFORMATIONAL_LINK_PATTERN =
   /\b(definition|definitions|learn more|ofccp|dol\.gov|privacy|policy|voluntary|disclosure|www\.|https?:\/\/)\b/i;
 
+/** In-flow Apply / Submit / Continue controls — must reach the AI planner, never auto-skipped. */
+const NAVIGATION_LABEL_PATTERN =
+  /\b(apply(\s+(for|now|to|today))?|submit(\s+(application|my\s+application))?|continue|next(\s+step)?|proceed|start(\s+application)?|save(\s+and\s+continue)?|review(\s+and\s+submit)?)\b/i;
+
 export function isSkippableField(field: FlatFormField): boolean {
   if (field.controlType !== 'link') return false;
-  if (field.required) return false;
-  return true;
+  const text = `${field.label} ${field.groupContext}`;
+  if (NAVIGATION_LABEL_PATTERN.test(text)) return false;
+  return INFORMATIONAL_LINK_PATTERN.test(text);
 }
 
 export function skipActionPlanEntry(field: FlatFormField): FieldActionPlan {
@@ -151,6 +159,7 @@ export function buildAnalysisUserMessage(
     'EVERY text and textarea field is mandatory: action=Typing, shouldSkip=No, with a real composed value — never Click and never skip a text/textarea.',
     'Single-select groups (Yes/No, radio, segmented buttons sharing a groupContext): pick EXACTLY ONE option (shouldSkip No) and shouldSkip Yes the rest. Never skip all options of such a group.',
     'Resume/CV file uploads are mandatory — must be FileUpload with shouldSkip No (top priority).',
+    'Apply / Submit / Continue / Next buttons and links: action=Click, shouldSkip=No — required to reach or advance the application form.',
     'Multi-select checkbox groups: shouldSkip No per option — Check skills that match profile careers/title.',
     'Combobox / location / autocomplete fields: action must be Typing (never SelectOption) — type profile city or filter text; Enter confirms after typing.',
     skippedCount > 0

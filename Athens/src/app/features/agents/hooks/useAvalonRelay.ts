@@ -21,7 +21,7 @@ import { buildApplyInjectionPlanPayload } from "../avalon/ai/apply-injection-pla
 import { buildFormInjectionPlan } from "../avalon/ai/generate-injection-plan";
 import type { FieldActionPlan, FormAnalysisResult } from "../avalon/ai/types";
 import { avalonRelayUrl } from "../../../services/agentApi";
-import { applyToJob, fetchJobDescription, generateJobResume } from "../../../api/jobs";
+import { applyToJob, fetchJobDescription, generateJobResumeStream, type ResumeSectionPurpose } from "../../../api/jobs";
 import { requestVerificationCode } from "../../../api/mail";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
@@ -117,6 +117,27 @@ export interface QueuedJob {
   source: string;
 }
 
+/** Per-job manual pipeline progress (steps 2–8). */
+export interface JobPipelineState {
+  opened: boolean;
+  validated: boolean;
+  resumeReady: boolean;
+  scanned: boolean;
+  analyzed: boolean;
+  applied: boolean;
+  verified: boolean;
+}
+
+const EMPTY_PIPELINE: JobPipelineState = {
+  opened: false,
+  validated: false,
+  resumeReady: false,
+  scanned: false,
+  analyzed: false,
+  applied: false,
+  verified: false,
+};
+
 export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [serverUrl, setServerUrl] = useState(() => avalonRelayUrl());
   const [sessionId, setSessionId] = useState("");
@@ -146,6 +167,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [resumesByJobId, setResumesByJobId] = useState<Record<string, JobResume>>({});
   const [resumeJobId, setResumeJobId] = useState<string | null>(null);
   const [generatingResume, setGeneratingResume] = useState(false);
+  const [generatingResumeJobId, setGeneratingResumeJobId] = useState<string | null>(null);
+  const [resumeGenerateStep, setResumeGenerateStep] = useState<string | null>(null);
+  const [resumeGeneratedSections, setResumeGeneratedSections] = useState<
+    Partial<Record<ResumeSectionPurpose, boolean>>
+  >({});
+  const [pipelineByJobId, setPipelineByJobId] = useState<Record<string, JobPipelineState>>({});
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<ManualVerifyResult | null>(null);
   const [verifying, setVerifying] = useState(false);
@@ -247,6 +274,28 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         costUsd,
       },
     ]);
+  }, []);
+
+  const markPipeline = useCallback((jobId: string, patch: Partial<JobPipelineState>) => {
+    if (!jobId) return;
+    setPipelineByJobId((prev) => ({
+      ...prev,
+      [jobId]: { ...EMPTY_PIPELINE, ...prev[jobId], ...patch },
+    }));
+  }, []);
+
+  /** Clear scan/analyze state when switching queue jobs (pipeline flags stay per job). */
+  const resetJobWorkspace = useCallback(() => {
+    setActionableTree(null);
+    setFormAnalysis(null);
+    setTreePage(null);
+    setTabValidity(null);
+    setVerifyResult(null);
+    setApplyDone(false);
+    setInjectionPlan(null);
+    setGeneratedScript("");
+    setFieldScriptsById({});
+    setSelectedTreeFieldId(null);
   }, []);
 
   const resetJobUsage = useCallback(() => setUsageRequests([]), []);
@@ -387,6 +436,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           setTreePage(data.page);
           setSelectedTabId(data.page.tabId);
         }
+        const activeJob = jobQueueRef.current[activeJobIndexRef.current];
+        if (activeJob) {
+          markPipeline(activeJob.id, { scanned: true, analyzed: false, applied: false, verified: false });
+        }
         const groups = data.tree.length;
         const targets = data.tree.reduce((n, g) => n + g.children.length, 0);
         const pageHint = data.page?.url ? ` · ${data.page.url}` : "";
@@ -441,7 +494,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         pushLog(`Screenshot failed: ${payload.error}`, false);
       }
     });
-  }, [pushLog, serverUrl]);
+  }, [markPipeline, pushLog, serverUrl]);
 
   useEffect(() => {
     connect();
@@ -527,6 +580,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         if (cached) {
           setResumeJobId(job.id);
           setResumeError(null);
+          markPipeline(job.id, { resumeReady: true });
           return cached.file;
         }
       } else {
@@ -547,12 +601,20 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           : `Generating tailored résumé for "${job.title}" (Resume Generator config)…`,
         true,
       );
-      const gen = await generateJobResume({
-        applierName,
-        jobId: job.id,
-        jobDescription: jd,
-        forceRegenerate: options?.forceRegenerate,
-      });
+      const gen = await generateJobResumeStream(
+        {
+          applierName,
+          jobId: job.id,
+          jobDescription: jd,
+          forceRegenerate: options?.forceRegenerate,
+        },
+        (progress) => {
+          if (progress.stepLabel) setResumeGenerateStep(progress.stepLabel);
+          if (Object.keys(progress.completedSections).length > 0) {
+            setResumeGeneratedSections((prev) => ({ ...prev, ...progress.completedSections }));
+          }
+        },
+      );
       if (!gen.reused) recordUsage(`Résumé generation${gen.model ? ` (${gen.model})` : ""}`, gen.usage);
       const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
       setResumesByJobId((prev) => ({
@@ -567,12 +629,13 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       }));
       setResumeJobId(job.id);
       setResumeError(null);
+      markPipeline(job.id, { resumeReady: true });
       const modelNote = gen.model ? ` · ${gen.provider ? `${gen.provider}/` : ""}${gen.model}` : "";
       const pathNote = gen.resumePdfPath ? ` · saved ${gen.resumePdfPath}` : "";
       pushLog(`Résumé ${gen.reused ? "reused" : "generated"} for "${job.title}"${modelNote}${pathNote}`, true);
       return file;
     },
-    [applierName, pushLog, resumesByJobId],
+    [applierName, markPipeline, pushLog, resumesByJobId],
   );
 
   /** Start résumé generation for a queued job (deduped per job id). */
@@ -586,6 +649,9 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
 
       const promise = (async () => {
         setGeneratingResume(true);
+        setGeneratingResumeJobId(job.id);
+        setResumeGenerateStep("Starting generation…");
+        setResumeGeneratedSections({});
         setResumeJobId(job.id);
         setResumeError(null);
         try {
@@ -597,6 +663,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           throw error;
         } finally {
           setGeneratingResume(false);
+          setGeneratingResumeJobId(null);
+          setResumeGenerateStep(null);
           resumeGenByJobIdRef.current.delete(job.id);
         }
       })();
@@ -606,15 +674,6 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     },
     [ensureJobResume, pushLog],
   );
-
-  // Step 1: generate tailored résumé when the active queue job changes (before opening the job URL).
-  useEffect(() => {
-    const job = jobQueue[activeJobIndex];
-    if (!job || isManualJob(job) || !applierName) return;
-    void startResumeForJob(job).catch(() => {
-      /* errors logged in startResumeForJob */
-    });
-  }, [activeJobIndex, applierName, jobQueue, startResumeForJob]);
 
   const generateActiveJobResume = useCallback(
     async (forceRegenerate = false) => {
@@ -676,6 +735,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         true,
       );
       buildPlanFromFields(result.fields);
+      const job = getActiveQueuedJob();
+      if (job) markPipeline(job.id, { analyzed: true });
     } catch (error) {
       pushLog(error instanceof Error ? error.message : "Analysis failed", false);
     } finally {
@@ -687,6 +748,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     buildPlanFromFields,
     canExecute,
     executeDisabledReason,
+    getActiveQueuedJob,
+    markPipeline,
     pushLog,
     treePage,
   ]);
@@ -858,6 +921,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     try {
       await runApplyWithPlan(plan, treePage, resumeFile);
       setApplyDone(true);
+      markPipeline(job.id, { applied: true });
     } catch (error) {
       pushLog(error instanceof Error ? error.message : "Apply failed", false);
     }
@@ -870,6 +934,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     getActiveQueuedJob,
     getResumeForJob,
     injectionPlan,
+    markPipeline,
     pushLog,
     runApplyWithPlan,
     treePage,
@@ -962,13 +1027,30 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       if (!opened.success) throw new Error(opened.error || "Failed to open tab");
       const openedData = opened.data as { tabId?: number; page?: ActionablePageContext };
       const tabId = openedData.tabId;
+      setActionableTree(null);
+      setFormAnalysis(null);
+      setInjectionPlan(null);
+      setGeneratedScript("");
+      setFieldScriptsById({});
+      setSelectedTreeFieldId(null);
+      setTabValidity(null);
+      setVerifyResult(null);
+      setApplyDone(false);
       if (tabId) setSelectedTabId(tabId);
-      if (openedData.page) setTreePage(openedData.page);
+      setTreePage(openedData.page ?? null);
+      markPipeline(job.id, {
+        opened: true,
+        validated: false,
+        scanned: false,
+        analyzed: false,
+        applied: false,
+        verified: false,
+      });
       pushLog(`Opened "${job.title}" — verify it's a valid application form next`, true);
     } catch (error) {
       pushLog(error instanceof Error ? error.message : "Failed to open job", false);
     }
-  }, [canExecute, emitActionAsync, executeDisabledReason, getActiveQueuedJob, pushLog]);
+  }, [canExecute, emitActionAsync, executeDisabledReason, getActiveQueuedJob, markPipeline, pushLog]);
 
   /**
    * Pipeline step 3 — verify the opened tab is a live job-application form. If it's
@@ -994,6 +1076,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       const { validity } = await validateOpenedTab(tabId, jobForCheck);
       setTabValidity(validity);
       if (validity.valid) {
+        if (job) markPipeline(job.id, { validated: true });
         pushLog(`Valid application form — ${validity.reason}`, true);
       } else {
         pushLog(`Not a usable form (${validity.kind}) — ${validity.reason}; closing tab`, false);
@@ -1020,6 +1103,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     closeTab,
     executeDisabledReason,
     getActiveQueuedJob,
+    markPipeline,
     pushLog,
     selectedTabId,
     treePage,
@@ -1197,6 +1281,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         };
       }
       setVerifyResult(result);
+      if (result.kind === "success" && job) markPipeline(job.id, { verified: true });
       pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Verify failed";
@@ -1212,6 +1297,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     executeDisabledReason,
     getActiveQueuedJob,
     markJobApplied,
+    markPipeline,
     pushLog,
     selectedTabId,
     treePage,
@@ -1612,6 +1698,34 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     pushLog(`Queue complete · ${jobQueue.length} job(s) processed`, true);
   }, [applyJob, jobQueue, pushLog]);
 
+  const selectActiveJob = useCallback(
+    (index: number) => {
+      const job = jobQueue[index];
+      resetJobWorkspace();
+      setActiveJobIndex(index);
+      if (job) {
+        setResumeJobId(job.id);
+        if (resumesByJobId[job.id]?.file?.base64) {
+          markPipeline(job.id, { resumeReady: true });
+        }
+      }
+    },
+    [jobQueue, markPipeline, resetJobWorkspace, resumesByJobId],
+  );
+
+  const activePipeline = useMemo((): JobPipelineState => {
+    const job = jobQueue[activeJobIndex];
+    if (!job) return EMPTY_PIPELINE;
+    const stored = pipelineByJobId[job.id] ?? EMPTY_PIPELINE;
+    return {
+      ...stored,
+      resumeReady: stored.resumeReady || Boolean(resumesByJobId[job.id]?.file?.base64),
+    };
+  }, [activeJobIndex, jobQueue, pipelineByJobId, resumesByJobId]);
+
+  const isGeneratingActiveResume =
+    generatingResume && generatingResumeJobId === jobQueue[activeJobIndex]?.id;
+
   return {
     serverUrl,
     setServerUrl,
@@ -1640,11 +1754,14 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     actionPlanByFieldId,
     jobQueue,
     activeJobIndex,
-    setActiveJobIndex,
+    selectActiveJob,
+    activePipeline,
     appliedJobIds,
     resumesByJobId,
     activeResume: resumeJobId ? resumesByJobId[resumeJobId] ?? null : null,
-    generatingResume,
+    generatingResume: isGeneratingActiveResume,
+    resumeGenerateStep,
+    resumeGeneratedSections,
     resumeError,
     applyPhase,
     verifyResult,
