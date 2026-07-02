@@ -1,38 +1,62 @@
-import { userResumesCollection, accountInfoCollection } from '../../db/mongo.js';
+import { userSkillsCollection } from '../../db/mongo.js';
 import { getRedis, isRedisReady } from '../../db/redis.js';
 import { normalizeSkillSet } from '@nextoffer/shared/skill-normalize';
-import { loadProfileBoostSkills, buildProfileMatchContext } from './profileBoostSkills.js';
+import { buildProfileCompacts } from '@nextoffer/shared/skill-match';
+import { buildProfileTokens, skillTokens } from '@nextoffer/shared/skill-tokens';
+import { compactSkillText } from '@nextoffer/shared/skill-compact';
+import { computeUserSkillWeight } from '../../config/graphAndVectorConfig.js';
+import { requestUserRescore } from './matchScoreStore.js';
 
 const PROFILE_CACHE_TTL_SEC = 180;
 const profileKey = (applierName) => `profile:skills:${String(applierName || '').trim()}`;
 const matchContextKey = (applierName) => `profile:match:${String(applierName || '').trim()}`;
 
-async function loadResumeSkillRaw(applierName) {
-  const name = String(applierName || '').trim();
-  if (!name || !userResumesCollection) return [];
+/**
+ * The profile match context is built SOLELY from manual user skills
+ * (user_skills collection) — resume-derived skills no longer participate.
+ * Besides the boolean matching surfaces (tokens/compacts), the context carries
+ * per-token and per-compact weights (category weight × level factor) consumed
+ * by the weighted coverage scorer.
+ */
+function buildContextFromSkillDocs(skillDocs) {
+  const names = [];
+  const tokenWeights = {};
+  const compactWeightMap = new Map();
 
-  const resumes = await userResumesCollection
-    .find({ ownerName: name, analyzed: true })
-    .project({ skillProfile: 1, skills: 1 })
-    .toArray();
+  for (const doc of skillDocs) {
+    const label = String(doc?.name || '').trim();
+    if (!label) continue;
+    names.push(label);
+    const weight = computeUserSkillWeight(doc.category, doc.level);
+    if (weight <= 0) continue;
 
-  const rawSkills = [];
-  for (const doc of resumes) {
-    if (Array.isArray(doc.skillProfile)) {
-      for (const item of doc.skillProfile) {
-        const n = item?.name || item?.skill;
-        if (n) rawSkills.push(String(n));
+    for (const token of skillTokens(label)) {
+      if (!(token in tokenWeights) || tokenWeights[token] < weight) {
+        tokenWeights[token] = weight;
       }
     }
-    if (Array.isArray(doc.skills)) {
-      for (const s of doc.skills) rawSkills.push(String(s));
+    const compact = compactSkillText(label);
+    if (compact && compact.length >= 2) {
+      const prev = compactWeightMap.get(compact);
+      if (prev === undefined || prev < weight) compactWeightMap.set(compact, weight);
     }
   }
-  return rawSkills;
+
+  const profileCompacts = buildProfileCompacts(names);
+  const ctx = {
+    exactSet: normalizeSkillSet(names),
+    profileCompacts,
+    boostCompacts: profileCompacts,
+    profileTokens: buildProfileTokens(names),
+    tokenWeights,
+    compactWeights: [...compactWeightMap.entries()].map(([c, w]) => ({ c, w })),
+    boostRaw: names,
+  };
+  return ctx;
 }
 
 /**
- * Load union of canonical skills across resumes (exact match layer).
+ * Load union of canonical skills (exact match layer).
  */
 export async function loadProfileSkillSet(applierName) {
   const ctx = await loadProfileMatchContext(applierName);
@@ -40,12 +64,12 @@ export async function loadProfileSkillSet(applierName) {
 }
 
 /**
- * Resume exact skills + user-boosted skills with compact substring rules.
+ * Weighted match context from the user's manual skill list, Redis-cached.
  */
 export async function loadProfileMatchContext(applierName) {
   const name = String(applierName || '').trim();
   if (!name) {
-    return buildProfileMatchContext(new Set(), [], []);
+    return buildContextFromSkillDocs([]);
   }
 
   if (isRedisReady()) {
@@ -56,9 +80,11 @@ export async function loadProfileMatchContext(applierName) {
         const parsed = JSON.parse(cached);
         return {
           exactSet: new Set(parsed.exactSet || []),
-          profileCompacts: parsed.profileCompacts || parsed.boostCompacts || [],
-          boostCompacts: parsed.profileCompacts || parsed.boostCompacts || [],
+          profileCompacts: parsed.profileCompacts || [],
+          boostCompacts: parsed.profileCompacts || [],
           profileTokens: parsed.profileTokens || [],
+          tokenWeights: parsed.tokenWeights || {},
+          compactWeights: parsed.compactWeights || [],
           boostRaw: parsed.boostRaw || [],
         };
       } catch {
@@ -67,20 +93,22 @@ export async function loadProfileMatchContext(applierName) {
     }
   }
 
-  const rawSkills = await loadResumeSkillRaw(name);
-  const resumeExact = normalizeSkillSet(rawSkills);
-  const boostSkills = await loadProfileBoostSkills(name);
-  const ctx = buildProfileMatchContext(resumeExact, boostSkills, rawSkills);
-  ctx.boostRaw = boostSkills;
+  const skillDocs = userSkillsCollection
+    ? await userSkillsCollection
+        .find({ applierName: name }, { projection: { name: 1, category: 1, level: 1 } })
+        .toArray()
+    : [];
+  const ctx = buildContextFromSkillDocs(skillDocs);
 
   if (isRedisReady()) {
     const redis = getRedis();
     const payload = JSON.stringify({
       exactSet: [...ctx.exactSet],
       profileCompacts: ctx.profileCompacts,
-      boostCompacts: ctx.profileCompacts,
       profileTokens: ctx.profileTokens,
-      boostRaw: boostSkills,
+      tokenWeights: ctx.tokenWeights,
+      compactWeights: ctx.compactWeights,
+      boostRaw: ctx.boostRaw,
     });
     await redis.setEx(matchContextKey(name), PROFILE_CACHE_TTL_SEC, payload);
     await redis.setEx(profileKey(name), PROFILE_CACHE_TTL_SEC, JSON.stringify([...ctx.exactSet]));
@@ -89,9 +117,23 @@ export async function loadProfileMatchContext(applierName) {
   return ctx;
 }
 
-export async function invalidateProfileSkillCache(applierName) {
+/** Drop the Redis-cached profile context only (no rescore side effects). */
+export async function clearProfileSkillCache(applierName) {
   const name = String(applierName || '').trim();
   if (!name || !isRedisReady()) return;
   const redis = getRedis();
   await redis.del(profileKey(name), matchContextKey(name));
+}
+
+/**
+ * Single funnel for "this user's skills changed". Queues a full
+ * materialized-score rebuild for the user — deliberately before the Redis
+ * guard inside clearProfileSkillCache, so the rescore is requested even when
+ * Redis is down.
+ */
+export async function invalidateProfileSkillCache(applierName) {
+  const name = String(applierName || '').trim();
+  if (!name) return;
+  await requestUserRescore(name);
+  await clearProfileSkillCache(name);
 }

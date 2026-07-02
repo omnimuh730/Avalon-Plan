@@ -36,7 +36,7 @@ export function JobSearchPage() {
 
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
-  const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, patchJob, refreshStatusCounts } =
+  const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts } =
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
   const { applyToJob, updateJobStatus, cancelJobStatus, isPending } = useJobApplicationActions(patchJob, refreshStatusCounts);
@@ -135,7 +135,9 @@ export function JobSearchPage() {
 
       {!recommendationFallback && filters.sort === "matchScore" ? (
         <div className="mb-3 rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground">
-          Best match ranks the most relevant jobs first; remaining jobs follow sorted by date.
+          {recommendationWarming
+            ? "Match scores are being recalculated for your profile — ranking will sharpen shortly."
+            : "Best match ranks the most relevant jobs first; remaining jobs follow sorted by date."}
         </div>
       ) : null}
 

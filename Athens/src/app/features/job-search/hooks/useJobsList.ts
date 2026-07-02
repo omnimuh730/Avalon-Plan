@@ -17,6 +17,7 @@ type ListResponse = {
   data?: Record<string, unknown>[];
   recommendationFallback?: boolean;
   recommendationReason?: string | null;
+  recommendationWarming?: boolean;
   catalogTotal?: number | null;
   pagination?: { total: number; page: number; limit: number; totalPages: number };
 };
@@ -149,6 +150,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
   const [recommendationFallback, setRecommendationFallback] = useState(false);
   const [recommendationReason, setRecommendationReason] = useState<string | null>(null);
+  const [recommendationWarming, setRecommendationWarming] = useState(false);
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
 
   const hasLoadedOnce = useRef(false);
@@ -202,6 +204,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
           setTotal(res.pagination?.total ?? res.data.length);
           setRecommendationFallback(Boolean(res.recommendationFallback));
           setRecommendationReason(res.recommendationReason ?? null);
+          setRecommendationWarming(Boolean(res.recommendationWarming));
           setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
           hasLoadedOnce.current = true;
           filterKeyRef.current = filterKey;
@@ -285,6 +288,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     applierReady,
     recommendationFallback,
     recommendationReason,
+    recommendationWarming,
     catalogTotal,
     patchJob,
     refreshStatusCounts,
@@ -299,8 +303,9 @@ function recommendationFallbackMessage(reason: string | null, hasUnembeddedJobs 
         : "Job embeddings are not indexed yet. New jobs embed automatically when Qdrant is running.";
     case "embedding_failed":
       return "Could not build resume/profile embeddings. Re-analyze a resume and ensure Ollama (`mxbai-embed-large`) is running.";
+    case "no_profile_skills":
     case "no_analyzed_resumes":
-      return "Analyze at least one resume in My Resumes → Library before using Best match.";
+      return "Add your skills via the My skills button in the toolbar before using Best match — scoring is based on that list.";
     case "qdrant_not_ready":
       return hasUnembeddedJobs
         ? "Qdrant is not reachable. Start it with `npm run qdrant:start` in Athens-server, then use Embed jobs in the toolbar."

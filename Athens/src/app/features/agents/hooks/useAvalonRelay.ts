@@ -27,7 +27,6 @@ import {
   storedAvalonSessionId,
 } from "../../../services/agentApi";
 import { applyToJob, fetchJobDescription, generateJobResumeStream, type ResumeSectionPurpose } from "../../../api/jobs";
-import { requestVerificationCode } from "../../../api/mail";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
 import { verifyApplyOutcome, type ApplyVerifyResult } from "../avalon/ai/verify-apply";
@@ -1267,60 +1266,13 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       }
 
       if (verdict.status === "needs_verification") {
-        let otp: Awaited<ReturnType<typeof requestVerificationCode>> = { code: null, link: null };
-        if (applierName) {
-          for (let poll = 0; poll < 4 && !otp.code && !otp.link; poll += 1) {
-            if (poll > 0) {
-              await emitActionAsync({ id: createActionId(), tabId, action: "wait", payload: { ms: 4000 } }).catch(() => {});
-            }
-            otp = await requestVerificationCode(applierName);
-          }
-        }
-        const readNote = otp.code
-          ? `Read code “${otp.code}”${otp.from ? ` from ${otp.from}` : ""}${otp.via ? ` (${otp.via})` : ""}`
-          : otp.link
-            ? `Read verify link${otp.from ? ` from ${otp.from}` : ""}${otp.via ? ` (${otp.via})` : ""}`
-            : `No code/link in the inbox yet${otp.scanned ? ` (scanned ${otp.scanned} email(s))` : ""}`;
-        pushLog(readNote, Boolean(otp.code || otp.link));
-
-        if (otp.code) {
-          pushLog(`Filling verification code ${otp.code} and submitting…`, true);
-          const fill = await emitActionAsync(
-            { id: createActionId(), tabId, action: "fill_verification_code", payload: { code: otp.code } },
-            20000,
-          ).catch((e) => ({ success: false, error: String(e) }) as ActionResult);
-          const filled = (fill.data as { filled?: number; expected?: number; clicked?: boolean } | undefined) ?? {};
-          const after = await verifyAfterSubmit(tabId, jobForVerify, true, 4000);
-          if (after.verdict.status === "success") {
-            if (job) await markJobApplied(job);
-            return { kind: "success", reason: `Verified with emailed code — ${after.verdict.reason}` };
-          }
-          return {
-            kind: "additional",
-            reason: `Entered code ${otp.code} into ${filled.filled ?? 0}/${filled.expected ?? "?"} box(es), submit ${filled.clicked ? "clicked" : "not found"}`,
-            detail: `Still not confirmed (${after.verdict.status}): ${after.verdict.reason}. Click Verify again to retry.`,
-          };
-        }
-
-        if (otp.link) {
-          pushLog("Opening verification link…", true);
-          await emitActionAsync({ id: createActionId(), tabId, action: "navigate", payload: { url: otp.link } }, 30000).catch(() => {});
-          const after = await verifyAfterSubmit(tabId, jobForVerify, true, 5000);
-          if (after.verdict.status === "success") {
-            if (job) await markJobApplied(job);
-            return { kind: "success", reason: `Verified via emailed link — ${after.verdict.reason}` };
-          }
-          return {
-            kind: "additional",
-            reason: "Opened the emailed verification link",
-            detail: `Not confirmed yet (${after.verdict.status}): ${after.verdict.reason}. Click Verify again.`,
-          };
-        }
-
+        // This page needs an emailed verification code/link. Automated inbox
+        // reading (Gmail IMAP) has been removed — enter the code manually on the
+        // page, then click Verify again to re-check the outcome.
         return {
           kind: "additional",
           reason: verdict.reason || "Verification required.",
-          detail: `${readNote} — click Verify again once the email arrives.`,
+          detail: "Enter the emailed verification code/link on the page, then click Verify again.",
         };
       }
 
@@ -1801,13 +1753,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           break;
         }
 
-        // Phase D — if the page is asking for an emailed code, pull the latest one
-        // from the applier's inbox (IMAP). The email lags the submit by a few
-        // seconds, so poll a few times before giving up this attempt.
-        // Also check the re-scanned tree for verification-code input patterns as a
-        // fallback (e.g. "Security code", single-char inputs) in case the page text
-        // is incomplete or the regex missed the cue.
-        let otpCode: string | null = null;
+        // Phase D — automated inbox reading (Gmail IMAP) has been removed. If the
+        // page is asking for an emailed code, flag it so the user can enter it
+        // manually; recovery still proceeds without an auto-fetched code.
+        const otpCode: string | null = null;
         const treeHasVerificationInputs = tree.some((g) =>
           g.children.some(
             (c) =>
@@ -1819,34 +1768,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
                 g.children.filter((cc) => cc.controlType === 'text').length >= 4),
           ),
         );
-        const shouldCheckEmail =
-          applierName &&
-          (VERIFICATION_CUE.test(state.text) || treeHasVerificationInputs);
-
-        if (shouldCheckEmail) {
+        if (VERIFICATION_CUE.test(state.text) || treeHasVerificationInputs) {
           pushLog(
-            `Recovery ${attempt}: verification detected — checking email (${treeHasVerificationInputs ? 'tree' : 'text'} cue)…`,
-            true,
+            `Recovery ${attempt}: verification code required — enter it manually on the page (auto email read disabled)`,
+            false,
           );
-          for (let poll = 0; poll < 5 && !otpCode; poll += 1) {
-            if (poll > 0) {
-              await emitActionAsync({ id: createActionId(), tabId, action: "wait", payload: { ms: 5000 } }).catch(() => {});
-            }
-            // Widen the email lookback window on later polls — verification emails
-            // can take 30-60s to arrive, and Gmail's IMAP sync has inherent latency.
-            const sinceMs = poll < 2 ? undefined : (poll + 1) * 60_000;
-            const otp = await requestVerificationCode(applierName, sinceMs);
-            otpCode = otp.code;
-            if (otpCode) {
-              pushLog(
-                `Recovery ${attempt}: got code from email (poll ${poll + 1}, subject: ${otp.subject ?? 'unknown'})`,
-                true,
-              );
-            }
-          }
-          if (!otpCode) {
-            pushLog(`Recovery ${attempt}: no verification code in email after 5 polls`, false);
-          }
         }
 
         let recovery;

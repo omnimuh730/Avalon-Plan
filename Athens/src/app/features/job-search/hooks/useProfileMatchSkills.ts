@@ -9,8 +9,21 @@ import {
 } from "../../../lib/skill-match";
 import type { Job } from "../../../types";
 
+export type UserSkillCategory = "hard" | "soft" | "devops" | "tools" | "domain";
+
+export type UserSkill = {
+  name: string;
+  category: UserSkillCategory;
+  level: number;
+  weight?: number;
+};
+
 type MatchSkillsResponse = {
   success?: boolean;
+  skills?: UserSkill[];
+  categories?: UserSkillCategory[];
+  levelMin?: number;
+  levelMax?: number;
   boostSkills?: string[];
   exactSkills?: string[];
   profileTokens?: string[];
@@ -35,9 +48,11 @@ function contextFromResponse(res: MatchSkillsResponse): ProfileMatchContext {
 }
 
 export function useProfileMatchSkills(enabled = true) {
-  const { post, get } = useApi(API_BASE);
+  const { post, get, del } = useApi(API_BASE);
   const { applier } = useApplier();
+  const [skills, setSkills] = useState<UserSkill[]>([]);
   const [boostSkills, setBoostSkills] = useState<string[]>([]);
+  const [exactSkills, setExactSkills] = useState<string[]>([]);
   const [matchContext, setMatchContext] = useState<ProfileMatchContext | null>(null);
   const [loading, setLoading] = useState(false);
   const [boostingSkill, setBoostingSkill] = useState<string | null>(null);
@@ -51,7 +66,9 @@ export function useProfileMatchSkills(enabled = true) {
         `/personal/profile-match-skills?applierName=${encodeURIComponent(name)}`,
       )) as MatchSkillsResponse;
       if (res?.success) {
+        setSkills(res.skills ?? []);
         setBoostSkills(res.boostSkills ?? []);
+        setExactSkills(res.exactSkills ?? []);
         setMatchContext(contextFromResponse(res));
       }
     } finally {
@@ -78,6 +95,7 @@ export function useProfileMatchSkills(enabled = true) {
 
         if (!res?.success) return null;
 
+        setSkills(res.skills ?? []);
         setBoostSkills(res.boostSkills ?? []);
         const ctx = contextFromResponse(res);
         setMatchContext(ctx);
@@ -111,12 +129,68 @@ export function useProfileMatchSkills(enabled = true) {
     [applier?.name, post],
   );
 
+  const addSkill = useCallback(
+    async (skill: string, category?: UserSkillCategory, level?: number): Promise<boolean> => {
+      const name = applier?.name?.trim();
+      const label = skill.trim();
+      if (!name || !label) return false;
+
+      setBoostingSkill(label);
+      try {
+        const res = (await post("/personal/profile-match-skills", {
+          applierName: name,
+          skill: label,
+          category,
+          level,
+        })) as AddSkillResponse;
+        if (!res?.success) return false;
+        setSkills(res.skills ?? []);
+        setBoostSkills(res.boostSkills ?? []);
+        setExactSkills(res.exactSkills ?? []);
+        setMatchContext(contextFromResponse(res));
+        return res.added !== false;
+      } finally {
+        setBoostingSkill(null);
+      }
+    },
+    [applier?.name, post],
+  );
+
+  const removeSkill = useCallback(
+    async (skill: string): Promise<boolean> => {
+      const name = applier?.name?.trim();
+      const label = skill.trim();
+      if (!name || !label) return false;
+
+      setBoostingSkill(label);
+      try {
+        const res = (await del("/personal/profile-match-skills", {
+          applierName: name,
+          skill: label,
+        })) as MatchSkillsResponse & { removed?: boolean };
+        if (!res?.success) return false;
+        setSkills(res.skills ?? []);
+        setBoostSkills(res.boostSkills ?? []);
+        setExactSkills(res.exactSkills ?? []);
+        setMatchContext(contextFromResponse(res));
+        return res.removed !== false;
+      } finally {
+        setBoostingSkill(null);
+      }
+    },
+    [applier?.name, del],
+  );
+
   return {
+    skills,
     boostSkills,
+    exactSkills,
     matchContext,
     loading,
     boostingSkill,
     reload,
     boostSkillForJob,
+    addSkill,
+    removeSkill,
   };
 }

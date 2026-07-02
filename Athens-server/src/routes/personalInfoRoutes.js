@@ -3,6 +3,7 @@ import express from "express";
 import {
 	getProfileMatchSkills,
 	addProfileMatchSkill,
+	removeProfileMatchSkill,
 } from "../controllers/profileMatchSkillsController.js";
 import {
 	getSkills,
@@ -50,6 +51,7 @@ const router = express.Router();
 
 router.get('/personal/profile-match-skills', getProfileMatchSkills);
 router.post('/personal/profile-match-skills', addProfileMatchSkill);
+router.delete('/personal/profile-match-skills', removeProfileMatchSkill);
 
 router.get('/personal/skills', getSkills);
 router.post('/personal/skills', addSkill);

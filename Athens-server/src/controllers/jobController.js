@@ -15,8 +15,9 @@ import {
 	JOB_DETAIL_PROJECTION,
 } from '../services/jobListQuery.js';
 import { queueJobAnalysis, getJobAnalysisStatus } from '../services/jobAnalysis/index.js';
-import { matchJobsForApplier } from '../services/matching/matchingService.js';
+import { listRecommendedJobs } from '../services/matching/matchScoreReader.js';
 import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../services/matching/skillIndex.js';
+import { deleteScoresForJobs } from '../services/matching/matchScoreStore.js';
 import { upsertJobEmbeddingAsync } from '../services/embeddings/embeddingIngest.js';
 import {
 	getJobEmbeddingStatus,
@@ -142,6 +143,8 @@ export async function createJob(req, res) {
 
 		// MongoDB only on ingest — world graph enrichment runs from Knowledge Graph page.
 		job.skillAnalysis = { status: 'pending' };
+		// Match-score worker fans this job out to every user profile.
+		job.matchScoreStatus = 'pending';
 		Object.assign(job, attachStaticScoreFields({ ...job, skills }));
 
 		const result = jobsCollection ? await jobsCollection.insertOne(job) : null;
@@ -220,7 +223,9 @@ export async function removeJobsForRule(req, res) {
 			});
 		}
 
+		const doomed = await jobsCollection.find(query, { projection: { _id: 1 } }).toArray();
 		const result = await jobsCollection.deleteMany(query);
+		void deleteScoresForJobs(doomed.map((d) => d._id)).catch(() => {});
 		return res.json({ success: true, deletedCount: result.deletedCount });
 	} catch (err) {
 		console.error(`DELETE /api/jobs/rule/${req.params.name} error`, err);
@@ -299,11 +304,12 @@ export async function getJobs(req, res) {
 		let total;
 		let recommendationFallback = false;
 		let recommendationReason = null;
+		let recommendationWarming = false;
 		let catalogTotal = null;
 		const useRecommendation = sort === 'recommended' && applierName;
 
 		if (useRecommendation) {
-			const result = await matchJobsForApplier({
+			const result = await listRecommendedJobs({
 				applierName,
 				mongoQuery: query,
 				scoreFilters,
@@ -315,6 +321,7 @@ export async function getJobs(req, res) {
 				docs = result.docs;
 				total = result.total;
 				catalogTotal = result.catalogTotal ?? total;
+				recommendationWarming = Boolean(result.recommendationWarming);
 			} else {
 				recommendationFallback = true;
 				recommendationReason = result.reason || 'unknown';
@@ -360,6 +367,7 @@ export async function getJobs(req, res) {
 			data: docs,
 			recommendationFallback,
 			recommendationReason,
+			recommendationWarming,
 			catalogTotal,
 			pagination: {
 				total,
@@ -492,6 +500,7 @@ export async function removeJobs(req, res) {
 		}).filter(Boolean);
 
 		const result = await jobsCollection.deleteMany({ _id: { $in: objectIds } });
+		void deleteScoresForJobs(objectIds).catch(() => {});
 		return res.json({ success: true, deletedCount: result.deletedCount });
 	} catch (err) {
 		console.error('POST /api/jobs/remove error', err);

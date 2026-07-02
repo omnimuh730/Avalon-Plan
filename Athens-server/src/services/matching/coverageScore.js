@@ -1,5 +1,5 @@
 import { clampScore } from '@nextoffer/shared/score';
-import { computeSkillHighlights, jobSkillMatchesProfile, buildProfileCompacts } from '@nextoffer/shared/skill-match';
+import { computeSkillHighlights, jobSkillMatchesProfile, jobSkillMatchWeight, buildProfileCompacts } from '@nextoffer/shared/skill-match';
 import { buildProfileTokens } from '@nextoffer/shared/skill-tokens';
 
 export { clampScore };
@@ -40,14 +40,33 @@ export function computeCoverageScore(jobSkills, profileSkills) {
     return { matchScore: 0, covered: [], missing: [], required: 0 };
   }
 
+  // Weighted profile (manual user skills carrying category/level weights):
+  // each matched job skill contributes its best matching skill's 0..1 weight,
+  // so a max-level hard skill counts fully while a soft skill counts partially.
+  const weighted = Boolean(ctx?.tokenWeights || ctx?.compactWeights?.length);
+
   const covered = [];
   const missing = [];
+  let weightSum = 0;
   for (const skill of uniqueSkills) {
-    if (jobSkillMatchesProfile(skill, ctx)) covered.push(skill);
-    else missing.push(skill);
+    if (weighted) {
+      const w = jobSkillMatchWeight(skill, ctx);
+      if (w > 0) {
+        covered.push(skill);
+        weightSum += w;
+      } else {
+        missing.push(skill);
+      }
+    } else if (jobSkillMatchesProfile(skill, ctx)) {
+      covered.push(skill);
+    } else {
+      missing.push(skill);
+    }
   }
 
-  const matchScore = clampScore((covered.length / required) * 100);
+  const matchScore = weighted
+    ? clampScore((weightSum / required) * 100)
+    : clampScore((covered.length / required) * 100);
   return { matchScore, covered, missing, required };
 }
 

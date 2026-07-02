@@ -7,6 +7,12 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 		jobsCollection.createIndex({ url: 1 }),
 		jobsCollection.createIndex({ 'status.applier': 1 }),
 		jobsCollection.createIndex({ source: 1, postedAt: -1 }),
+		// Match-score fan-out worker claims pending jobs; partial index keeps it
+		// tiny (most jobs are 'scored' or lack the field entirely).
+		jobsCollection.createIndex(
+			{ matchScoreStatus: 1, postedAt: -1 },
+			{ partialFilterExpression: { matchScoreStatus: 'pending' } },
+		),
 	]);
 }
 
@@ -86,6 +92,14 @@ export async function dedupeJobMarketByApplyLink(jobsCollection) {
 	if (!idsToRemove.length) return { removed: 0 };
 
 	const result = await jobsCollection.deleteMany({ _id: { $in: idsToRemove } });
+	// Cascade: drop materialized match scores for the removed duplicates. Lazy
+	// import — mongo.js imports this module, so a top-level import would cycle.
+	try {
+		const { deleteScoresForJobs } = await import('./matching/matchScoreStore.js');
+		await deleteScoresForJobs(idsToRemove);
+	} catch (err) {
+		console.warn('[job_market] match score cascade after dedupe failed', err.message);
+	}
 	console.log(`[job_market] removed ${result.deletedCount} duplicate applyLink job(s)`);
 	return { removed: result.deletedCount };
 }

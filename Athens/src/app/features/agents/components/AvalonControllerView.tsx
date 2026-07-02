@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   Circle,
   Copy,
@@ -87,6 +86,29 @@ type WorkflowStep = {
   active: boolean;
 };
 
+type WorkflowIconState = "done" | "active" | "idle";
+
+function workflowIconState(step: WorkflowStep): WorkflowIconState {
+  if (step.done) return "done";
+  if (step.active) return "active";
+  return "idle";
+}
+
+/** Keyed icon slot — avoids lucide SVG swap insertBefore crashes during rapid pipeline updates. */
+function WorkflowStepIcon({ state }: { state: WorkflowIconState }) {
+  return (
+    <span className="inline-flex shrink-0" aria-hidden>
+      {state === "done" ? (
+        <CheckCircle2 className="w-3.5 h-3.5" />
+      ) : state === "active" ? (
+        <Circle className="w-3 h-3 fill-violet-500 text-violet-500" />
+      ) : (
+        <Circle className="w-3 h-3" />
+      )}
+    </span>
+  );
+}
+
 function WorkflowRail({ steps }: { steps: WorkflowStep[] }) {
   return (
     <div className="flex items-center gap-1 overflow-x-auto pb-1">
@@ -100,16 +122,10 @@ function WorkflowRail({ steps }: { steps: WorkflowStep[] }) {
               !step.done && !step.active && "text-muted-foreground",
             )}
           >
-            {step.done ? (
-              <CheckCircle2 className="w-3.5 h-3.5" />
-            ) : step.active ? (
-              <Circle className="w-3 h-3 fill-violet-500 text-violet-500" />
-            ) : (
-              <Circle className="w-3 h-3" />
-            )}
+            <WorkflowStepIcon key={workflowIconState(step)} state={workflowIconState(step)} />
             {step.label}
           </div>
-          {i < steps.length - 1 && <ArrowRight className="w-3 h-3 mx-0.5 text-border shrink-0" />}
+          {i < steps.length - 1 && <span className="w-3 h-px bg-border mx-0.5 shrink-0" aria-hidden />}
         </div>
       ))}
     </div>

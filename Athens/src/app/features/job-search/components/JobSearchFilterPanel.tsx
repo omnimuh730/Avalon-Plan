@@ -20,6 +20,7 @@ import {
 import { ActiveFilterChips } from "./filters/ActiveFilterChips";
 import { JobFiltersSheet } from "./filters/JobFiltersSheet";
 import { JobScoreFiltersPopover } from "./filters/JobScoreFiltersPopover";
+import { MySkillsPopover } from "./MySkillsPopover";
 
 const STATUS_TABS: {
   id: JobStatusTab;
@@ -173,6 +174,8 @@ export function JobSearchFilterPanel({
             showOnCards={showScoresOnCards}
             onShowOnCardsChange={onShowScoresOnCardsChange}
           />
+
+          <MySkillsPopover />
         </div>
 
         {/* Layer 3: active filter chips (collapsible) */}

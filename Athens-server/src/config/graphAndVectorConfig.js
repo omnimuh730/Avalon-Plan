@@ -158,6 +158,56 @@ export function getJobListScoreWeights() {
 	};
 }
 
+/** Master switch for blending vector similarity into Best Match. Off by default: recommendation scoring is pure skill coverage and never touches Qdrant/Ollama. */
+export function isHybridMatchEnabled() {
+	return envString('RECOMMENDATION_HYBRID_ENABLED', 'false') === 'true';
+}
+
+/**
+ * Serve Best Match from the materialized job_match_scores collection (indexed
+ * reads) instead of scoring the whole catalog per request. Cold starts fall
+ * back to the legacy scorer automatically while the worker builds the rows.
+ */
+export function isMaterializedRecommendationEnabled() {
+	return envString('RECOMMENDATION_MATERIALIZED', 'true') === 'true';
+}
+
+// ── User skill categories & weighted match scoring ──────────────────────────
+
+export const USER_SKILL_CATEGORIES = ['hard', 'soft', 'devops', 'tools', 'domain'];
+export const USER_SKILL_LEVEL_MIN = 1;
+export const USER_SKILL_LEVEL_MAX = 5;
+
+const DEFAULT_SKILL_CATEGORY_WEIGHTS = {
+	hard: 1.0,
+	devops: 0.85,
+	tools: 0.7,
+	domain: 0.6,
+	soft: 0.5,
+};
+
+/** Per-category weight a matched job skill contributes (before level scaling). */
+export function getSkillCategoryWeights() {
+	return envJsonObject('MATCH_CATEGORY_WEIGHTS', DEFAULT_SKILL_CATEGORY_WEIGHTS);
+}
+
+/**
+ * Scale a category weight by skill level (1-5). A floor keeps low-level skills
+ * counting partially instead of vanishing: level 1 → floor, level 5 → 1.0.
+ */
+export function skillLevelFactor(level) {
+	const floor = envFloat('MATCH_LEVEL_FLOOR', 0.4);
+	const lv = Math.min(USER_SKILL_LEVEL_MAX, Math.max(USER_SKILL_LEVEL_MIN, Number(level) || USER_SKILL_LEVEL_MIN));
+	return floor + (1 - floor) * (lv / USER_SKILL_LEVEL_MAX);
+}
+
+/** Combined 0..1 weight for one user skill. */
+export function computeUserSkillWeight(category, level) {
+	const weights = getSkillCategoryWeights();
+	const catWeight = typeof weights[category] === 'number' ? weights[category] : weights.hard ?? 1;
+	return Math.max(0, Math.min(1, catWeight * skillLevelFactor(level)));
+}
+
 /** Hybrid Best Match: skill containment + profile/job vector similarity (per-user, no role hardcoding). */
 export function getHybridMatchWeights() {
 	return {

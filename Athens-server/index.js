@@ -9,6 +9,7 @@ import { initMongo } from "./src/db/mongo.js";
 import { initRedis } from "./src/db/redis.js";
 import { initSocket } from "./src/socketHub.js";
 import { startJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
+import { startMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
 import { initQdrantCollections } from "./src/services/vectorStore/qdrantClient.js";
 import { checkOllamaEmbeddingReady } from "./src/services/embeddings/embeddingService.js";
 
@@ -45,6 +46,7 @@ async function bootstrap() {
 	await initMongo();
 	await initRedis();
 	startJobAnalysisWorker();
+	startMatchScoreWorker();
 	try {
 		await initQdrantCollections();
 	} catch (err) {

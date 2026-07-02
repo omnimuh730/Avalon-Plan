@@ -1,7 +1,7 @@
 import { ObjectId } from 'mongodb';
 import { jobsCollection } from '../../db/mongo.js';
 import { isRedisReady } from '../../db/redis.js';
-import { getHybridMatchWeights, getCandidatePoolSize } from '../../config/graphAndVectorConfig.js';
+import { getHybridMatchWeights, getCandidatePoolSize, isHybridMatchEnabled } from '../../config/graphAndVectorConfig.js';
 import { JOB_LIST_PROJECTION } from '../jobListQuery.js';
 import { loadProfileMatchContext, invalidateProfileSkillCache } from './profileSkills.js';
 import {
@@ -28,6 +28,7 @@ function vectorScoreFromHit(hit) {
 }
 
 async function loadVectorScoreMap(applierName) {
+  if (!isHybridMatchEnabled()) return new Map();
   if (!isQdrantReady()) return new Map();
 
   const profile = await getProfileVector(applierName);
@@ -60,8 +61,8 @@ export async function matchJobsForApplier({
   }
 
   const profileCtx = await loadProfileMatchContext(name);
-  if (!profileCtx.profileCompacts?.length && !profileCtx.boostCompacts?.length && !profileCtx.exactSet?.size) {
-    return { docs: [], total: 0, recommendationFallback: true, reason: 'no_analyzed_resumes' };
+  if (!profileCtx.profileTokens?.length && !profileCtx.profileCompacts?.length && !profileCtx.exactSet?.size) {
+    return { docs: [], total: 0, recommendationFallback: true, reason: 'no_profile_skills' };
   }
 
   if (!jobsCollection) {

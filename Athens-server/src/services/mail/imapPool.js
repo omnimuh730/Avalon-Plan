@@ -62,6 +62,14 @@ async function createClient(email, password) {
     auth: { user: email, pass: password },
     logger: false,
   });
+  // ImapFlow extends EventEmitter. A socket-level failure on an idle pooled
+  // connection (e.g. `read ETIMEDOUT`) emits an 'error' event — and an
+  // unhandled 'error' on any EventEmitter is re-thrown by Node, crashing the
+  // whole server. Swallow it here: the connection is left un-usable, and the
+  // pool's health check (`client.usable`) + periodic sweep evict it.
+  client.on('error', (err) => {
+    console.warn(`[imap] connection error for ${email}: ${err?.message || err}`);
+  });
   await client.connect();
   return client;
 }

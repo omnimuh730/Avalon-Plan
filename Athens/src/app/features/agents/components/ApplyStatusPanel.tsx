@@ -60,6 +60,22 @@ function activeStage(
   }
 }
 
+type StageIconState = "done" | "active" | "idle";
+
+function ApplyStageIcon({ state }: { state: StageIconState }) {
+  return (
+    <span className="inline-flex shrink-0" aria-hidden>
+      {state === "done" ? (
+        <CheckCircle2 className="w-3.5 h-3.5" />
+      ) : state === "active" ? (
+        <Loader2 className="w-3 h-3 animate-spin" />
+      ) : (
+        <Circle className="w-3 h-3" />
+      )}
+    </span>
+  );
+}
+
 export function ApplyStatusPanel({
   applying,
   analyzing,
@@ -97,13 +113,15 @@ export function ApplyStatusPanel({
     >
       <div className="px-4 py-2.5 border-b border-border/60 flex items-center justify-between gap-2 bg-gradient-to-r from-violet-500/5 to-transparent">
         <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
-          {applying ? (
-            <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
-          ) : isError ? (
-            <AlertTriangle className="w-4 h-4 text-red-600" />
-          ) : (
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          )}
+          <span key={applying ? "busy" : isError ? "error" : "done"} className="inline-flex shrink-0" aria-hidden>
+            {applying ? (
+              <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
+            ) : isError ? (
+              <AlertTriangle className="w-4 h-4 text-red-600" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            )}
+          </span>
           Apply status
           {jobTitle && <span className="text-xs font-normal text-muted-foreground truncate max-w-[200px]">· {jobTitle}</span>}
         </h2>
@@ -114,6 +132,7 @@ export function ApplyStatusPanel({
         {STAGES.map((stage, i) => {
           const done = i < currentIdx || isDone;
           const active = i === currentIdx && (applying || verifyWaiting) && !isDone;
+          const iconState: StageIconState = done ? "done" : active ? "active" : "idle";
           return (
             <div key={stage.key} className="flex items-center shrink-0">
               <div
@@ -125,16 +144,10 @@ export function ApplyStatusPanel({
                   !done && !active && "text-muted-foreground",
                 )}
               >
-                {done ? (
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                ) : active ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <Circle className="w-3 h-3" />
-                )}
+                <ApplyStageIcon key={iconState} state={iconState} />
                 {stage.label}
               </div>
-              {i < STAGES.length - 1 && <span className="w-3 h-px bg-border mx-0.5 shrink-0" />}
+              {i < STAGES.length - 1 && <span className="w-3 h-px bg-border mx-0.5 shrink-0" aria-hidden />}
             </div>
           );
         })}

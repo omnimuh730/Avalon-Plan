@@ -12,6 +12,7 @@
 		"backfill-job-embeddings": "node src/scripts/backfillJobEmbeddings.js",
 		"backfill-resume-embeddings": "node src/scripts/backfillResumeEmbeddings.js",
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
+		"backfill-match-scores": "node src/scripts/backfillMatchScores.js",
 		"reset-job-embeddings": "node src/scripts/resetJobEmbeddings.js",
 		"ollama-pull-embed": "ollama pull mxbai-embed-large",
 		"qdrant:start": "bash scripts/start-qdrant.sh",

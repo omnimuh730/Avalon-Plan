@@ -110,6 +110,8 @@ async function runJobAnalysis(job) {
 				skills,
 				skillsNormalized,
 				skillTokens,
+				// Skills may have changed — re-fan-out materialized match scores.
+				matchScoreStatus: 'pending',
 				skillAnalysis: {
 					status: 'analyzed',
 					applierName: applierName || null,

@@ -83,6 +83,48 @@ export function jobSkillMatchesProfile(jobSkill, ctx) {
 }
 
 /**
+ * Weighted variant of jobSkillMatchesProfile: returns the weight of the best
+ * matching profile skill (0 = no match). The context carries pre-computed
+ * weights (category weight × level factor baked in server-side):
+ *   ctx.tokenWeights:   { [wordToken]: weight }
+ *   ctx.compactWeights: [{ c: compactText, w: weight }]  // ≥5-char shim only
+ * Matching rules are identical to the boolean matcher — shared word token
+ * first, then the ≥5-char compact substring shim.
+ *
+ * @param {string} jobSkill
+ * @param {{ tokenWeights?: Record<string, number>, compactWeights?: {c: string, w: number}[] }} ctx
+ * @returns {number} best matching weight, 0 when unmatched
+ */
+export function jobSkillMatchWeight(jobSkill, ctx) {
+  const tokens = skillTokens(jobSkill);
+  if (!tokens.length) return 0;
+
+  let best = 0;
+  const tokenWeights = ctx?.tokenWeights;
+  if (tokenWeights) {
+    for (const token of tokens) {
+      const w = tokenWeights[token];
+      if (typeof w === 'number' && w > best) best = w;
+    }
+  }
+
+  const compactWeights = ctx?.compactWeights;
+  if (Array.isArray(compactWeights) && compactWeights.length) {
+    const jobCompact = compactSkillText(jobSkill);
+    if (jobCompact) {
+      for (const { c, w } of compactWeights) {
+        if (typeof w !== 'number' || w <= best) continue;
+        if (!c || c.length < SHIM_MIN_LEN) continue;
+        if (jobCompact.includes(c)) best = w;
+        else if (jobCompact.length >= SHIM_MIN_LEN && c.includes(jobCompact)) best = w;
+      }
+    }
+  }
+
+  return best;
+}
+
+/**
  * @param {string[]} jobSkills display or canonical job skills
  * @param {ProfileMatchContext} ctx
  */
