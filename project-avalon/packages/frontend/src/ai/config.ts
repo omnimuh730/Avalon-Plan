@@ -5,5 +5,3 @@ export const AI_BFF_URL = import.meta.env.VITE_AI_BFF_URL ?? 'http://localhost:3
 export const AI_MODEL = import.meta.env.VITE_AI_MODEL as string | undefined;
 
 export const ANALYZE_TEMPERATURE = 0.3;
-export const ANALYZE_MAX_TOKENS = 8192;
-export const INJECTION_MAX_TOKENS = 16384;

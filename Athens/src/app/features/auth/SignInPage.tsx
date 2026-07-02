@@ -46,7 +46,7 @@ export function SignInPage() {
         <AppLogo size={40} />
         <div>
           <p className="font-bold text-foreground" style={display}>
-            AthenAI
+            AthensAI
           </p>
           <p className="text-xs text-muted-foreground">Sign in to continue</p>
         </div>

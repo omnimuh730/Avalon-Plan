@@ -34,7 +34,7 @@ export function Sidebar() {
           <AppLogo size={40} />
           <div className="flex-1 min-w-0">
             <span className="text-base font-bold text-foreground block" style={display}>
-              AthenAI
+              AthensAI
             </span>
             <span className="text-xs text-muted-foreground">AI career command center</span>
           </div>

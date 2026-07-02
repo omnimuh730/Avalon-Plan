@@ -63,7 +63,7 @@ export function AuthHeroPanel() {
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-white/10 border border-white/10 px-3 py-1.5 text-xs font-semibold mb-8">
             <AppLogo size={20} className="rounded-md" />
-            AthenAI · Career command center
+            AthensAI · Career command center
           </div>
           <h1 className="text-4xl xl:text-5xl font-bold leading-[1.1] tracking-tight mb-4" style={display}>
             Land your next role with AI that knows your skills.

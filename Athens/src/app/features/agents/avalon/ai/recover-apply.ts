@@ -2,7 +2,6 @@ import type { ActionableTree } from "@avalon/shared";
 import { chatCompletion } from "./client";
 import type { JsonSchemaDefinition } from "./chat-types";
 import { flattenActionableTree } from "./prompt";
-import { INJECTION_MAX_TOKENS } from "./config";
 
 /**
  * Self-healing recovery for a failed apply. The declarative first-pass fill stays
@@ -164,7 +163,6 @@ export async function generateRecoveryScript(ctx: RecoveryContext): Promise<Reco
     system: RECOVERY_SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildRecoveryUserMessage(ctx) }],
     responseSchema: RECOVERY_SCRIPT_SCHEMA,
-    maxTokens: INJECTION_MAX_TOKENS,
   });
 
   const structured = response.structured as

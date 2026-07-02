@@ -146,9 +146,7 @@ export function buildAnalysisUserMessage(
       required: f.required,
       controlType: f.controlType,
       controlTag: f.controlTag,
-      ...(f.options?.length
-        ? { options: f.options.slice(0, 50), optionsTruncated: f.options.length > 50 }
-        : {}),
+      ...(f.options?.length ? { options: f.options } : {}),
     })),
   };
 
