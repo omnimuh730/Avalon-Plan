@@ -6,6 +6,7 @@ const PHASE_LABEL: Record<ApplyProgress["phase"], string> = {
   files: "Uploading files",
   fields: "Filling fields",
   "submit-wait": "Submitting",
+  "verify-wait": "Verifying",
   submitted: "Submitted",
   done: "Done",
   error: "Error",
@@ -16,6 +17,7 @@ const PHASE_ACCENT: Record<ApplyProgress["phase"], string> = {
   files: "bg-blue-500",
   fields: "bg-blue-500",
   "submit-wait": "bg-amber-500",
+  "verify-wait": "bg-amber-500",
   submitted: "bg-emerald-500",
   done: "bg-emerald-500",
   error: "bg-red-500",
@@ -29,7 +31,9 @@ export function ApplyProgressOverlay() {
   const progress = useApplyProgress();
   if (!progress) return null;
 
-  const countingDown = progress.phase === "submit-wait" && typeof progress.secondsLeft === "number";
+  const countingDown =
+    (progress.phase === "submit-wait" || progress.phase === "verify-wait") &&
+    typeof progress.secondsLeft === "number";
   const pct =
     progress.totalSteps && progress.totalSteps > 0
       ? Math.round(((progress.appliedSteps ?? 0) / progress.totalSteps) * 100)

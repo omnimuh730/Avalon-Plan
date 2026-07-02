@@ -206,6 +206,7 @@ export type ApplyPhase =
   | 'files' // uploading résumé / file inputs (top priority, runs first)
   | 'fields' // filling the remaining form fields
   | 'submit-wait' // counting down before the auto-submit click
+  | 'verify-wait' // counting down after submit before reading the result page
   | 'submitted' // submit / apply / next was clicked
   | 'done' // apply finished (no submit control found)
   | 'error';
@@ -215,7 +216,7 @@ export interface ApplyProgress {
   sessionId?: string;
   phase: ApplyPhase;
   message: string;
-  /** Seconds remaining during the `submit-wait` countdown. */
+  /** Seconds remaining during the `submit-wait` or `verify-wait` countdown. */
   secondsLeft?: number;
   /** Steps applied so far / total, for a progress bar. */
   appliedSteps?: number;

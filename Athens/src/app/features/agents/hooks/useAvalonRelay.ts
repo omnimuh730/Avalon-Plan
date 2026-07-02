@@ -115,6 +115,7 @@ export function parseRetryPipelineStep(detail?: string, reason?: string): number
 }
 
 const PIPELINE_AUTO_MAX_CYCLES = 4;
+const VERIFY_RESULT_WAIT_MS = 5000;
 
 export interface AvalonLogEntry {
   id: string;
@@ -1148,6 +1149,20 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     [emitActionAsync],
   );
 
+  /** Pause after submit so the result page can load before step 8 reads it. */
+  const waitBeforeVerify = useCallback(async (): Promise<void> => {
+    const totalSeconds = Math.ceil(VERIFY_RESULT_WAIT_MS / 1000);
+    for (let secondsLeft = totalSeconds; secondsLeft > 0; secondsLeft -= 1) {
+      setApplyPhase({
+        phase: "verify-wait",
+        message: `Waiting for result page (${secondsLeft}s)…`,
+        secondsLeft,
+        at: Date.now(),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }, []);
+
   /** Mark a (non-manual) queued job Applied in the pipeline and badge it locally. */
   const markJobApplied = useCallback(
     async (job: QueuedJob) => {
@@ -1208,7 +1223,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     async (tabId: number, job: QueuedJob | null): Promise<ManualVerifyResult> => {
       const jobForVerify: QueuedJob =
         job ?? { id: "", title: treePage?.title ?? "this application", company: "", url: treePage?.url ?? "", source: "" };
-      const { verdict } = await verifyAfterSubmit(tabId, jobForVerify, true, 1500);
+      const { verdict } = await verifyAfterSubmit(tabId, jobForVerify, true, 1000);
 
       if (verdict.status === "success") {
         if (job) await markJobApplied(job);
@@ -1301,6 +1316,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     setVerifying(true);
     setVerifyResult(null);
     try {
+      await waitBeforeVerify();
       const result = await computeVerifyResult(tabId, job);
       setVerifyResult(result);
       if (result.kind === "success" && job) markPipeline(job.id, { verified: true });
@@ -1310,6 +1326,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       setVerifyResult({ kind: "failed", reason: msg });
       pushLog(msg, false);
     } finally {
+      setApplyPhase((prev) => (prev?.phase === "verify-wait" ? null : prev));
       setVerifying(false);
     }
   }, [
@@ -1321,6 +1338,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     pushLog,
     selectedTabId,
     treePage,
+    waitBeforeVerify,
   ]);
 
   /** Explicitly mark the active queued job Applied to MongoDB with the current profile. */
@@ -1573,6 +1591,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           setVerifying(true);
           setVerifyResult(null);
           try {
+            await waitBeforeVerify();
             const result = await computeVerifyResult(tabId, job);
             setVerifyResult(result);
             if (result.kind === "success") {
@@ -1616,6 +1635,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             abort(error instanceof Error ? error.message : "Verify failed");
             return;
           } finally {
+            setApplyPhase((prev) => (prev?.phase === "verify-wait" ? null : prev));
             setVerifying(false);
           }
         }
@@ -1642,6 +1662,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     runApplyWithPlan,
     startResumeForJob,
     validateOpenedTab,
+    waitBeforeVerify,
   ]);
 
   /**

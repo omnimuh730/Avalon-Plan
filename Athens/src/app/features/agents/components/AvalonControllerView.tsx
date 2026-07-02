@@ -162,6 +162,8 @@ export function AvalonControllerView({
   const applyBlocked = applyDisabledReason(relay, hasPlan);
   const canApply = hasPlan && !applyBlocked;
   const pipelineLocked = relay.autoRunning || relay.applying;
+  const verifyWaiting = relay.applyPhase?.phase === "verify-wait";
+  const verifyWaitSeconds = verifyWaiting ? relay.applyPhase?.secondsLeft : undefined;
 
   const highlightStep = useMemo(() => {
     if (relay.validatingTab) return 3;
@@ -169,8 +171,9 @@ export function AvalonControllerView({
     if (relay.analyzing) return 6;
     if (relay.applying) return 7;
     if (relay.verifying) return 8;
+    if (verifyWaiting) return 8;
     return nextPipelineStep(pipeline);
-  }, [pipeline, relay.analyzing, relay.applying, relay.generatingResume, relay.validatingTab, relay.verifying]);
+  }, [pipeline, relay.analyzing, relay.applying, relay.generatingResume, relay.validatingTab, relay.verifying, verifyWaiting]);
 
   const workflowSteps: WorkflowStep[] = [
     { id: "connect", label: "Connected", done: relay.canExecute, active: !relay.canExecute },
@@ -759,16 +762,32 @@ export function AvalonControllerView({
             <button
               type="button"
               onClick={() => void relay.verifyActiveResult()}
-              disabled={!pipeline.applied || !relay.canExecute || relay.verifying || pipelineLocked}
+              disabled={!pipeline.applied || !relay.canExecute || relay.verifying || verifyWaiting || pipelineLocked}
               className={pipelineStepClass(
                 8,
                 highlightStep,
                 pipeline.verified,
-                pipeline.applied && relay.canExecute && !relay.verifying && !pipelineLocked,
+                pipeline.applied && relay.canExecute && !relay.verifying && !verifyWaiting && !pipelineLocked,
               )}
             >
-              {relay.verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              {relay.verifying ? "Verifying…" : "8 · Verify result"}
+              {verifyWaiting && verifyWaitSeconds != null ? (
+                <>
+                  <span className="w-5 h-5 rounded-full bg-violet-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                    {verifyWaitSeconds}
+                  </span>
+                  8 · Waiting for submit result
+                </>
+              ) : relay.verifying ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Verifying…
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  8 · Verify result
+                </>
+              )}
             </button>
             {relay.verifyResult && (
               <div
