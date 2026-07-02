@@ -9,7 +9,9 @@ import {
   Layers,
   ListOrdered,
   Loader2,
+  Pause,
   Play,
+  Square,
   RefreshCw,
   Scan,
   Settings2,
@@ -469,9 +471,9 @@ export function AvalonControllerView({
                         type="button"
                         onClick={() => {
                           relay.selectActiveJob(i);
-                          void relay.applyJob(job);
+                          void relay.runPipelineAuto(job);
                         }}
-                        disabled={!relay.canExecute || relay.applying}
+                        disabled={!relay.canExecute || relay.applying || relay.autoRunning}
                         className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold text-violet-700 bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-40"
                       >
                         Apply (auto-submit)
@@ -643,7 +645,7 @@ export function AvalonControllerView({
               {relay.autoRunning ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Auto-running…
+                  {relay.autoRunState === "paused" ? "Paused" : "Auto-running…"}
                 </>
               ) : (
                 <>
@@ -652,6 +654,34 @@ export function AvalonControllerView({
                 </>
               )}
             </button>
+            {relay.autoRunning && (
+              <div className="flex items-center gap-2">
+                {relay.autoRunState === "paused" ? (
+                  <button
+                    type="button"
+                    onClick={() => relay.resumeAutoRun()}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-secondary"
+                  >
+                    <Play className="w-3.5 h-3.5" /> Resume
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => relay.pauseAutoRun()}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-secondary"
+                  >
+                    <Pause className="w-3.5 h-3.5" /> Pause
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => relay.stopAutoRun()}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-300/70 text-red-700 px-3 py-2 text-xs font-semibold hover:bg-red-500/10"
+                >
+                  <Square className="w-3.5 h-3.5" /> Stop
+                </button>
+              </div>
+            )}
             <button
               type="button"
               onClick={() => void relay.openActiveJob()}

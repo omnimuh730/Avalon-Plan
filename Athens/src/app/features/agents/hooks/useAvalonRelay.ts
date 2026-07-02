@@ -35,7 +35,7 @@ function newRunId(): string {
 }
 
 /** Max self-healing retries for a single failed apply (per Phase C). */
-const MAX_RECOVERY_ATTEMPTS = 10;
+const MAX_RECOVERY_ATTEMPTS = 4;
 
 /**
  * Generic cues that a page is asking for an emailed verification / one-time code
@@ -196,10 +196,17 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [usageRequests, setUsageRequests] = useState<UsageEntry[]>([]);
   const [applyDone, setApplyDone] = useState(false);
   const [autoRunning, setAutoRunning] = useState(false);
+  // "idle" | "running" | "paused" — drives the Pause/Resume/Stop controls.
+  const [autoRunState, setAutoRunState] = useState<"idle" | "running" | "paused">("idle");
 
   const socketRef = useRef<Socket | null>(null);
   const applyingRef = useRef(false);
   const autoRunningRef = useRef(false);
+  // Interrupt controls for the auto-run/queue loops (checked between steps).
+  const autoAbortRef = useRef(false);
+  const autoPauseRef = useRef(false);
+  // Queue-level stop (survives per-job abort resets so "Apply all" fully halts).
+  const queueAbortRef = useRef(false);
   const pendingActionsRef = useRef<Map<string, (result: ActionResult) => void>>(new Map());
   const resumeGenByJobIdRef = useRef<Map<string, Promise<AttachedFile>>>(new Map());
   // Debug run-logging: current run id, its job, a buffered event list + flush timer.
@@ -1314,7 +1321,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       await waitBeforeVerify();
       const result = await computeVerifyResult(tabId, job);
       setVerifyResult(result);
-      if (result.kind === "success" && job) markPipeline(job.id, { verified: true });
+      if (result.kind === "success") {
+        if (job) markPipeline(job.id, { verified: true });
+        await closeTab(tabId); // application done → close the job tab
+      }
       pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Verify failed";
@@ -1326,6 +1336,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     }
   }, [
     canExecute,
+    closeTab,
     computeVerifyResult,
     executeDisabledReason,
     getActiveQueuedJob,
@@ -1348,16 +1359,50 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       return;
     }
     await markJobApplied(job);
+    // Marking applied is an explicit "done" — interrupt any running pipeline first.
+    autoAbortRef.current = true;
+    autoPauseRef.current = false;
+    await markJobApplied(job);
     pushLog(`Marked "${job.title}" as Applied for ${applierName}`, true);
-  }, [applierName, getActiveQueuedJob, markJobApplied, pushLog]);
+    // Also tell the extension to close the job tab (the application is done).
+    const tabId = treePage?.tabId ?? (typeof selectedTabId === "number" ? selectedTabId : undefined);
+    if (tabId) {
+      await closeTab(tabId);
+      pushLog("Closed the job tab", true);
+    }
+  }, [applierName, closeTab, getActiveQueuedJob, markJobApplied, pushLog, selectedTabId, treePage]);
+
+  /** Pause the running auto-run/queue between steps. */
+  const pauseAutoRun = useCallback(() => {
+    if (!autoRunningRef.current) return;
+    autoPauseRef.current = true;
+    setAutoRunState("paused");
+    pushLog("Auto-run paused", true);
+  }, [pushLog]);
+
+  /** Resume a paused auto-run/queue. */
+  const resumeAutoRun = useCallback(() => {
+    if (!autoRunningRef.current) return;
+    autoPauseRef.current = false;
+    setAutoRunState("running");
+    pushLog("Auto-run resumed", true);
+  }, [pushLog]);
+
+  /** Stop the running auto-run/queue at the next step boundary. */
+  const stopAutoRun = useCallback(() => {
+    autoAbortRef.current = true;
+    autoPauseRef.current = false;
+    queueAbortRef.current = true;
+    pushLog("Stopping auto-run…", false);
+  }, [pushLog]);
 
   /**
    * Auto-run pipeline steps 2–8 in order. On verify success, marks the job applied.
    * On failure, follows step 8 guidance (typically restart from step 5) up to a few cycles.
    */
-  const runPipelineAuto = useCallback(async () => {
+  const runPipelineAuto = useCallback(async (jobOverride?: QueuedJob) => {
     if (autoRunningRef.current || applyingRef.current) return;
-    const job = getActiveQueuedJob();
+    const job = jobOverride ?? getActiveQueuedJob();
     if (!job) {
       pushLog("Select a queued job first", false);
       return;
@@ -1372,7 +1417,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     }
 
     autoRunningRef.current = true;
+    autoAbortRef.current = false;
+    autoPauseRef.current = false;
     setAutoRunning(true);
+    setAutoRunState("running");
 
     let startStep = 2;
     let cycle = 0;
@@ -1386,9 +1434,22 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       pushLog(message, false);
     };
 
+    // Between-step interrupt gate: blocks while paused, returns false if stopped.
+    const gate = async (): Promise<boolean> => {
+      while (autoPauseRef.current && !autoAbortRef.current) {
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      if (autoAbortRef.current) {
+        pushLog("Auto-run stopped", false);
+        return false;
+      }
+      return true;
+    };
+
     try {
       while (cycle < PIPELINE_AUTO_MAX_CYCLES) {
         cycle += 1;
+        if (!(await gate())) return;
         pushLog(
           cycle === 1
             ? "Auto-run: steps 2–8…"
@@ -1396,6 +1457,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           true,
         );
 
+        if (!(await gate())) return;
         if (startStep <= 2) {
           setTabValidity(null);
           setVerifyResult(null);
@@ -1439,6 +1501,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           pushLog(`Opened "${job.title}"`, true);
         }
 
+        if (!(await gate())) return;
         if (startStep <= 3) {
           if (!tabId) {
             abort("No tab for validation");
@@ -1469,6 +1532,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           }
         }
 
+        if (!(await gate())) return;
         if (startStep <= 4) {
           try {
             resumeFile = await startResumeForJob(job);
@@ -1481,6 +1545,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           }
         }
 
+        if (!(await gate())) return;
         if (startStep <= 5) {
           if (!tabId) {
             abort("No tab for scan");
@@ -1519,6 +1584,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           pushLog(`Scanned ${tree.length} section(s)`, true);
         }
 
+        if (!(await gate())) return;
         if (startStep <= 6) {
           if (!tree?.length) {
             abort("Missing form tree — scan first");
@@ -1552,6 +1618,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           }
         }
 
+        if (!(await gate())) return;
         if (startStep <= 7) {
           if (!pageCtx?.tabId) {
             abort("No page context for apply");
@@ -1578,6 +1645,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           }
         }
 
+        if (!(await gate())) return;
         if (startStep <= 8) {
           if (!tabId) {
             abort("No tab to verify");
@@ -1592,6 +1660,9 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             if (result.kind === "success") {
               markPipeline(job.id, { verified: true });
               pushLog(`Auto-run complete — ${result.reason}`, true);
+              // Applied → close the job tab (computeVerifyResult already marked it
+              // applied in MongoDB).
+              if (tabId) await closeTab(tabId);
               return;
             }
             pushLog(`Verify: ${result.kind} — ${result.reason}`, false);
@@ -1637,7 +1708,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       }
     } finally {
       autoRunningRef.current = false;
+      autoAbortRef.current = false;
+      autoPauseRef.current = false;
       setAutoRunning(false);
+      setAutoRunState("idle");
     }
   }, [
     applicantContext,
@@ -2026,18 +2100,28 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, markJobApplied, probeComboboxes, pushLog, runRecoveryLoop, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
   );
 
-  /** Apply every queued job in sequence — each opens its own tab and auto-submits. */
+  /**
+   * "Apply all" — run each queued job's auto-submit pipeline one by one (the same
+   * full Auto-run as the per-job button), skipping ones already applied.
+   */
   const applyQueue = useCallback(async () => {
     if (!jobQueue.length) {
       pushLog("Queue is empty — add jobs first", false);
       return;
     }
+    queueAbortRef.current = false;
     for (let i = 0; i < jobQueue.length; i += 1) {
+      if (queueAbortRef.current) {
+        pushLog("Apply all stopped", false);
+        break;
+      }
+      const job = jobQueue[i];
+      if (appliedJobIds.has(job.id)) continue;
       setActiveJobIndex(i);
-      await applyJob(jobQueue[i]);
+      await runPipelineAuto(job);
     }
     pushLog(`Queue complete · ${jobQueue.length} job(s) processed`, true);
-  }, [applyJob, jobQueue, pushLog]);
+  }, [appliedJobIds, jobQueue, pushLog, runPipelineAuto]);
 
   const selectActiveJob = useCallback(
     (index: number) => {
@@ -2124,6 +2208,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     generateActiveJobResume,
     openActiveJob,
     runPipelineAuto,
+    autoRunState,
+    pauseAutoRun,
+    resumeAutoRun,
+    stopAutoRun,
     applyActionPlan,
     selectTreeTarget,
     requestTabs,

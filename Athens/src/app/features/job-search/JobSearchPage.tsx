@@ -169,7 +169,7 @@ export function JobSearchPage() {
           total={total}
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
-          pageSizeOptions={[10, 25, 50, 100]}
+          pageSizeOptions={[10, 25, 50, 100, 250, 500]}
           detailed
         />
         <button

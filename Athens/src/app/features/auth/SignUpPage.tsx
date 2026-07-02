@@ -21,6 +21,7 @@ export function SignUpPage() {
   }
 
   const onSubmit = async (e: React.FormEvent) => {
+    /*
     e.preventDefault();
     setError("");
     if (!name.trim() || !password) {
@@ -38,6 +39,7 @@ export function SignUpPage() {
       setError(msg);
       toast.error("Sign up failed", { description: msg });
     }
+      */
   };
 
   return (

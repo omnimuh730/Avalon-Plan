@@ -101,13 +101,14 @@ export function SignInPage() {
           )}
         </Button>
       </form>
+    </AuthSplitLayout>
+  );
+}
 
+/*
       <p className="text-center text-sm text-muted-foreground mt-8">
         No account?{" "}
         <Link to="/signup" className="text-primary font-semibold hover:underline">
           Create one
         </Link>
-      </p>
-    </AuthSplitLayout>
-  );
-}
+      </p>*/
