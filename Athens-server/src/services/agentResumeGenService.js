@@ -154,6 +154,72 @@ export async function findExistingAgentJobResume(applierName, jobId) {
   return null;
 }
 
+/**
+ * Batch variant of findExistingAgentJobResume: which of these job ids already
+ * have a completed generated résumé for this applier. Returns the subset of
+ * jobIds that do.
+ */
+export async function findAgentJobResumeStatuses(applierName, jobIds) {
+  const name = cleanString(applierName);
+  const ids = [...new Set((jobIds || []).map(cleanString).filter(Boolean))];
+  if (!name || !ids.length) return [];
+
+  const found = new Set();
+  if (userResumesCollection) {
+    const resumes = await userResumesCollection
+      .find(
+        { ownerName: name, generateParentJobId: { $in: ids }, source: "generated" },
+        { projection: { generateParentJobId: 1 } },
+      )
+      .toArray();
+    for (const r of resumes) found.add(String(r.generateParentJobId));
+  }
+
+  // Same fallback as findExistingAgentJobResume: a completed generation counts
+  // only when a library resume is still linked to it.
+  const remaining = ids.filter((id) => !found.has(id));
+  if (remaining.length && resumeGenerationsCollection && userResumesCollection) {
+    const generations = await resumeGenerationsCollection
+      .find(
+        { applierName: name, generate_parent_job_id: { $in: remaining }, status: "completed" },
+        { projection: { generate_parent_job_id: 1, libraryResumeId: 1 } },
+      )
+      .toArray();
+    if (generations.length) {
+      const genIds = generations.map((g) => String(g._id));
+      const libIds = generations
+        .map((g) => {
+          try {
+            return g.libraryResumeId ? new ObjectId(String(g.libraryResumeId)) : null;
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      const resumes = await userResumesCollection
+        .find(
+          {
+            $or: [
+              { ownerName: name, generationId: { $in: genIds } },
+              ...(libIds.length ? [{ _id: { $in: libIds } }] : []),
+            ],
+          },
+          { projection: { generationId: 1 } },
+        )
+        .toArray();
+      const linkedGenIds = new Set(resumes.map((r) => String(r.generationId || "")));
+      const linkedLibIds = new Set(resumes.map((r) => String(r._id)));
+      for (const g of generations) {
+        if (linkedGenIds.has(String(g._id)) || (g.libraryResumeId && linkedLibIds.has(String(g.libraryResumeId)))) {
+          found.add(String(g.generate_parent_job_id));
+        }
+      }
+    }
+  }
+
+  return [...found];
+}
+
 /** Read or render the per-job draft PDF (stable path under .local/agent-resumes/by-job). */
 export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
   const name = cleanString(applierName);

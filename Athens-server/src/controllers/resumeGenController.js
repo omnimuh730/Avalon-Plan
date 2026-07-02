@@ -751,6 +751,26 @@ export async function getAgentJobResumePdf(req, res) {
   }
 }
 
+/**
+ * POST /personal/agent-job-resumes/status — batch check which jobs already have
+ * a generated résumé for this applier. Body: { applierName, jobIds: [] }.
+ * Returns { success, jobIds: [ids with an existing résumé] }.
+ */
+export async function getAgentJobResumesStatus(req, res) {
+  try {
+    const applierName = cleanString(req.body?.applierName);
+    const jobIds = Array.isArray(req.body?.jobIds) ? req.body.jobIds : [];
+    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
+
+    const { findAgentJobResumeStatuses } = await import("../services/agentResumeGenService.js");
+    const found = await findAgentJobResumeStatuses(applierName, jobIds);
+    return res.json({ success: true, jobIds: found });
+  } catch (err) {
+    console.warn("POST /api/personal/agent-job-resumes/status error:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
 /** POST /personal/resume-generate/for-agent-job/stream — SSE progress for agent résumé generation. */
 export async function generateResumeForAgentJobStream(req, res) {
   const body = req.body || {};

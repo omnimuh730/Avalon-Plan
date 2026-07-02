@@ -42,6 +42,29 @@ export function avalonRelayUrl() {
   );
 }
 
+const AVALON_SESSION_STORAGE_KEY = "athens-avalon-session";
+
+/**
+ * The user-configured Avalon session ID, persisted across reloads so this
+ * Athens instance always re-registers into ITS session — never the shared
+ * "default" one that another user's extension may occupy.
+ */
+export function storedAvalonSessionId(): string {
+  try {
+    return localStorage.getItem(AVALON_SESSION_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function persistAvalonSessionId(sessionId: string) {
+  try {
+    localStorage.setItem(AVALON_SESSION_STORAGE_KEY, sessionId);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 /** Socket.IO client options — proxied in dev for LAN access. */
 export function avalonRelaySocketOptions(): { url?: string; path?: string } {
   const configured = import.meta.env.VITE_AVALON_SERVER?.trim();
@@ -165,23 +188,46 @@ export interface JobCandidate {
   source: string;
 }
 
+/** Optional filters for the candidate transfer list (mirror Job Search's filters). */
+export interface CandidateJobFilters {
+  /** Title contains (case-insensitive). Maps to the backend `q` param. */
+  titleQuery?: string;
+  /** Posted on/after this date (YYYY-MM-DD). */
+  postedFrom?: string;
+  /** Posted on/before this date (YYYY-MM-DD). */
+  postedTo?: string;
+}
+
 /**
  * Candidate jobs for the transfer list, in Job Search's **Best match** rank order
  * (sort=recommended), posted (not-yet-applied) only — so the list matches what the
  * user sees in Job Search. Hits the same /jobs/list endpoint Job Search uses.
+ *
+ * `source` is optional: when omitted, all job sources are searched (lets the
+ * title/date filters stand on their own without picking a source first).
  */
-export async function fetchCandidateJobs(applierName: string, source: string, limit = 200): Promise<JobCandidate[]> {
+export async function fetchCandidateJobs(
+  applierName: string,
+  source: string,
+  limit = 200,
+  filters: CandidateJobFilters = {},
+): Promise<JobCandidate[]> {
+  const body: Record<string, unknown> = {
+    sort: "recommended", // Best match
+    applied: false, // posted, not yet applied
+    applierName,
+    page: 1,
+    limit,
+  };
+  if (source) body.jobSources = source;
+  if (filters.titleQuery?.trim()) body.q = filters.titleQuery.trim();
+  if (filters.postedFrom) body.postedAtFrom = filters.postedFrom;
+  if (filters.postedTo) body.postedAtTo = filters.postedTo;
+
   const res = await fetch(`${API_BASE.replace(/\/$/, "")}/jobs/list`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sort: "recommended", // Best match
-      applied: false, // posted, not yet applied
-      applierName,
-      jobSources: source,
-      page: 1,
-      limit,
-    }),
+    body: JSON.stringify(body),
   });
   const data = (await res.json().catch(() => ({}))) as { data?: Record<string, unknown>[] };
   const docs = Array.isArray(data.data) ? data.data : [];

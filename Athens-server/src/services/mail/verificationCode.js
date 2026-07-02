@@ -7,18 +7,27 @@
 const KEYWORDS =
   "verification|verify|security|one[- ]?time|confirmation|confirm|access|login|log[- ]?in|sign[- ]?in|authenticat(?:e|ion)|otp|passcode|pass ?code|pin|code";
 
-// A digit run (4–8) that appears right after a verification keyword:
+// A digit run (5–8) that appears right after a verification keyword:
 //   "your verification code is 123456", "security code: 048192"
-const CODE_AFTER_KEYWORD = new RegExp(`(?:${KEYWORDS})[^0-9]{0,40}([0-9]{4,8})`, "i");
+//   (minimum 5 digits to avoid false positives on years like "2026")
+const CODE_AFTER_KEYWORD = new RegExp(`(?:${KEYWORDS})[^0-9]{0,40}([0-9]{5,8})`, "i");
 
 // A digit run right before the keyword: "123456 is your verification code"
 const CODE_BEFORE_KEYWORD = new RegExp(
-  `\\b([0-9]{4,8})\\b[^0-9]{0,30}(?:is your|${KEYWORDS})`,
+  `\\b([0-9]{5,8})\\b[^0-9]{0,30}(?:is your|${KEYWORDS})`,
   "i",
 );
 
-// Alphanumeric codes near a keyword: "code: A1B2C3" (must contain a digit).
-const ALNUM_NEAR_KEYWORD = new RegExp(`(?:${KEYWORDS})[^A-Za-z0-9]{0,20}([A-Z0-9]{5,8})\\b`, "i");
+// Alphanumeric codes near a keyword: "code: kOgYB2QM", "enter A1b2C3".
+// Uses a lazy match across up to 80 chars (the old [^A-Za-z0-9]{0,20} was
+// too narrow — Greenhouse emails often have full sentences between the
+// keyword and the code, e.g. "security code field on your application: XXXX").
+const ALNUM_NEAR_KEYWORD = new RegExp(`(?:${KEYWORDS})[\\s\\S]{0,80}?\\b([A-Za-z0-9]{5,10})\\b`, "i");
+
+// Greenhouse plain-text pattern: "Copy and paste this code into the security
+// code field on your application: kOgYB2QM" — code follows "application:"
+// or "field:" after the keyword.
+const GREENHOUSE_CODE = /(?:application|field)\s*:\s*([A-Za-z0-9]{5,10})\b/i;
 
 // Greenhouse-style: codes split across single-char inputs, often rendered in
 // HTML as spaced digits: "1 2 3 4 5 6" or "1-2-3-4-5-6" or "1&nbsp;2&nbsp;3..."
@@ -57,25 +66,33 @@ export function extractVerificationCode(text) {
   const t = String(text || "");
   if (!t) return null;
 
-  // 1. Standard patterns on raw text
-  let m = t.match(CODE_AFTER_KEYWORD);
-  if (m) return m[1];
+  let m;
 
-  m = t.match(CODE_BEFORE_KEYWORD);
-  if (m) return m[1];
+  // 1. Most specific first: Greenhouse plain-text "application: kOgYB2QM"
+  m = t.match(GREENHOUSE_CODE);
+  if (m && /[0-9]/.test(m[1])) return m[1];
 
+  // 2. Alphanumeric codes near a keyword: "code: A1b2C3d4"
+  //    (contains letters, so less likely to be a false positive)
   m = t.match(ALNUM_NEAR_KEYWORD);
   if (m && /[0-9]/.test(m[1])) return m[1];
 
-  // 2. Spaced/split digit codes (Greenhouse-style single-char inputs)
+  // 3. Pure digit codes after keyword (5-8 digits to avoid years)
+  m = t.match(CODE_AFTER_KEYWORD);
+  if (m) return m[1];
+
+  // 4. Pure digit codes before keyword
+  m = t.match(CODE_BEFORE_KEYWORD);
+  if (m) return m[1];
+
+  // 5. Spaced/split digit codes (Greenhouse-style single-char inputs)
   m = t.match(SPACED_CODE);
   if (m) {
-    // Reconstruct: join all captured digit groups
     const digits = m.slice(1).filter(Boolean).join("");
     if (digits.length >= 4 && digits.length <= 8) return digits;
   }
 
-  // 3. Try on plain-text version (strip HTML if present)
+  // 6. Try on plain-text version (strip HTML if present)
   if (/<[^>]+>/.test(t)) {
     const plain = htmlToPlainText(t);
     if (plain && plain !== t) {

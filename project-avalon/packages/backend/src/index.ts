@@ -91,6 +91,21 @@ io.on('connection', (socket) => {
 
   socket.on(SOCKET_EVENTS.REGISTER, (payload: RegisterPayload, ack?: (data: RegisteredPayload) => void) => {
     const session = getOrCreateSession(payload.sessionId);
+
+    // Re-registering under a different session must fully detach this socket
+    // from the old one — a stale extension/controller slot there would keep
+    // routing that session's commands to this client.
+    if (boundSession && boundSession !== session) {
+      const prev = boundSession;
+      if (prev.extension?.id === socket.id) prev.extension = undefined;
+      if (prev.controller?.id === socket.id) prev.controller = undefined;
+      prev.observers.delete(socket);
+      emitPeerStatus(prev);
+      if (!prev.extension && !prev.controller && prev.observers.size === 0) {
+        sessions.delete(prev.id);
+      }
+    }
+
     boundSession = session;
 
     if (payload.role === 'extension') {

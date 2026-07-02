@@ -20,7 +20,12 @@ import { analyzeFormFields } from "../avalon/ai/analyze-form";
 import { buildApplyInjectionPlanPayload } from "../avalon/ai/apply-injection-plan";
 import { buildFormInjectionPlan } from "../avalon/ai/generate-injection-plan";
 import type { FieldActionPlan, FormAnalysisResult } from "../avalon/ai/types";
-import { avalonRelayUrl, createAvalonSocket } from "../../../services/agentApi";
+import {
+  avalonRelayUrl,
+  createAvalonSocket,
+  persistAvalonSessionId,
+  storedAvalonSessionId,
+} from "../../../services/agentApi";
 import { applyToJob, fetchJobDescription, generateJobResumeStream, type ResumeSectionPurpose } from "../../../api/jobs";
 import { requestVerificationCode } from "../../../api/mail";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
@@ -155,7 +160,7 @@ const EMPTY_PIPELINE: JobPipelineState = {
 
 export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [serverUrl, setServerUrl] = useState(() => avalonRelayUrl());
-  const [sessionId, setSessionId] = useState("");
+  const [sessionId, setSessionId] = useState(() => storedAvalonSessionId());
   const [connected, setConnected] = useState(false);
   const [registered, setRegistered] = useState<RegisteredPayload | null>(null);
   const [peers, setPeers] = useState({ extension: false, controller: false });
@@ -522,6 +527,35 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       socketRef.current?.disconnect();
     };
   }, [connect]);
+
+  // Persist the configured session so a reload re-registers into the SAME
+  // session instead of falling back to the shared "default" one.
+  useEffect(() => {
+    persistAvalonSessionId(sessionId);
+  }, [sessionId]);
+
+  // If the user edits the session ID while connected, re-register onto the new
+  // session automatically (debounced) — otherwise commands keep routing through
+  // the previously registered session until they remember to hit Reconnect.
+  useEffect(() => {
+    if (!connected || !registered) return;
+    const desired = sessionId.trim() || DEFAULT_SESSION_ID;
+    if (desired === registered.sessionId) return;
+    const timer = setTimeout(() => {
+      const sock = socketRef.current;
+      if (!sock?.connected) return;
+      sock.emit(
+        SOCKET_EVENTS.REGISTER,
+        { role: "controller", sessionId: desired },
+        (response: RegisteredPayload) => {
+          setRegistered(response);
+          setPeers(response.peers);
+          pushLog(`Registered session ${response.sessionId}`);
+        },
+      );
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [connected, registered, sessionId, pushLog]);
 
   /** Aggregated token + cost usage for the current job (total + per-request list). */
   const jobUsage = useMemo(() => {
@@ -1397,8 +1431,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   }, [pushLog]);
 
   /**
-   * Auto-run pipeline steps 2–8 in order. On verify success, marks the job applied.
-   * On failure, follows step 8 guidance (typically restart from step 5) up to a few cycles.
+   * Auto-run pipeline steps 2–7 in order (open → verify tab → résumé → scan →
+   * analyze → apply), then stop. Step 8 (Verify result) and Mark as Applied are
+   * deliberately manual: the human clicks Verify to check the outcome and, on
+   * failure, re-runs steps 5 · Scan → 6 · Analyze → 7 · Apply by hand. This keeps
+   * a person in the loop at the submit/verification boundary rather than looping
+   * automatically.
    */
   const runPipelineAuto = useCallback(async (jobOverride?: QueuedJob) => {
     if (autoRunningRef.current || applyingRef.current) return;
@@ -1422,7 +1460,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     setAutoRunning(true);
     setAutoRunState("running");
 
-    let startStep = 2;
+    const startStep = 2;
     let cycle = 0;
     let tabId: number | undefined;
     let pageCtx: ActionablePageContext | null = null;
@@ -1450,12 +1488,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       while (cycle < PIPELINE_AUTO_MAX_CYCLES) {
         cycle += 1;
         if (!(await gate())) return;
-        pushLog(
-          cycle === 1
-            ? "Auto-run: steps 2–8…"
-            : `Auto-run: retry from step ${startStep} (cycle ${cycle}/${PIPELINE_AUTO_MAX_CYCLES})…`,
-          true,
-        );
+        pushLog("Auto-run: steps 2–7 (open → verify tab → résumé → scan → analyze → apply)…", true);
 
         if (!(await gate())) return;
         if (startStep <= 2) {
@@ -1645,66 +1678,14 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           }
         }
 
-        if (!(await gate())) return;
-        if (startStep <= 8) {
-          if (!tabId) {
-            abort("No tab to verify");
-            return;
-          }
-          setVerifying(true);
-          setVerifyResult(null);
-          try {
-            await waitBeforeVerify();
-            const result = await computeVerifyResult(tabId, job);
-            setVerifyResult(result);
-            if (result.kind === "success") {
-              markPipeline(job.id, { verified: true });
-              pushLog(`Auto-run complete — ${result.reason}`, true);
-              // Applied → close the job tab (computeVerifyResult already marked it
-              // applied in MongoDB).
-              if (tabId) await closeTab(tabId);
-              return;
-            }
-            pushLog(`Verify: ${result.kind} — ${result.reason}`, false);
-            if (cycle >= PIPELINE_AUTO_MAX_CYCLES) return;
-            const retry = parseRetryPipelineStep(result.detail, result.reason);
-            if (retry < 5 || retry > 8) return;
-            startStep = retry;
-            const patch: Partial<JobPipelineState> = { verified: false };
-            if (retry <= 5) {
-              patch.scanned = false;
-              patch.analyzed = false;
-              patch.applied = false;
-              setActionableTree(null);
-              setFormAnalysis(null);
-              setInjectionPlan(null);
-              setGeneratedScript("");
-              setFieldScriptsById({});
-              setSelectedTreeFieldId(null);
-              tree = null;
-              plan = null;
-            } else if (retry <= 6) {
-              patch.analyzed = false;
-              patch.applied = false;
-              setFormAnalysis(null);
-              setInjectionPlan(null);
-              setGeneratedScript("");
-              setFieldScriptsById({});
-              plan = null;
-            } else if (retry <= 7) {
-              patch.applied = false;
-              setApplyDone(false);
-            }
-            markPipeline(job.id, patch);
-            continue;
-          } catch (error) {
-            abort(error instanceof Error ? error.message : "Verify failed");
-            return;
-          } finally {
-            setApplyPhase((prev) => (prev?.phase === "verify-wait" ? null : prev));
-            setVerifying(false);
-          }
-        }
+        // Auto-run ends after step 7 (Apply). Step 8 · Verify result and Mark as
+        // Applied are manual: the human clicks Verify to check the outcome and, on
+        // failure, re-runs 5 · Scan → 6 · Analyze → 7 · Apply by hand.
+        pushLog(
+          "Auto-run finished steps 2–7. Click 8 · Verify result to check the outcome, then Mark as Applied.",
+          true,
+        );
+        return;
       }
     } finally {
       autoRunningRef.current = false;

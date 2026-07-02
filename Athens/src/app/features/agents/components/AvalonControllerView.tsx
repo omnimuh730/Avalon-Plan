@@ -650,7 +650,7 @@ export function AvalonControllerView({
               ) : (
                 <>
                   <Play className="w-4 h-4" />
-                  Auto-run (steps 2–8)
+                  Auto-run (steps 2–7)
                 </>
               )}
             </button>

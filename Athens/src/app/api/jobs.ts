@@ -78,6 +78,26 @@ export async function fetchJobDescription(jobId: string): Promise<string> {
   }
 }
 
+/** Which of these jobs already have a generated résumé for this applier. */
+export async function fetchJobsWithGeneratedResumes(
+  applierName: string,
+  jobIds: string[],
+): Promise<Set<string>> {
+  if (!applierName || jobIds.length === 0) return new Set();
+  try {
+    const res = await fetch(`${API_BASE}/personal/agent-job-resumes/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ applierName, jobIds }),
+    });
+    if (!res.ok) return new Set();
+    const data = (await res.json()) as { success?: boolean; jobIds?: string[] };
+    return new Set(data.success && Array.isArray(data.jobIds) ? data.jobIds : []);
+  } catch {
+    return new Set();
+  }
+}
+
 export interface GeneratedResumeUsage {
   promptTokens: number;
   cachedTokens?: number;

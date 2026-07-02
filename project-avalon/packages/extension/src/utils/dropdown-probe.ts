@@ -198,6 +198,30 @@ async function probeCountryToggleByFocus(
   return { options, source: 'probed' };
 }
 
+/**
+ * True when an input advertises, via portable semantics, that it holds a
+ * short code rather than a searchable combobox — e.g. one-time-code / OTP
+ * boxes. Typing a probe character into these corrupts the field and never
+ * opens a listbox, so they must be excluded from focus probing. All signals
+ * are standard HTML/ARIA, not vendor classes.
+ */
+function isNonComboboxCodeInput(input: HTMLInputElement): boolean {
+  // Explicit combobox affordances always qualify for probing, even if short.
+  if (
+    input.getAttribute('role') === 'combobox' ||
+    input.getAttribute('aria-autocomplete') === 'list' ||
+    input.getAttribute('aria-haspopup') === 'listbox' ||
+    input.hasAttribute('aria-controls')
+  ) {
+    return false;
+  }
+  const autocomplete = (input.getAttribute('autocomplete') ?? '').toLowerCase();
+  if (autocomplete === 'one-time-code') return true;
+  // Single/double-character boxes (OTP digit cells) can never be comboboxes.
+  if (input.maxLength > 0 && input.maxLength <= 2) return true;
+  return false;
+}
+
 export function collectFocusProbeCandidates(
   scope: Element,
   skipElements: Set<Element> = new Set(),
@@ -211,6 +235,7 @@ export function collectFocusProbeCandidates(
     if (!(el instanceof HTMLInputElement)) continue;
     if (skipElements.has(el) || seen.has(el)) continue;
     if (isListboxInternalNoise(el)) continue;
+    if (isNonComboboxCodeInput(el)) continue;
     if (!isEffectivelyVisible(el)) continue;
     seen.add(el);
     candidates.push(el);

@@ -1,5 +1,5 @@
 import React from "react";
-import { Download, Loader2, Send, Sparkles, Trash2 } from "lucide-react";
+import { Download, FileText, Loader2, Send, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
 
@@ -12,6 +12,10 @@ type JobBulkActionsBarProps = {
   onApplyAll: () => void;
   onDownload: () => void;
   onRemove: () => void;
+  onGenerateResumes?: () => void;
+  onStopGenerateResumes?: () => void;
+  resumeGenerating?: boolean;
+  resumeProgress?: { done: number; total: number };
   missingEmbeddings?: number;
   embeddingRunning?: boolean;
   embeddingLoading?: boolean;
@@ -30,6 +34,10 @@ export function JobBulkActionsBar({
   onApplyAll,
   onDownload,
   onRemove,
+  onGenerateResumes,
+  onStopGenerateResumes,
+  resumeGenerating = false,
+  resumeProgress,
   missingEmbeddings = 0,
   embeddingRunning = false,
   embeddingLoading = false,
@@ -105,6 +113,36 @@ export function JobBulkActionsBar({
               <span className="hidden sm:inline">
                 Embed {missingEmbeddings} job{missingEmbeddings === 1 ? "" : "s"}
               </span>
+            </Button>
+          )
+        ) : null}
+        {onGenerateResumes ? (
+          resumeGenerating ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2.5 gap-1 text-amber-700 hover:text-amber-800 hover:bg-amber-50"
+              onClick={onStopGenerateResumes}
+              title="Stop after in-flight résumés finish"
+            >
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span className="hidden sm:inline">
+                {resumeProgress
+                  ? `Résumés ${resumeProgress.done}/${resumeProgress.total} · Stop`
+                  : "Generating résumés… · Stop"}
+              </span>
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2.5 gap-1"
+              onClick={onGenerateResumes}
+              disabled={totalSelected === 0}
+              title="Generate tailored résumés for the selected jobs (max 10 at a time)"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Resumes</span>
             </Button>
           )
         ) : null}

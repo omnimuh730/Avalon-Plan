@@ -453,7 +453,10 @@ export async function connectRelay(
 ) {
   const config = await getStoredConfig();
   const serverUrl = overrides?.serverUrl ?? config.serverUrl;
-  const sessionId = overrides?.sessionId?.trim() || DEFAULT_SESSION_ID;
+  // Fall back to the SAVED session before "default" — otherwise any reconnect
+  // without an explicit override silently re-registers this extension into the
+  // shared default session, where it executes another user's commands.
+  const sessionId = overrides?.sessionId?.trim() || config.sessionId?.trim() || DEFAULT_SESSION_ID;
 
   if (options?.waitForHealth) {
     const reachable = await probeRelayHealthWithRetry(serverUrl);

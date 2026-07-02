@@ -17,6 +17,7 @@ import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobEmbeddings } from "./hooks/useJobEmbeddings";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
+import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { cn } from "../../lib/utils";
 
@@ -39,6 +40,8 @@ export function JobSearchPage() {
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
   const { applyToJob, updateJobStatus, cancelJobStatus, isPending } = useJobApplicationActions(patchJob, refreshStatusCounts);
+  const { resumeStates, generateForJob, generateBulk, cancelBulk, bulkRunning, bulkProgress } =
+    useJobResumeGeneration(jobs);
   const {
     session: embeddingSession,
     missing: missingEmbeddings,
@@ -145,6 +148,10 @@ export function JobSearchPage() {
         onApplyAll={handleApplyAll}
         onDownload={handleDownload}
         onRemove={handleRemove}
+        onGenerateResumes={() => void generateBulk(selectedJobs)}
+        onStopGenerateResumes={cancelBulk}
+        resumeGenerating={bulkRunning}
+        resumeProgress={bulkProgress ?? undefined}
         missingEmbeddings={missingEmbeddings}
         embeddingRunning={embeddingRunning}
         embeddingLoading={embeddingLoading}
@@ -212,6 +219,8 @@ export function JobSearchPage() {
               onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
               onCancel={(job) => void cancelJobStatus(job)}
               onJobScoresUpdated={patchJob}
+              resumeStates={resumeStates}
+              onGenerateResume={(job) => void generateForJob(job)}
             />
           </TabTransition>
         </div>

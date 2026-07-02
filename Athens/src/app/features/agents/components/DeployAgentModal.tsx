@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, X, Zap, ArrowRight, Plus, Rocket, Link2 } from "lucide-react";
+import { Loader2, X, Zap, ArrowRight, Plus, Rocket, Link2, Search, Calendar, FilterX } from "lucide-react";
 import type { DeployOptions } from "../../../types/agent";
 import type { JobCandidate } from "../../../services/agentApi";
 import { useDeployForm } from "../hooks/useDeployForm";
@@ -103,6 +103,62 @@ export function DeployAgentModal({
             </label>
           </div>
 
+          {/* Filters — title search + posted-date range */}
+          <div className="rounded-xl border border-border bg-secondary/20 px-3 py-2.5 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Filters</span>
+              {form.hasFilter && (
+                <button
+                  type="button"
+                  onClick={form.clearFilters}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+                >
+                  <FilterX size={11} /> Clear filters
+                </button>
+              )}
+            </div>
+            <div className="grid sm:grid-cols-2 gap-2">
+              <div className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-2 focus-within:ring-2 focus-within:ring-ring">
+                <Search size={13} className="text-muted-foreground shrink-0" />
+                <input
+                  value={form.titleQuery}
+                  onChange={(e) => form.setTitleQuery(e.target.value)}
+                  placeholder="Filter by title…"
+                  className="flex-1 min-w-0 bg-transparent text-sm focus:outline-none"
+                />
+                {form.titleQuery && (
+                  <button type="button" onClick={() => form.setTitleQuery("")} className="text-muted-foreground hover:text-foreground shrink-0">
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-1 rounded-lg border border-border bg-background px-2.5 py-2 focus-within:ring-2 focus-within:ring-ring">
+                  <Calendar size={13} className="text-muted-foreground shrink-0" />
+                  <input
+                    type="date"
+                    value={form.postedFrom}
+                    max={form.postedTo || undefined}
+                    onChange={(e) => form.setPostedFrom(e.target.value)}
+                    title="Posted from"
+                    className="flex-1 min-w-0 bg-transparent text-xs text-foreground focus:outline-none"
+                  />
+                </div>
+                <span className="text-xs text-muted-foreground shrink-0">–</span>
+                <div className="flex items-center gap-1.5 flex-1 rounded-lg border border-border bg-background px-2.5 py-2 focus-within:ring-2 focus-within:ring-ring">
+                  <input
+                    type="date"
+                    value={form.postedTo}
+                    min={form.postedFrom || undefined}
+                    onChange={(e) => form.setPostedTo(e.target.value)}
+                    title="Posted to"
+                    className="flex-1 min-w-0 bg-transparent text-xs text-foreground focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Candidates → Queue */}
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl border border-border overflow-hidden flex flex-col">
@@ -116,7 +172,11 @@ export function DeployAgentModal({
                 {form.loadingJobs ? (
                   <div className="p-3 text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" />Loading…</div>
                 ) : form.candidates.length === 0 ? (
-                  <div className="p-3 text-xs text-muted-foreground">{form.source ? "No posted jobs to add." : "Select a job source, or paste a URL above."}</div>
+                  <div className="p-3 text-xs text-muted-foreground">
+                    {form.hasFilter
+                      ? "No posted jobs match. Adjust the source or filters."
+                      : "Select a job source, filter by title/date, or paste a URL above."}
+                  </div>
                 ) : (
                   form.candidates.map((j) => <JobRow key={j.id} job={j} action="add" onClick={() => form.addToQueue(j)} />)
                 )}
