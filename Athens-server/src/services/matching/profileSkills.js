@@ -4,7 +4,7 @@ import { normalizeSkillSet } from '@nextoffer/shared/skill-normalize';
 import { buildProfileCompacts } from '@nextoffer/shared/skill-match';
 import { buildProfileTokens, skillTokens } from '@nextoffer/shared/skill-tokens';
 import { compactSkillText } from '@nextoffer/shared/skill-compact';
-import { computeUserSkillWeight } from '../../config/graphAndVectorConfig.js';
+import { skillLevelFactor } from '../../config/graphAndVectorConfig.js';
 import { requestUserRescore } from './matchScoreStore.js';
 
 const PROFILE_CACHE_TTL_SEC = 180;
@@ -27,7 +27,10 @@ function buildContextFromSkillDocs(skillDocs) {
     const label = String(doc?.name || '').trim();
     if (!label) continue;
     names.push(label);
-    const weight = computeUserSkillWeight(doc.category, doc.level);
+    // The maps carry the user's PROFICIENCY factor only (0..1). Category weight
+    // is applied job-side at score time (the job skill's category is the
+    // authoritative requirement type), so it must not be baked in here.
+    const weight = skillLevelFactor(doc.level);
     if (weight <= 0) continue;
 
     for (const token of skillTokens(label)) {

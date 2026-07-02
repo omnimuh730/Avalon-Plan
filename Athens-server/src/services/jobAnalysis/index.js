@@ -1,7 +1,6 @@
 import { ObjectId } from 'mongodb';
 import { jobsCollection } from '../../db/mongo.js';
 import { attachStaticScoreFields } from '../jobListPipeline.js';
-import { upsertJobEmbeddingAsync } from '../embeddings/embeddingIngest.js';
 import { indexJobInRedis, jobSkillTokens } from '../matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../matching/jobSkillExtraction.js';
 
@@ -126,7 +125,6 @@ async function runJobAnalysis(job) {
 	);
 
 	await indexJobInRedis(jobId, skillsNormalized, skillTokens).catch(() => {});
-	upsertJobEmbeddingAsync(jobId, { applierName });
 
 	return { skillsProcessed: skillsNormalized.length };
 }

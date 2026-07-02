@@ -125,6 +125,13 @@ export function jobSkillMatchWeight(jobSkill, ctx) {
 }
 
 /**
+ * Proficiency of the best user skill matching a job skill (0 = no match).
+ * Identical resolution to jobSkillMatchWeight — the weight maps now carry the
+ * user's 0..1 proficiencyFactor (category is applied job-side at score time).
+ */
+export const matchProficiency = jobSkillMatchWeight;
+
+/**
  * @param {string[]} jobSkills display or canonical job skills
  * @param {ProfileMatchContext} ctx
  */

@@ -33,6 +33,8 @@ let jobMatchScoresCollection;
 let matchProfileStateCollection;
 // Manual user skills with category + level — the sole source for match scoring.
 let userSkillsCollection;
+// Deduped global dictionary of every skill seen in a job description (AI-categorized).
+let skillDictionaryCollection;
 
 async function ensureMailCollectionsIndexes() {
 	if (mailMessagesCollection) {
@@ -101,6 +103,11 @@ async function ensureMatchScoreIndexes() {
 		await userSkillsCollection.createIndex({ applierName: 1, nameCanonical: 1 }, { unique: true });
 		await userSkillsCollection.createIndex({ applierName: 1, category: 1, level: -1 });
 	}
+	if (skillDictionaryCollection) {
+		await skillDictionaryCollection.createIndex({ nameCanonical: 1 }, { unique: true });
+		await skillDictionaryCollection.createIndex({ tokens: 1 });
+		await skillDictionaryCollection.createIndex({ jobCount: -1 });
+	}
 }
 
 async function initMongo() {
@@ -139,6 +146,7 @@ async function initMongo() {
 	jobMatchScoresCollection = db.collection('job_match_scores');
 	matchProfileStateCollection = db.collection('match_profile_state');
 	userSkillsCollection = db.collection('user_skills');
+	skillDictionaryCollection = db.collection('skill_dictionary');
 	try {
 		await avalonRunsCollection.createIndex({ runId: 1 }, { unique: true });
 		await avalonRunsCollection.createIndex({ applierName: 1, startedAt: -1 });
@@ -278,5 +286,6 @@ export {
 	jobMatchScoresCollection,
 	matchProfileStateCollection,
 	userSkillsCollection,
+	skillDictionaryCollection,
 	closeMongo
 };

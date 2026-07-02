@@ -93,12 +93,22 @@ export function formatUsageSummary(usage) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function fetchRetry(url, init, { timeoutMs = 120000, retries = 4, baseDelayMs = 1000 } = {}) {
+function combinedSignal(externalSignal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!externalSignal) return timeout;
+  // Node 20+: abort as soon as either the caller aborts or the timeout fires.
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([externalSignal, timeout]);
+  return externalSignal.aborted ? externalSignal : timeout;
+}
+
+async function fetchRetry(url, init, { timeoutMs = 120000, retries = 4, baseDelayMs = 1000, signal } = {}) {
   for (let attempt = 0; ; attempt += 1) {
     let response;
     try {
-      response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      response = await fetch(url, { ...init, signal: combinedSignal(signal, timeoutMs) });
     } catch (err) {
+      // A caller-requested abort is terminal — never retry through a Stop.
+      if (signal?.aborted) throw err;
       if (attempt >= retries) throw err;
       await sleep(baseDelayMs * 2 ** attempt);
       continue;
@@ -125,6 +135,7 @@ export async function chatCompletion({
   timeoutMs = 120000,
   runId,
   feature = 'resume-analysis',
+  signal,
 }) {
   const p = getProvider(provider);
   if (!apiKey) {
@@ -152,7 +163,7 @@ export async function chatCompletion({
       },
       body: JSON.stringify(body),
     },
-    { timeoutMs },
+    { timeoutMs, signal },
   );
 
   const data = await response.json().catch(() => ({}));

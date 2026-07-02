@@ -83,13 +83,18 @@ function hasVolatileFilters(listBody = {}) {
 }
 
 function composePageDoc(job, profileCtx) {
+  // Prefer AI skills (requirement-weighted) for the displayed score; fall back
+  // to title-derived strings for a not-yet-extracted job.
+  const hasAi = Array.isArray(job.aiSkills) && job.aiSkills.length;
   const enriched = enrichJobSkillsFromTitle(job);
-  const coverage = computeCoverageScore(enriched.skills, profileCtx);
+  const jobSkills = hasAi ? job.aiSkills : enriched.skills;
+  const coverage = computeCoverageScore(jobSkills, profileCtx);
+  const displaySkills = hasAi ? job.aiSkills.map((s) => s.name) : enriched.skills;
   return {
     ...job,
-    skills: enriched.skills,
+    skills: displaySkills,
     skillsNormalized: enriched.skillsNormalized,
-    ...composeJobScores({ ...job, skills: enriched.skills }, coverage, { vectorScore: null }),
+    ...composeJobScores({ ...job, skills: displaySkills }, coverage, { vectorScore: null }),
   };
 }
 

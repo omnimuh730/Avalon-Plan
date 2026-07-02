@@ -13,6 +13,11 @@ export async function ensureJobMarketIndexes(jobsCollection) {
 			{ matchScoreStatus: 1, postedAt: -1 },
 			{ partialFilterExpression: { matchScoreStatus: 'pending' } },
 		),
+		// AI skill-extraction session claims pending jobs; partial index stays small.
+		jobsCollection.createIndex(
+			{ aiSkillStatus: 1, postedAt: -1 },
+			{ partialFilterExpression: { aiSkillStatus: 'pending' } },
+		),
 	]);
 }
 

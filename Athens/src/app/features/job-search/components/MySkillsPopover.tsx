@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Plus, Sparkles, X } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover";
@@ -8,6 +8,7 @@ import {
   type UserSkill,
   type UserSkillCategory,
 } from "../hooks/useProfileMatchSkills";
+import { searchSkillDictionary, type DictionarySkill } from "../../../api/skillDictionary";
 
 const CATEGORY_META: Record<UserSkillCategory, { label: string; chip: string }> = {
   hard: { label: "Hard skills", chip: "border-violet-500/40 bg-violet-500/10" },
@@ -32,6 +33,38 @@ export function MySkillsPopover() {
   const [draft, setDraft] = useState("");
   const [draftCategory, setDraftCategory] = useState<UserSkillCategory>("hard");
   const [draftLevel, setDraftLevel] = useState(3);
+  const [suggestions, setSuggestions] = useState<DictionarySkill[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  // Track whether the current category was auto-prefilled (so typing more can re-prefill).
+  const categoryTouched = useRef(false);
+
+  // Debounced dictionary autocomplete on the draft name.
+  useEffect(() => {
+    const q = draft.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const rows = await searchSkillDictionary(q, { mode: "prefix", limit: 8 });
+      if (cancelled) return;
+      setSuggestions(rows);
+      // Prefill category from the top match until the user overrides it.
+      if (!categoryTouched.current && rows[0]) setDraftCategory(rows[0].category);
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [draft]);
+
+  const applySuggestion = (s: DictionarySkill) => {
+    setDraft(s.name);
+    setDraftCategory(s.category);
+    categoryTouched.current = false;
+    setShowSuggestions(false);
+  };
 
   const grouped = useMemo(() => {
     const byCategory = new Map<UserSkillCategory, UserSkill[]>();
@@ -50,7 +83,11 @@ export function MySkillsPopover() {
     const label = draft.trim();
     if (!label) return;
     const added = await addSkill(label, draftCategory, draftLevel);
-    if (added) setDraft("");
+    if (added) {
+      setDraft("");
+      setSuggestions([]);
+      categoryTouched.current = false;
+    }
   };
 
   return (
@@ -77,19 +114,51 @@ export function MySkillsPopover() {
 
         <div className="px-3 py-2.5 space-y-3">
           <div className="space-y-2">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void submitDraft();
-              }}
-              placeholder="Add a skill (e.g. React, AWS, Mentoring)…"
-              className="w-full h-8 rounded-md border border-border bg-secondary/60 px-2.5 text-sm text-foreground placeholder:text-muted-foreground/70 outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/10"
-            />
+            <div className="relative">
+              <input
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 120)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void submitDraft();
+                  if (e.key === "Escape") setShowSuggestions(false);
+                }}
+                placeholder="Add a skill (e.g. React, AWS, Mentoring)…"
+                className="w-full h-8 rounded-md border border-border bg-secondary/60 px-2.5 text-sm text-foreground placeholder:text-muted-foreground/70 outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/10"
+              />
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute z-30 mt-1 w-full rounded-md border border-border bg-popover shadow-md max-h-48 overflow-y-auto subtle-scroll">
+                  {suggestions.map((s) => (
+                    <button
+                      key={s.nameCanonical}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        applySuggestion(s);
+                      }}
+                      className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-secondary"
+                    >
+                      <span className="text-foreground truncate">{s.name}</span>
+                      <span className="flex items-center gap-1.5 shrink-0 text-muted-foreground">
+                        <span className="rounded bg-secondary px-1 py-0.5">{CATEGORY_META[s.category].label}</span>
+                        <span className="font-mono tabular-nums">{s.jobCount}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <select
                 value={draftCategory}
-                onChange={(e) => setDraftCategory(e.target.value as UserSkillCategory)}
+                onChange={(e) => {
+                  categoryTouched.current = true;
+                  setDraftCategory(e.target.value as UserSkillCategory);
+                }}
                 className="h-8 flex-1 rounded-md border border-border bg-secondary/60 px-2 text-xs text-foreground outline-none"
                 aria-label="Skill category"
               >

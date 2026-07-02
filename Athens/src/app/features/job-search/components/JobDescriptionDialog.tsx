@@ -30,6 +30,7 @@ import { useJobDetail } from "../hooks/useJobDetail";
 import { useJobResumeRank, useJobSkillRadar } from "../hooks/useJobSkillRadar";
 import { useProfileMatchSkills } from "../hooks/useProfileMatchSkills";
 import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
+import { DetectedSkillsPanel } from "./DetectedSkillsPanel";
 import { JobStatusActions } from "./JobStatusActions";
 import { AddProfileSkillPanel } from "./AddProfileSkillDialog";
 import { RequiredSkillsMatch } from "./RequiredSkillsMatch";
@@ -301,6 +302,13 @@ export function JobDescriptionDialog({
             onRequestAddSkill={handleRequestAddSkill}
             boostingSkill={boostingSkill}
           />
+
+          {displayJob.aiSkills?.length ? (
+            <>
+              <Separator />
+              <DetectedSkillsPanel aiSkills={displayJob.aiSkills} />
+            </>
+          ) : null}
 
           {displayJob.industries.length > 0 ? (
             <section>

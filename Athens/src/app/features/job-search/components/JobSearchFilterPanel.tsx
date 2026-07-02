@@ -21,6 +21,7 @@ import { ActiveFilterChips } from "./filters/ActiveFilterChips";
 import { JobFiltersSheet } from "./filters/JobFiltersSheet";
 import { JobScoreFiltersPopover } from "./filters/JobScoreFiltersPopover";
 import { MySkillsPopover } from "./MySkillsPopover";
+import { SkillExtractionButton } from "./SkillExtractionButton";
 
 const STATUS_TABS: {
   id: JobStatusTab;
@@ -152,6 +153,29 @@ export function JobSearchFilterPanel({
             className="w-[140px] shrink-0"
           />
 
+          {/* All vs AI-analyzed-only toggle */}
+          <div className="inline-flex items-center rounded-lg border border-border bg-secondary/60 p-0.5 shrink-0">
+            {([
+              { key: false, label: "All" },
+              { key: true, label: "AI-analyzed" },
+            ] as const).map((opt) => (
+              <button
+                key={String(opt.key)}
+                type="button"
+                onClick={() => patch({ aiExtractedOnly: opt.key })}
+                className={cn(
+                  "px-2.5 h-8 rounded-md text-xs font-semibold whitespace-nowrap transition-colors",
+                  filters.aiExtractedOnly === opt.key
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                title={opt.key ? "Show only jobs with AI-extracted skills" : "Show all jobs"}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
           <Button
             variant="outline"
             size="sm"
@@ -176,6 +200,8 @@ export function JobSearchFilterPanel({
           />
 
           <MySkillsPopover />
+
+          <SkillExtractionButton />
         </div>
 
         {/* Layer 3: active filter chips (collapsible) */}

@@ -4,7 +4,7 @@ import { compactSkillText } from './skill-compact.js';
 import { skillTokens, buildProfileTokens } from './skill-tokens.js';
 import { jobSkillMatchesProfile, jobSkillMatchWeight, buildProfileCompacts } from './skill-match.js';
 import { extractSkillsFromTitle, enrichJobSkillsFromTitle } from '../../../Athens-server/src/services/matching/jobSkillExtraction.js';
-import { computeHybridScore } from '../../../Athens-server/src/services/matching/coverageScore.js';
+import { computeHybridScore, computeCoverageScore } from '../../../Athens-server/src/services/matching/coverageScore.js';
 
 test('extractSkillsFromTitle pulls technology tokens, skips role filler', () => {
   const skills = extractSkillsFromTitle('Senior Salesforce Developer (m/f/d)');
@@ -126,6 +126,27 @@ test('jobSkillMatchWeight compact shim never fires for short skills', () => {
   const ctx = { tokenWeights: {}, compactWeights: [{ c: 'ai', w: 1.0 }, { c: 'c', w: 1.0 }] };
   assert.equal(jobSkillMatchWeight('Gmail', ctx), 0);
   assert.equal(jobSkillMatchWeight('Calculation', ctx), 0);
+});
+
+test('requirement-weighted coverage: perfect candidate scores exactly 100 (no suppression)', () => {
+  const aiSkills = [
+    { name: 'React', category: 'hard', requirement: 5 },
+    { name: 'Mentoring', category: 'soft', requirement: 2 },
+  ];
+  // Proficiency-only maps (category applied job-side); max proficiency = 1.0
+  const perfect = { tokenWeights: { react: 1.0, mentoring: 1.0 }, compactWeights: [{ c: 'react', w: 1.0 }] };
+  assert.equal(computeCoverageScore(aiSkills, perfect).matchScore, 100);
+
+  // Only the mandatory hard skill covered → still high (hard req5 dominates)
+  const reactOnly = { tokenWeights: { react: 1.0 }, compactWeights: [{ c: 'react', w: 1.0 }] };
+  const s1 = computeCoverageScore(aiSkills, reactOnly).matchScore;
+  assert.ok(s1 >= 80 && s1 < 100, `expected high not perfect, got ${s1}`);
+
+  // Only the soft nice-to-have covered → low (mandatory hard gap dominates)
+  const softOnly = { tokenWeights: { mentoring: 0.76 }, compactWeights: [] };
+  const s2 = computeCoverageScore(aiSkills, softOnly).matchScore;
+  assert.ok(s2 < 20, `expected low, got ${s2}`);
+  assert.ok(s1 > s2);
 });
 
 test('computeHybridScore blends skill and vector scores', () => {

@@ -6,6 +6,10 @@ import {
 	removeProfileMatchSkill,
 } from "../controllers/profileMatchSkillsController.js";
 import {
+	getSkillDictionary,
+	getSkillCoverage,
+} from "../controllers/skillDictionaryController.js";
+import {
 	getSkills,
 	addSkill,
 	deleteSkill,
@@ -52,6 +56,9 @@ const router = express.Router();
 router.get('/personal/profile-match-skills', getProfileMatchSkills);
 router.post('/personal/profile-match-skills', addProfileMatchSkill);
 router.delete('/personal/profile-match-skills', removeProfileMatchSkill);
+
+router.get('/personal/skill-dictionary', getSkillDictionary);
+router.get('/personal/skill-dictionary/coverage', getSkillCoverage);
 
 router.get('/personal/skills', getSkills);
 router.post('/personal/skills', addSkill);

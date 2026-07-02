@@ -26,10 +26,16 @@ export const MIN_STORE_SCORE = (() => {
   return Number.isFinite(n) && n >= 0 ? n : 1;
 })();
 
-/** Score one job against a profile context — the single scorer every writer uses. */
+/**
+ * Score one job against a profile context — the single scorer every writer uses.
+ * Prefers AI skills (name + category + requirement) for requirement-weighted
+ * coverage; falls back to title-derived strings for a not-yet-extracted job.
+ */
 export function scoreJobForProfile(job, profileCtx) {
-  const { skills } = enrichJobSkillsFromTitle(job);
-  const coverage = computeCoverageScore(skills, profileCtx);
+  const jobSkills = Array.isArray(job.aiSkills) && job.aiSkills.length
+    ? job.aiSkills
+    : enrichJobSkillsFromTitle(job).skills;
+  const coverage = computeCoverageScore(jobSkills, profileCtx);
   return {
     score: coverage.matchScore,
     covered: coverage.covered.length,

@@ -15,7 +15,6 @@ import { JobBulkActionsBar } from "./components/JobBulkActionsBar";
 import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { useJobSelection } from "./hooks/useJobSelection";
-import { useJobEmbeddings } from "./hooks/useJobEmbeddings";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
@@ -42,14 +41,6 @@ export function JobSearchPage() {
   const { applyToJob, updateJobStatus, cancelJobStatus, isPending } = useJobApplicationActions(patchJob, refreshStatusCounts);
   const { resumeStates, generateForJob, generateBulk, cancelBulk, bulkRunning, bulkProgress } =
     useJobResumeGeneration(jobs);
-  const {
-    session: embeddingSession,
-    missing: missingEmbeddings,
-    loading: embeddingLoading,
-    isRunning: embeddingRunning,
-    start: startEmbedding,
-    stop: stopEmbedding,
-  } = useJobEmbeddings();
 
   useEffect(() => {
     const pending = jobNav?.pendingFilters;
@@ -129,7 +120,7 @@ export function JobSearchPage() {
 
       {recommendationFallback && filters.sort === "matchScore" && (
         <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-900 dark:text-amber-100">
-          {recommendationFallbackMessage(recommendationReason, missingEmbeddings > 0)}
+          {recommendationFallbackMessage(recommendationReason)}
         </div>
       )}
 
@@ -154,20 +145,6 @@ export function JobSearchPage() {
         onStopGenerateResumes={cancelBulk}
         resumeGenerating={bulkRunning}
         resumeProgress={bulkProgress ?? undefined}
-        missingEmbeddings={missingEmbeddings}
-        embeddingRunning={embeddingRunning}
-        embeddingLoading={embeddingLoading}
-        embeddingProgress={
-          embeddingRunning && embeddingSession.total
-            ? {
-                embedded: embeddingSession.embedded ?? 0,
-                processed: embeddingSession.processed ?? 0,
-                total: embeddingSession.total,
-              }
-            : undefined
-        }
-        onStartEmbedding={() => void startEmbedding()}
-        onStopEmbedding={() => void stopEmbedding()}
         className="mb-3"
       />
 

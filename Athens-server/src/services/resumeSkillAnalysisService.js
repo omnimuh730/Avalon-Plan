@@ -9,7 +9,6 @@ import {
 } from "./userKnowledgeGraph/index.js";
 import { mergeSkillProfiles } from "./resumeSkillMerge.js";
 import { parseSkillProfileJson } from "./resumeSkillProfile.js";
-import { syncEmbeddingsAfterResumeAnalysis } from "./embeddings/embeddingIngest.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
 
 async function findAccount(applierNameRaw) {
@@ -175,7 +174,6 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
   await mergeSkillsIntoPersonalInfo(skillProfile.map((s) => s.name));
   const profileGraph = await rebuildProfileGraph(ownerName);
 
-  await syncEmbeddingsAfterResumeAnalysis(resumeIdStr, ownerName, { applierName: ownerName });
   invalidateRecommendationCache(ownerName);
 
   return {

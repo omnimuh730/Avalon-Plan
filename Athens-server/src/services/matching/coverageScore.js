@@ -1,23 +1,50 @@
 import { clampScore } from '@nextoffer/shared/score';
-import { computeSkillHighlights, jobSkillMatchesProfile, jobSkillMatchWeight, buildProfileCompacts } from '@nextoffer/shared/skill-match';
+import { computeSkillHighlights, jobSkillMatchesProfile, matchProficiency, buildProfileCompacts } from '@nextoffer/shared/skill-match';
 import { buildProfileTokens } from '@nextoffer/shared/skill-tokens';
+import { getSkillCategoryWeights } from '../../config/graphAndVectorConfig.js';
 
 export { clampScore };
 
 /**
- * Asymmetric word-token coverage: |jobSkills matched by profile| / |jobSkills|.
- * Profile extras never dilute the score. Job skills are the RAW display strings
- * (not canonicalized) so word tokens such as `AI/ML System` → ai, ml, system
- * survive; matching is via shared token + the ≥5 substring shim.
+ * Normalize job skills into `{ name, category, requirement }`. Plain strings
+ * (legacy/display fields) become category `hard`, requirement 1 so a
+ * not-yet-AI-extracted catalog still scores. Dedupe by normalized name.
+ */
+function normalizeJobSkillObjects(jobSkills) {
+  const list = jobSkills instanceof Set ? [...jobSkills] : Array.isArray(jobSkills) ? jobSkills : [];
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const name = typeof item === 'string' ? item : String(item?.name ?? '');
+    const key = name.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      name,
+      category: typeof item === 'object' && item?.category ? item.category : 'hard',
+      requirement: typeof item === 'object' && Number(item?.requirement) ? Number(item.requirement) : 1,
+    });
+  }
+  return out;
+}
+
+/**
+ * Per-user coverage score. Two modes:
  *
- * @param {string[]|Set<string>} jobSkills - raw display job skills
- * @param {Set<string>|{ profileTokens?: string[], profileCompacts?: string[], boostCompacts?: string[], exactSet?: Set<string> }} profileSkills
- * @returns {{ matchScore: number, covered: string[], missing: string[], required: number }}
+ * - **Weighted** (profile ctx carries proficiency maps): each job skill is
+ *   weighted by `requirement × categoryWeight(job skill's category)`, and a
+ *   match contributes that × the user's `proficiencyFactor` (0..1). The
+ *   denominator is weighted the same way, so a candidate who covers every skill
+ *   at max proficiency scores exactly 100% (no suppression), while mandatory
+ *   and hard-skill gaps cost the most.
+ * - **Boolean** (plain Set / token-only ctx): legacy |matched| / |required| for
+ *   detail views and tests.
+ *
+ * @param {Array<string|{name,category,requirement}>|Set<string>} jobSkills
+ * @param {Set<string>|object} profileSkills
+ * @returns {{ matchScore, covered: string[], missing: string[], required: number }}
  */
 export function computeCoverageScore(jobSkills, profileSkills) {
-  const rawSkills = jobSkills instanceof Set
-    ? [...jobSkills]
-    : (Array.isArray(jobSkills) ? jobSkills : []);
   const ctx = profileSkills instanceof Set
     ? {
         profileTokens: buildProfileTokens([...profileSkills]),
@@ -25,48 +52,40 @@ export function computeCoverageScore(jobSkills, profileSkills) {
       }
     : profileSkills;
 
-  // Dedupe display skills by normalized text so the same chip isn't double-counted.
-  const seen = new Set();
-  const uniqueSkills = [];
-  for (const raw of rawSkills) {
-    const key = String(raw ?? '').trim().toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    uniqueSkills.push(raw);
-  }
-
-  const required = uniqueSkills.length;
+  const jobSkillObjs = normalizeJobSkillObjects(jobSkills);
+  const required = jobSkillObjs.length;
   if (required === 0) {
     return { matchScore: 0, covered: [], missing: [], required: 0 };
   }
 
-  // Weighted profile (manual user skills carrying category/level weights):
-  // each matched job skill contributes its best matching skill's 0..1 weight,
-  // so a max-level hard skill counts fully while a soft skill counts partially.
   const weighted = Boolean(ctx?.tokenWeights || ctx?.compactWeights?.length);
-
   const covered = [];
   const missing = [];
-  let weightSum = 0;
-  for (const skill of uniqueSkills) {
-    if (weighted) {
-      const w = jobSkillMatchWeight(skill, ctx);
-      if (w > 0) {
-        covered.push(skill);
-        weightSum += w;
-      } else {
-        missing.push(skill);
-      }
-    } else if (jobSkillMatchesProfile(skill, ctx)) {
-      covered.push(skill);
+
+  if (!weighted) {
+    for (const { name } of jobSkillObjs) {
+      if (jobSkillMatchesProfile(name, ctx)) covered.push(name);
+      else missing.push(name);
+    }
+    return { matchScore: clampScore((covered.length / required) * 100), covered, missing, required };
+  }
+
+  const catWeights = getSkillCategoryWeights();
+  let denom = 0;
+  let num = 0;
+  for (const { name, category, requirement } of jobSkillObjs) {
+    const catW = typeof catWeights[category] === 'number' ? catWeights[category] : (catWeights.hard ?? 1);
+    denom += requirement * catW;
+    const prof = matchProficiency(name, ctx); // 0..1 proficiency of best user match
+    if (prof > 0) {
+      covered.push(name);
+      num += requirement * catW * prof;
     } else {
-      missing.push(skill);
+      missing.push(name);
     }
   }
 
-  const matchScore = weighted
-    ? clampScore((weightSum / required) * 100)
-    : clampScore((covered.length / required) * 100);
+  const matchScore = denom ? clampScore((num / denom) * 100) : 0;
   return { matchScore, covered, missing, required };
 }
 

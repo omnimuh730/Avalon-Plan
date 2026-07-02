@@ -29,7 +29,7 @@ const WORKER_INTERVAL_MS = Number(process.env.MATCH_SCORE_WORKER_INTERVAL_MS || 
 const JOB_BATCH = Number(process.env.MATCH_SCORE_JOB_BATCH || 200);
 const RESCORE_WRITE_BATCH = 1000;
 
-const JOB_SCORE_PROJECTION = { title: 1, skills: 1, postedAt: 1, _createdAt: 1, source: 1 };
+const JOB_SCORE_PROJECTION = { title: 1, skills: 1, aiSkills: 1, postedAt: 1, _createdAt: 1, source: 1 };
 
 function hasProfileSignal(ctx) {
   return Boolean(

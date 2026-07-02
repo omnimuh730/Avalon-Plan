@@ -103,6 +103,7 @@ export function buildJobsListBody(
   };
 
   if (opts.applierName) body.applierName = opts.applierName;
+  if (filters.aiExtractedOnly) body.aiExtracted = true;
 
   if (filters.companyQuery.trim()) body["company.name"] = filters.companyQuery.trim();
   if (filters.location !== "all") body["details.position"] = filters.location;
@@ -295,23 +296,13 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   };
 }
 
-function recommendationFallbackMessage(reason: string | null, hasUnembeddedJobs = false): string {
+function recommendationFallbackMessage(reason: string | null): string {
   switch (reason) {
-    case "no_candidates":
-      return hasUnembeddedJobs
-        ? "Job embeddings are not indexed yet. Use Embed jobs in the toolbar to index missing jobs."
-        : "Job embeddings are not indexed yet. New jobs embed automatically when Qdrant is running.";
-    case "embedding_failed":
-      return "Could not build resume/profile embeddings. Re-analyze a resume and ensure Ollama (`mxbai-embed-large`) is running.";
     case "no_profile_skills":
     case "no_analyzed_resumes":
       return "Add your skills via the My skills button in the toolbar before using Best match — scoring is based on that list.";
-    case "qdrant_not_ready":
-      return hasUnembeddedJobs
-        ? "Qdrant is not reachable. Start it with `npm run qdrant:start` in Athens-server, then use Embed jobs in the toolbar."
-        : "Qdrant is not reachable. Start it with `npm run qdrant:start` in Athens-server.";
     default:
-      return "Personalized ranking is unavailable. Analyze at least one resume and ensure Qdrant + Ollama (`mxbai-embed-large`) are running.";
+      return "Personalized ranking is unavailable. Add your skills via the My skills button to enable Best match.";
   }
 }
 

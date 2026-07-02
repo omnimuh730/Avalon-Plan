@@ -135,6 +135,7 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 		limit: _limit,
 		skip: _skip,
 		countsOnly: _countsOnly,
+		aiExtracted,
 		...filters
 	} = body;
 
@@ -146,6 +147,11 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 
 	const titleFilter = buildMongoCaseInsensitiveRegexFilter(q);
 	if (titleFilter) query.$and.push({ title: titleFilter });
+
+	// Show only jobs whose skills have been AI-extracted.
+	if (aiExtracted === true || aiExtracted === 'true') {
+		query.$and.push({ aiSkillStatus: 'extracted' });
+	}
 
 	for (const key in filters) {
 		if (!Object.hasOwnProperty.call(filters, key)) continue;

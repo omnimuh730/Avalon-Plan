@@ -10,7 +10,6 @@ import { MailPage } from "../features/mail/MailPage";
 import { CalendarPage } from "../features/calendar/CalendarPage";
 import { InterviewPrepPage } from "../features/interview-prep/InterviewPrepPage";
 import { AnalyticsPage } from "../features/analytics/AnalyticsPage";
-import { KnowledgeGraphPage } from "../features/knowledge-graph/KnowledgeGraphPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 
 export const VIEW_COMPONENTS: Record<View, ComponentType> = {
@@ -23,7 +22,6 @@ export const VIEW_COMPONENTS: Record<View, ComponentType> = {
   mail: MailPage,
   calendar: CalendarPage,
   interviews: InterviewPrepPage,
-  "knowledge-graph": KnowledgeGraphPage,
   reports: AnalyticsPage,
   settings: SettingsPage,
 };
