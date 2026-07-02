@@ -9,6 +9,7 @@ import {
   Layers,
   ListOrdered,
   Loader2,
+  Play,
   RefreshCw,
   Scan,
   Settings2,
@@ -160,6 +161,7 @@ export function AvalonControllerView({
   const liveOk = relay.connected && relay.peers.extension;
   const applyBlocked = applyDisabledReason(relay, hasPlan);
   const canApply = hasPlan && !applyBlocked;
+  const pipelineLocked = relay.autoRunning || relay.applying;
 
   const highlightStep = useMemo(() => {
     if (relay.validatingTab) return 3;
@@ -622,9 +624,36 @@ export function AvalonControllerView({
             <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Pipeline</h2>
             <button
               type="button"
+              onClick={() => void relay.runPipelineAuto()}
+              disabled={
+                !activeJob ||
+                !relay.canExecute ||
+                relay.autoRunning ||
+                pipelineLocked ||
+                relay.validatingTab ||
+                relay.generatingResume ||
+                relay.analyzing ||
+                relay.verifying
+              }
+              className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-violet-500/40 bg-violet-500/10 px-3 py-2.5 text-sm font-semibold text-violet-900 hover:bg-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {relay.autoRunning ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Auto-running…
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4" />
+                  Auto-run (steps 2–8)
+                </>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={() => void relay.openActiveJob()}
-              disabled={!activeJob || !relay.canExecute || relay.applying}
-              className={pipelineStepClass(2, highlightStep, pipeline.opened, Boolean(activeJob && relay.canExecute && !relay.applying))}
+              disabled={!activeJob || !relay.canExecute || pipelineLocked || relay.autoRunning}
+              className={pipelineStepClass(2, highlightStep, pipeline.opened, Boolean(activeJob && relay.canExecute && !pipelineLocked && !relay.autoRunning))}
             >
               {pipeline.opened ? <CheckCircle2 className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
               2 · Open job link
@@ -632,12 +661,12 @@ export function AvalonControllerView({
             <button
               type="button"
               onClick={() => void relay.validateActiveTab()}
-              disabled={!pipeline.opened || !relay.canExecute || relay.validatingTab || relay.applying}
+              disabled={!pipeline.opened || !relay.canExecute || relay.validatingTab || pipelineLocked}
               className={pipelineStepClass(
                 3,
                 highlightStep,
                 pipeline.validated,
-                pipeline.opened && relay.canExecute && !relay.validatingTab && !relay.applying,
+                pipeline.opened && relay.canExecute && !relay.validatingTab && !pipelineLocked,
               )}
             >
               {relay.validatingTab ? (
@@ -666,12 +695,12 @@ export function AvalonControllerView({
             <button
               type="button"
               onClick={() => void relay.generateActiveJobResume(hasResumeDraft)}
-              disabled={!pipeline.validated || relay.generatingResume || relay.applying}
+              disabled={!pipeline.validated || relay.generatingResume || pipelineLocked}
               className={pipelineStepClass(
                 4,
                 highlightStep,
                 pipeline.resumeReady,
-                pipeline.validated && !relay.generatingResume && !relay.applying,
+                pipeline.validated && !relay.generatingResume && !pipelineLocked,
               )}
             >
               {relay.generatingResume ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
@@ -684,12 +713,12 @@ export function AvalonControllerView({
             <button
               type="button"
               onClick={() => void relay.fetchActionableTree()}
-              disabled={!pipeline.resumeReady || !relay.canExecute || relay.applying}
+              disabled={!pipeline.resumeReady || !relay.canExecute || pipelineLocked}
               className={pipelineStepClass(
                 5,
                 highlightStep,
                 pipeline.scanned,
-                pipeline.resumeReady && relay.canExecute && !relay.applying,
+                pipeline.resumeReady && relay.canExecute && !pipelineLocked,
               )}
             >
               {pipeline.scanned ? <CheckCircle2 className="w-4 h-4" /> : <TreePine className="w-4 h-4" />}
@@ -698,10 +727,10 @@ export function AvalonControllerView({
             <button
               type="button"
               onClick={() => void relay.analyzeTree()}
-              disabled={!pipeline.scanned || relay.analyzing || relay.applying}
+              disabled={!pipeline.scanned || relay.analyzing || pipelineLocked}
               className={cn(
-                pipelineStepClass(6, highlightStep, pipeline.analyzed, pipeline.scanned && !relay.analyzing && !relay.applying),
-                pipeline.scanned && !relay.analyzing && !relay.applying && "font-bold",
+                pipelineStepClass(6, highlightStep, pipeline.analyzed, pipeline.scanned && !relay.analyzing && !pipelineLocked),
+                pipeline.scanned && !relay.analyzing && !pipelineLocked && "font-bold",
               )}
             >
               {relay.analyzing ? (
@@ -716,12 +745,12 @@ export function AvalonControllerView({
             <button
               type="button"
               onClick={() => void relay.applyActionPlan()}
-              disabled={!pipeline.analyzed || !canApply || relay.applying || relay.analyzing}
+              disabled={!pipeline.analyzed || !canApply || pipelineLocked || relay.analyzing}
               className={pipelineStepClass(
                 7,
                 highlightStep,
                 pipeline.applied,
-                pipeline.analyzed && Boolean(canApply) && !relay.applying && !relay.analyzing,
+                pipeline.analyzed && Boolean(canApply) && !pipelineLocked && !relay.analyzing,
               )}
             >
               {relay.applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
@@ -730,12 +759,12 @@ export function AvalonControllerView({
             <button
               type="button"
               onClick={() => void relay.verifyActiveResult()}
-              disabled={!pipeline.applied || !relay.canExecute || relay.verifying || relay.applying}
+              disabled={!pipeline.applied || !relay.canExecute || relay.verifying || pipelineLocked}
               className={pipelineStepClass(
                 8,
                 highlightStep,
                 pipeline.verified,
-                pipeline.applied && relay.canExecute && !relay.verifying && !relay.applying,
+                pipeline.applied && relay.canExecute && !relay.verifying && !pipelineLocked,
               )}
             >
               {relay.verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}

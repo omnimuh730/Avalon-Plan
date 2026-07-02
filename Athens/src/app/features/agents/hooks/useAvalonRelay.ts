@@ -102,6 +102,20 @@ function isManualJob(job: QueuedJob): boolean {
   return job.source === "manual" || job.id.startsWith("manual:");
 }
 
+  /** Read a suggested pipeline restart step from verify guidance (language/numbers only). */
+export function parseRetryPipelineStep(detail?: string, reason?: string): number {
+  const text = `${detail ?? ""} ${reason ?? ""}`.toLowerCase();
+  const explicit = text.match(/\b(?:re-?run|retry|from)\s*(?:step\s*)?([2-8])\b/);
+  if (explicit) return Number(explicit[1]);
+  const markers = [...text.matchAll(/\b([5-8])\s*·/g)].map((m) => Number(m[1]));
+  if (markers.length) return Math.min(...markers);
+  if (/\bscan\b/.test(text) && /\banaly/.test(text)) return 5;
+  if (/verify again/.test(text)) return 8;
+  return 5;
+}
+
+const PIPELINE_AUTO_MAX_CYCLES = 4;
+
 export interface AvalonLogEntry {
   id: string;
   at: string;
@@ -180,9 +194,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [validatingTab, setValidatingTab] = useState(false);
   const [usageRequests, setUsageRequests] = useState<UsageEntry[]>([]);
   const [applyDone, setApplyDone] = useState(false);
+  const [autoRunning, setAutoRunning] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const applyingRef = useRef(false);
+  const autoRunningRef = useRef(false);
   const pendingActionsRef = useRef<Map<string, (result: ActionResult) => void>>(new Map());
   const resumeGenByJobIdRef = useRef<Map<string, Promise<AttachedFile>>>(new Map());
   // Debug run-logging: current run id, its job, a buffered event list + flush timer.
@@ -1185,6 +1201,88 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   );
 
   /**
+   * Manual pipeline step 8 — classify post-submit outcome (success / failed / additional).
+   * Shared by the manual Verify button and auto-run orchestration.
+   */
+  const computeVerifyResult = useCallback(
+    async (tabId: number, job: QueuedJob | null): Promise<ManualVerifyResult> => {
+      const jobForVerify: QueuedJob =
+        job ?? { id: "", title: treePage?.title ?? "this application", company: "", url: treePage?.url ?? "", source: "" };
+      const { verdict } = await verifyAfterSubmit(tabId, jobForVerify, true, 1500);
+
+      if (verdict.status === "success") {
+        if (job) await markJobApplied(job);
+        return { kind: "success", reason: verdict.reason || "Application submitted." };
+      }
+
+      if (verdict.status === "needs_verification") {
+        let otp: Awaited<ReturnType<typeof requestVerificationCode>> = { code: null, link: null };
+        if (applierName) {
+          for (let poll = 0; poll < 4 && !otp.code && !otp.link; poll += 1) {
+            if (poll > 0) {
+              await emitActionAsync({ id: createActionId(), tabId, action: "wait", payload: { ms: 4000 } }).catch(() => {});
+            }
+            otp = await requestVerificationCode(applierName);
+          }
+        }
+        const readNote = otp.code
+          ? `Read code “${otp.code}”${otp.from ? ` from ${otp.from}` : ""}${otp.via ? ` (${otp.via})` : ""}`
+          : otp.link
+            ? `Read verify link${otp.from ? ` from ${otp.from}` : ""}${otp.via ? ` (${otp.via})` : ""}`
+            : `No code/link in the inbox yet${otp.scanned ? ` (scanned ${otp.scanned} email(s))` : ""}`;
+        pushLog(readNote, Boolean(otp.code || otp.link));
+
+        if (otp.code) {
+          pushLog(`Filling verification code ${otp.code} and submitting…`, true);
+          const fill = await emitActionAsync(
+            { id: createActionId(), tabId, action: "fill_verification_code", payload: { code: otp.code } },
+            20000,
+          ).catch((e) => ({ success: false, error: String(e) }) as ActionResult);
+          const filled = (fill.data as { filled?: number; expected?: number; clicked?: boolean } | undefined) ?? {};
+          const after = await verifyAfterSubmit(tabId, jobForVerify, true, 4000);
+          if (after.verdict.status === "success") {
+            if (job) await markJobApplied(job);
+            return { kind: "success", reason: `Verified with emailed code — ${after.verdict.reason}` };
+          }
+          return {
+            kind: "additional",
+            reason: `Entered code ${otp.code} into ${filled.filled ?? 0}/${filled.expected ?? "?"} box(es), submit ${filled.clicked ? "clicked" : "not found"}`,
+            detail: `Still not confirmed (${after.verdict.status}): ${after.verdict.reason}. Click Verify again to retry.`,
+          };
+        }
+
+        if (otp.link) {
+          pushLog("Opening verification link…", true);
+          await emitActionAsync({ id: createActionId(), tabId, action: "navigate", payload: { url: otp.link } }, 30000).catch(() => {});
+          const after = await verifyAfterSubmit(tabId, jobForVerify, true, 5000);
+          if (after.verdict.status === "success") {
+            if (job) await markJobApplied(job);
+            return { kind: "success", reason: `Verified via emailed link — ${after.verdict.reason}` };
+          }
+          return {
+            kind: "additional",
+            reason: "Opened the emailed verification link",
+            detail: `Not confirmed yet (${after.verdict.status}): ${after.verdict.reason}. Click Verify again.`,
+          };
+        }
+
+        return {
+          kind: "additional",
+          reason: verdict.reason || "Verification required.",
+          detail: `${readNote} — click Verify again once the email arrives.`,
+        };
+      }
+
+      return {
+        kind: "failed",
+        reason: verdict.reason || "Could not confirm the application.",
+        detail: "Re-run 5 · Scan DOM → 6 · Analyze → 7 · Apply, then 8 · Verify again.",
+      };
+    },
+    [applierName, emitActionAsync, markJobApplied, pushLog, treePage?.title, treePage?.url, verifyAfterSubmit],
+  );
+
+  /**
    * Manual pipeline step 6 — "Verify result". Reads the current page and classifies
    * the outcome into one of three results the user asked for: success / failed
    * (with reason) / additional process required (OTP, email verification code/link).
@@ -1203,83 +1301,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     setVerifying(true);
     setVerifyResult(null);
     try {
-      const jobForVerify: QueuedJob =
-        job ?? { id: "", title: treePage?.title ?? "this application", company: "", url: treePage?.url ?? "", source: "" };
-      // Short settle — by step 6 the page has already been submitted by step 5.
-      const { verdict } = await verifyAfterSubmit(tabId, jobForVerify, true, 1500);
-
-      let result: ManualVerifyResult;
-      if (verdict.status === "success") {
-        result = { kind: "success", reason: verdict.reason || "Application submitted." };
-        if (job) await markJobApplied(job);
-      } else if (verdict.status === "needs_verification") {
-        // OTP / email verification — pull the code OR a verify link from the inbox
-        // (regex + AI extractor), poll a few times since the email lags, then fill +
-        // submit (CSP-safe) or open the link, and re-verify.
-        let otp: Awaited<ReturnType<typeof requestVerificationCode>> = { code: null, link: null };
-        if (applierName) {
-          for (let poll = 0; poll < 4 && !otp.code && !otp.link; poll += 1) {
-            if (poll > 0) {
-              await emitActionAsync({ id: createActionId(), tabId, action: "wait", payload: { ms: 4000 } }).catch(() => {});
-            }
-            otp = await requestVerificationCode(applierName);
-          }
-        }
-        // Surface exactly what was read from the inbox (visibility the user asked for).
-        const readNote = otp.code
-          ? `Read code “${otp.code}”${otp.from ? ` from ${otp.from}` : ""}${otp.via ? ` (${otp.via})` : ""}`
-          : otp.link
-            ? `Read verify link${otp.from ? ` from ${otp.from}` : ""}${otp.via ? ` (${otp.via})` : ""}`
-            : `No code/link in the inbox yet${otp.scanned ? ` (scanned ${otp.scanned} email(s))` : ""}`;
-        pushLog(readNote, Boolean(otp.code || otp.link));
-
-        if (otp.code) {
-          pushLog(`Filling verification code ${otp.code} and submitting…`, true);
-          const fill = await emitActionAsync(
-            { id: createActionId(), tabId, action: "fill_verification_code", payload: { code: otp.code } },
-            20000,
-          ).catch((e) => ({ success: false, error: String(e) }) as ActionResult);
-          const filled = (fill.data as { filled?: number; expected?: number; clicked?: boolean } | undefined) ?? {};
-          const after = await verifyAfterSubmit(tabId, jobForVerify, true, 4000);
-          if (after.verdict.status === "success") {
-            result = { kind: "success", reason: `Verified with emailed code — ${after.verdict.reason}` };
-            if (job) await markJobApplied(job);
-          } else {
-            result = {
-              kind: "additional",
-              reason: `Entered code ${otp.code} into ${filled.filled ?? 0}/${filled.expected ?? "?"} box(es), submit ${filled.clicked ? "clicked" : "not found"}`,
-              detail: `Still not confirmed (${after.verdict.status}): ${after.verdict.reason}. Click Verify again to retry.`,
-            };
-          }
-        } else if (otp.link) {
-          // Click-to-verify flow — open the link in the same tab, then re-verify.
-          pushLog(`Opening verification link…`, true);
-          await emitActionAsync({ id: createActionId(), tabId, action: "navigate", payload: { url: otp.link } }, 30000).catch(() => {});
-          const after = await verifyAfterSubmit(tabId, jobForVerify, true, 5000);
-          if (after.verdict.status === "success") {
-            result = { kind: "success", reason: `Verified via emailed link — ${after.verdict.reason}` };
-            if (job) await markJobApplied(job);
-          } else {
-            result = {
-              kind: "additional",
-              reason: "Opened the emailed verification link",
-              detail: `Not confirmed yet (${after.verdict.status}): ${after.verdict.reason}. Click Verify again.`,
-            };
-          }
-        } else {
-          result = {
-            kind: "additional",
-            reason: verdict.reason || "Verification required.",
-            detail: `${readNote} — click Verify again once the email arrives.`,
-          };
-        }
-      } else {
-        result = {
-          kind: "failed",
-          reason: verdict.reason || "Could not confirm the application.",
-          detail: "Re-run 5 · Scan DOM → 6 · Analyze → 7 · Apply, then 8 · Verify again.",
-        };
-      }
+      const result = await computeVerifyResult(tabId, job);
       setVerifyResult(result);
       if (result.kind === "success" && job) markPipeline(job.id, { verified: true });
       pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
@@ -1291,17 +1313,14 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       setVerifying(false);
     }
   }, [
-    applierName,
     canExecute,
-    emitActionAsync,
+    computeVerifyResult,
     executeDisabledReason,
     getActiveQueuedJob,
-    markJobApplied,
     markPipeline,
     pushLog,
     selectedTabId,
     treePage,
-    verifyAfterSubmit,
   ]);
 
   /** Explicitly mark the active queued job Applied to MongoDB with the current profile. */
@@ -1318,6 +1337,312 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     await markJobApplied(job);
     pushLog(`Marked "${job.title}" as Applied for ${applierName}`, true);
   }, [applierName, getActiveQueuedJob, markJobApplied, pushLog]);
+
+  /**
+   * Auto-run pipeline steps 2–8 in order. On verify success, marks the job applied.
+   * On failure, follows step 8 guidance (typically restart from step 5) up to a few cycles.
+   */
+  const runPipelineAuto = useCallback(async () => {
+    if (autoRunningRef.current || applyingRef.current) return;
+    const job = getActiveQueuedJob();
+    if (!job) {
+      pushLog("Select a queued job first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot auto-run — extension not connected", false);
+      return;
+    }
+    if (isManualJob(job)) {
+      pushLog(`"${job.title}" is manual — auto-run needs a MongoDB job with tailored résumé`, false);
+      return;
+    }
+
+    autoRunningRef.current = true;
+    setAutoRunning(true);
+
+    let startStep = 2;
+    let cycle = 0;
+    let tabId: number | undefined;
+    let pageCtx: ActionablePageContext | null = null;
+    let tree: ActionableTree | null = null;
+    let plan: InjectionPlan | null = null;
+    let resumeFile: AttachedFile | null = null;
+
+    const abort = (message: string) => {
+      pushLog(message, false);
+    };
+
+    try {
+      while (cycle < PIPELINE_AUTO_MAX_CYCLES) {
+        cycle += 1;
+        pushLog(
+          cycle === 1
+            ? "Auto-run: steps 2–8…"
+            : `Auto-run: retry from step ${startStep} (cycle ${cycle}/${PIPELINE_AUTO_MAX_CYCLES})…`,
+          true,
+        );
+
+        if (startStep <= 2) {
+          setTabValidity(null);
+          setVerifyResult(null);
+          setApplyDone(false);
+          resetJobUsage();
+          tree = null;
+          plan = null;
+          resumeFile = null;
+          const opened = await emitActionAsync({
+            id: createActionId(),
+            action: "open_tab",
+            payload: { url: job.url },
+          });
+          if (!opened.success) {
+            abort(opened.error || "Failed to open tab");
+            return;
+          }
+          const openedData = opened.data as { tabId?: number; page?: ActionablePageContext };
+          tabId = openedData.tabId;
+          if (!tabId) {
+            abort("Open tab returned no tab id");
+            return;
+          }
+          pageCtx = openedData.page ?? null;
+          setSelectedTabId(tabId);
+          setTreePage(pageCtx);
+          setActionableTree(null);
+          setFormAnalysis(null);
+          setInjectionPlan(null);
+          setGeneratedScript("");
+          setFieldScriptsById({});
+          setSelectedTreeFieldId(null);
+          markPipeline(job.id, {
+            opened: true,
+            validated: false,
+            scanned: false,
+            analyzed: false,
+            applied: false,
+            verified: false,
+          });
+          pushLog(`Opened "${job.title}"`, true);
+        }
+
+        if (startStep <= 3) {
+          if (!tabId) {
+            abort("No tab for validation");
+            return;
+          }
+          setValidatingTab(true);
+          setTabValidity(null);
+          try {
+            const { validity } = await validateOpenedTab(tabId, job);
+            setTabValidity(validity);
+            if (!validity.valid) {
+              pushLog(`Not a usable form (${validity.kind}) — ${validity.reason}; closing tab`, false);
+              await closeTab(tabId);
+              setAppliedJobIds((prev) => new Set(prev).add(job.id));
+              if (applierName) {
+                try {
+                  await applyToJob(job.id, applierName);
+                } catch {
+                  /* non-fatal */
+                }
+              }
+              return;
+            }
+            markPipeline(job.id, { validated: true });
+            pushLog(`Valid application form — ${validity.reason}`, true);
+          } finally {
+            setValidatingTab(false);
+          }
+        }
+
+        if (startStep <= 4) {
+          try {
+            resumeFile = await startResumeForJob(job);
+            if (!resumeFile?.base64) {
+              abort("Résumé generation failed — missing PDF");
+              return;
+            }
+          } catch {
+            return;
+          }
+        }
+
+        if (startStep <= 5) {
+          if (!tabId) {
+            abort("No tab for scan");
+            return;
+          }
+          tree = null;
+          plan = null;
+          const treeRes = await emitActionAsync(
+            {
+              id: createActionId(),
+              tabId,
+              action: "fetch_actionable_tree",
+              payload: { probeComboboxes },
+            },
+            120000,
+          );
+          if (!treeRes.success) {
+            abort(treeRes.error || "Scan failed");
+            return;
+          }
+          const scanData = treeRes.data as { tree?: ActionableTree; page?: ActionablePageContext };
+          tree = scanData.tree ?? null;
+          if (!tree?.length) {
+            abort("Scan returned no fillable fields");
+            return;
+          }
+          pageCtx = scanData.page ?? pageCtx;
+          setActionableTree(tree);
+          setTreePage(pageCtx);
+          setFormAnalysis(null);
+          setInjectionPlan(null);
+          setGeneratedScript("");
+          setFieldScriptsById({});
+          setSelectedTreeFieldId(null);
+          markPipeline(job.id, { scanned: true, analyzed: false, applied: false, verified: false });
+          pushLog(`Scanned ${tree.length} section(s)`, true);
+        }
+
+        if (startStep <= 6) {
+          if (!tree?.length) {
+            abort("Missing form tree — scan first");
+            return;
+          }
+          plan = null;
+          setAnalyzing(true);
+          try {
+            const result = await analyzeFormFields({
+              tree,
+              applicantContext: applicantContext || undefined,
+            });
+            setFormAnalysis(result);
+            recordUsage("Analyze form", result.usage);
+            const built = buildFormInjectionPlan({ tree, fields: result.fields });
+            plan = built.plan;
+            if (!plan.steps.length) {
+              abort("Analyze produced empty fill plan");
+              return;
+            }
+            setInjectionPlan(plan);
+            setGeneratedScript(built.preview);
+            setFieldScriptsById(Object.fromEntries(built.fieldPreviews.map((entry) => [entry.id, entry.preview])));
+            markPipeline(job.id, { analyzed: true });
+            pushLog(`Action plan: ${result.fields.length} field(s)`, true);
+          } catch (error) {
+            abort(error instanceof Error ? error.message : "Analysis failed");
+            return;
+          } finally {
+            setAnalyzing(false);
+          }
+        }
+
+        if (startStep <= 7) {
+          if (!pageCtx?.tabId) {
+            abort("No page context for apply");
+            return;
+          }
+          if (!plan?.steps.length) {
+            abort("No fill plan to apply");
+            return;
+          }
+          if (!resumeFile?.base64) {
+            resumeFile = getResumeForJob(job);
+          }
+          if (!resumeFile?.base64) {
+            abort("Generate tailored résumé first");
+            return;
+          }
+          try {
+            await runApplyWithPlan(plan, pageCtx, resumeFile);
+            setApplyDone(true);
+            markPipeline(job.id, { applied: true });
+          } catch (error) {
+            abort(error instanceof Error ? error.message : "Apply failed");
+            return;
+          }
+        }
+
+        if (startStep <= 8) {
+          if (!tabId) {
+            abort("No tab to verify");
+            return;
+          }
+          setVerifying(true);
+          setVerifyResult(null);
+          try {
+            const result = await computeVerifyResult(tabId, job);
+            setVerifyResult(result);
+            if (result.kind === "success") {
+              markPipeline(job.id, { verified: true });
+              pushLog(`Auto-run complete — ${result.reason}`, true);
+              return;
+            }
+            pushLog(`Verify: ${result.kind} — ${result.reason}`, false);
+            if (cycle >= PIPELINE_AUTO_MAX_CYCLES) return;
+            const retry = parseRetryPipelineStep(result.detail, result.reason);
+            if (retry < 5 || retry > 8) return;
+            startStep = retry;
+            const patch: Partial<JobPipelineState> = { verified: false };
+            if (retry <= 5) {
+              patch.scanned = false;
+              patch.analyzed = false;
+              patch.applied = false;
+              setActionableTree(null);
+              setFormAnalysis(null);
+              setInjectionPlan(null);
+              setGeneratedScript("");
+              setFieldScriptsById({});
+              setSelectedTreeFieldId(null);
+              tree = null;
+              plan = null;
+            } else if (retry <= 6) {
+              patch.analyzed = false;
+              patch.applied = false;
+              setFormAnalysis(null);
+              setInjectionPlan(null);
+              setGeneratedScript("");
+              setFieldScriptsById({});
+              plan = null;
+            } else if (retry <= 7) {
+              patch.applied = false;
+              setApplyDone(false);
+            }
+            markPipeline(job.id, patch);
+            continue;
+          } catch (error) {
+            abort(error instanceof Error ? error.message : "Verify failed");
+            return;
+          } finally {
+            setVerifying(false);
+          }
+        }
+      }
+    } finally {
+      autoRunningRef.current = false;
+      setAutoRunning(false);
+    }
+  }, [
+    applicantContext,
+    applierName,
+    canExecute,
+    closeTab,
+    computeVerifyResult,
+    emitActionAsync,
+    executeDisabledReason,
+    getActiveQueuedJob,
+    getResumeForJob,
+    markPipeline,
+    probeComboboxes,
+    pushLog,
+    recordUsage,
+    resetJobUsage,
+    runApplyWithPlan,
+    startResumeForJob,
+    validateOpenedTab,
+  ]);
 
   /**
    * Re-scan the page's actionable tree for the recovery loop. Dropdown/combobox
@@ -1749,6 +2074,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     setSelectedTreeFieldId,
     analyzing,
     applying,
+    autoRunning,
     canExecute,
     executeDisabledReason,
     actionPlanByFieldId,
@@ -1781,6 +2107,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     generatePlan,
     generateActiveJobResume,
     openActiveJob,
+    runPipelineAuto,
     applyActionPlan,
     selectTreeTarget,
     requestTabs,
