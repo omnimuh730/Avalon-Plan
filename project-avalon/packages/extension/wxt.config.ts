@@ -17,8 +17,15 @@ export default defineConfig({
       'contextMenus',
       'notifications',
       'unlimitedStorage',
+      'alarms',
     ],
-    host_permissions: ['<all_urls>', 'http://localhost/*', 'ws://localhost/*'],
+    host_permissions: [
+      '<all_urls>',
+      'http://localhost/*',
+      'http://127.0.0.1/*',
+      'ws://localhost/*',
+      'ws://127.0.0.1/*',
+    ],
     action: {
       default_title: 'Open Avalon sidebar',
     },

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 import { DEFAULT_SESSION_ID, SOCKET_EVENTS, type ApplyProgress } from "@avalon/shared";
-import { avalonRelayUrl } from "../services/agentApi";
+import { avalonRelayUrl, createAvalonSocket, waitForAvalonRelay } from "../services/agentApi";
 
 /** Auto-dismiss the overlay this long after a terminal phase. */
 const TERMINAL_HIDE_MS = 4000;
@@ -17,26 +17,33 @@ export function useApplyProgress(sessionId: string = DEFAULT_SESSION_ID): ApplyP
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const socket: Socket = io(avalonRelayUrl(), {
-      transports: ["websocket", "polling"],
-    });
+    let cancelled = false;
+    let socket: Socket | null = null;
 
-    socket.on("connect", () => {
-      socket.emit(SOCKET_EVENTS.REGISTER, { role: "observer", sessionId });
-    });
+    void (async () => {
+      await waitForAvalonRelay();
+      if (cancelled) return;
 
-    socket.on(SOCKET_EVENTS.APPLY_PROGRESS, (update: ApplyProgress) => {
-      setProgress(update);
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-      if (TERMINAL_PHASES.includes(update.phase)) {
-        hideTimer.current = setTimeout(() => setProgress(null), TERMINAL_HIDE_MS);
-      }
-    });
+      socket = createAvalonSocket(avalonRelayUrl());
+
+      socket.on("connect", () => {
+        socket?.emit(SOCKET_EVENTS.REGISTER, { role: "observer", sessionId });
+      });
+
+      socket.on(SOCKET_EVENTS.APPLY_PROGRESS, (update: ApplyProgress) => {
+        setProgress(update);
+        if (hideTimer.current) clearTimeout(hideTimer.current);
+        if (TERMINAL_PHASES.includes(update.phase)) {
+          hideTimer.current = setTimeout(() => setProgress(null), TERMINAL_HIDE_MS);
+        }
+      });
+    })();
 
     return () => {
+      cancelled = true;
       if (hideTimer.current) clearTimeout(hideTimer.current);
-      socket.removeAllListeners();
-      socket.disconnect();
+      socket?.removeAllListeners();
+      socket?.disconnect();
     };
   }, [sessionId]);
 

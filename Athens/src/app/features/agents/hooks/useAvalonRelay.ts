@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 import {
   DEFAULT_SESSION_ID,
   SOCKET_EVENTS,
@@ -20,7 +20,7 @@ import { analyzeFormFields } from "../avalon/ai/analyze-form";
 import { buildApplyInjectionPlanPayload } from "../avalon/ai/apply-injection-plan";
 import { buildFormInjectionPlan } from "../avalon/ai/generate-injection-plan";
 import type { FieldActionPlan, FormAnalysisResult } from "../avalon/ai/types";
-import { avalonRelayUrl } from "../../../services/agentApi";
+import { avalonRelayUrl, createAvalonSocket } from "../../../services/agentApi";
 import { applyToJob, fetchJobDescription, generateJobResumeStream, type ResumeSectionPurpose } from "../../../api/jobs";
 import { requestVerificationCode } from "../../../api/mail";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
@@ -378,12 +378,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const connect = useCallback(() => {
     socketRef.current?.removeAllListeners();
     socketRef.current?.disconnect();
-    const next = io(serverUrl, {
-      transports: ["websocket", "polling"],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-    });
+    const next = createAvalonSocket(serverUrl);
     socketRef.current = next;
 
     next.on("connect", () => {

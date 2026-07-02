@@ -12,6 +12,8 @@ import {
 import { io, type Socket } from 'socket.io-client';
 import { executeInjectionPlan } from './injection-plan-executor';
 import {
+  AVALON_RELAY_CONNECTED_KEY,
+  AVALON_RELAY_ERROR_KEY,
   AVALON_SERVER_KEY,
   AVALON_SESSION_KEY,
   DEFAULT_SERVER_URL,
@@ -22,6 +24,49 @@ import { ensureContentScript, runActionInTab } from './tab-messages';
 let socket: Socket | null = null;
 let tabListenersBound = false;
 let currentSessionId: string = DEFAULT_SESSION_ID;
+let lastConnectionError: string | null = null;
+
+async function persistRelayError(message: string | null) {
+  lastConnectionError = message;
+  if (message) {
+    await browser.storage.local.set({ [AVALON_RELAY_ERROR_KEY]: message });
+  } else {
+    await browser.storage.local.remove(AVALON_RELAY_ERROR_KEY);
+  }
+}
+
+async function persistRelayConnected(connected: boolean) {
+  await browser.storage.local.set({ [AVALON_RELAY_CONNECTED_KEY]: connected });
+}
+
+async function probeRelayHealth(serverUrl: string): Promise<boolean> {
+  try {
+    const base = serverUrl.replace(/\/$/, '');
+    const res = await fetch(`${base}/health`, { cache: 'no-store' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function probeRelayHealthWithRetry(
+  serverUrl: string,
+  attempts = 20,
+  intervalMs = 500,
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i += 1) {
+    if (await probeRelayHealth(serverUrl)) return true;
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  return false;
+}
+
+function isSocketReconnecting(sock: Socket): boolean {
+  const mgr = sock.io as Socket['io'] & { reconnecting?: boolean };
+  return Boolean(mgr.reconnecting);
+}
 
 function emitApplyProgress(progress: Omit<ApplyProgress, 'at' | 'sessionId'>) {
   if (!socket?.connected) return;
@@ -403,16 +448,57 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
 export async function connectRelay(
   overrides?: { serverUrl?: string; sessionId?: string },
   onRegistered?: (payload: RegisteredPayload) => void,
+  onConnectError?: (error: Error) => void,
+  options?: { waitForHealth?: boolean },
 ) {
   const config = await getStoredConfig();
   const serverUrl = overrides?.serverUrl ?? config.serverUrl;
   const sessionId = overrides?.sessionId?.trim() || DEFAULT_SESSION_ID;
 
+  if (options?.waitForHealth) {
+    const reachable = await probeRelayHealthWithRetry(serverUrl);
+    if (!reachable) {
+      const message = `Relay server unreachable at ${serverUrl}. Start the Avalon backend (port 3847).`;
+      await persistRelayError(message);
+      onConnectError?.(new Error(message));
+      return null;
+    }
+  } else {
+    await persistRelayError(null);
+  }
+
   socket?.disconnect();
-  socket = io(serverUrl, { transports: ['websocket', 'polling'] });
+  socket?.removeAllListeners();
+  // MV3 service workers have NO XMLHttpRequest, so socket.io's HTTP long-polling
+  // transport fails immediately ("xhr poll error"). WebSocket IS available in the
+  // worker, so we use it exclusively — this is what makes the extension actually
+  // connect to the relay.
+  socket = io(serverUrl, {
+    transports: ['websocket'],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1500,
+    reconnectionDelayMax: 10000,
+    timeout: 20000,
+  });
   bindTabListeners();
 
+  socket.on('connect_error', (error: Error) => {
+    if (socket?.connected) return;
+    void persistRelayConnected(false);
+    onConnectError?.(error);
+  });
+
+  socket.on('disconnect', (reason) => {
+    void persistRelayConnected(false);
+    if (reason === 'io server disconnect') {
+      void persistRelayError('Relay disconnected by server.');
+    }
+  });
+
   socket.on('connect', () => {
+    void persistRelayError(null);
+    void persistRelayConnected(true);
     socket?.emit(
       SOCKET_EVENTS.REGISTER,
       { role: 'extension', sessionId },
@@ -458,13 +544,79 @@ export async function connectRelay(
   return socket;
 }
 
+/** Re-open the relay if the MV3 service worker woke without an in-memory socket. */
+export async function ensureRelayConnected(
+  overrides?: { serverUrl?: string; sessionId?: string },
+): Promise<void> {
+  const existing = getRelaySocket();
+  if (existing?.connected) {
+    await persistRelayError(null);
+    await persistRelayConnected(true);
+    return;
+  }
+  if (existing && !existing.connected) {
+    if (isSocketReconnecting(existing)) return;
+    existing.disconnect();
+    socket = null;
+  }
+
+  const config = await getStoredConfig();
+  await connectRelay({
+    serverUrl: overrides?.serverUrl ?? config.serverUrl,
+    sessionId: overrides?.sessionId ?? config.sessionId,
+  });
+}
+
+export function waitForRelayRegistration(
+  overrides?: { serverUrl?: string; sessionId?: string },
+  timeoutMs = 20000,
+): Promise<RegisteredPayload> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(getRelayLastError() ?? 'Relay connection timed out'));
+    }, timeoutMs);
+
+    void connectRelay(
+      overrides,
+      (payload) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(payload);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+      { waitForHealth: true },
+    );
+  });
+}
+
 export function disconnectRelay() {
   socket?.disconnect();
   socket = null;
+  void persistRelayConnected(false);
 }
 
 export function getRelaySocket() {
   return socket;
+}
+
+export function getRelayLastError() {
+  return lastConnectionError;
+}
+
+export async function readStoredRelayError(): Promise<string | null> {
+  const stored = await browser.storage.local.get(AVALON_RELAY_ERROR_KEY);
+  const message = (stored[AVALON_RELAY_ERROR_KEY] as string | undefined) ?? null;
+  lastConnectionError = message;
+  return message;
 }
 
 export async function saveRelayConfig(serverUrl: string, sessionId?: string) {

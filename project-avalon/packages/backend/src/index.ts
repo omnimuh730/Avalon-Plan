@@ -14,6 +14,7 @@ import {
 } from '@avalon/shared';
 
 const PORT = Number(process.env.PORT ?? 3847);
+const HOST = process.env.HOST !== undefined && process.env.HOST !== '' ? process.env.HOST : '0.0.0.0';
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? '*';
 
 interface Session {
@@ -167,6 +168,7 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Avalon relay listening on http://localhost:${PORT}`);
+httpServer.listen(PORT, HOST, () => {
+  const label = HOST === '0.0.0.0' ? 'localhost' : HOST;
+  console.log(`Avalon relay listening on http://${label}:${PORT}`);
 });

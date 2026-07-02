@@ -1,6 +1,12 @@
 export const AVALON_SERVER_KEY = 'avalonServerUrl';
 export const AVALON_SESSION_KEY = 'avalonSessionId';
-export const DEFAULT_SERVER_URL = 'http://localhost:3847';
+export const AVALON_RELAY_ERROR_KEY = 'avalonRelayLastError';
+export const AVALON_RELAY_CONNECTED_KEY = 'avalonRelayConnected';
+export const DEFAULT_SERVER_URL =
+  import.meta.env.WXT_AVALON_RELAY_URL?.trim() || 'http://127.0.0.1:3847';
+
+/** Side panel opens this port so the MV3 service worker stays alive while connecting. */
+export const RELAY_KEEPALIVE_PORT = 'avalon-relay-keepalive';
 
 export const EXTENSION_MESSAGES = {
   EXECUTE_IN_TAB: 'avalon:execute-in-tab',

@@ -15,6 +15,15 @@ function originFromApiUrl(apiUrl: string): string {
   }
 }
 
+function originFromServiceUrl(serviceUrl: string): string {
+  try {
+    const u = new URL(serviceUrl)
+    return `${u.protocol}//${u.host}`
+  } catch {
+    return serviceUrl.replace(/\/+$/, '')
+  }
+}
+
 
 function figmaAssetResolver() {
   return {
@@ -36,6 +45,15 @@ export default defineConfig(({ mode }) => {
     (env.SERVER_API_URL ? originFromApiUrl(env.SERVER_API_URL) : '') ||
     (env.VITE_API_URL ? originFromApiUrl(env.VITE_API_URL) : '') ||
     `http://127.0.0.1:${backendPort}`
+  const avalonTarget =
+    env.VITE_DEV_AVALON_PROXY_TARGET ||
+    (env.VITE_AVALON_SERVER ? originFromServiceUrl(env.VITE_AVALON_SERVER) : '') ||
+    'http://127.0.0.1:3847'
+  const aiBffTarget =
+    env.VITE_DEV_AI_BFF_PROXY_TARGET ||
+    (env.VITE_AI_BFF_URL ? originFromServiceUrl(env.VITE_AI_BFF_URL) : '') ||
+    'http://127.0.0.1:3920'
+  const devHost = env.DEV_HOST === '127.0.0.1' ? '127.0.0.1' : (env.DEV_HOST || true)
 
   return {
     envPrefix: ['VITE_', 'SERVER_'],
@@ -51,12 +69,26 @@ export default defineConfig(({ mode }) => {
     },
     assetsInclude: ['**/*.svg', '**/*.csv'],
     server: {
-      port: 9030,
+      host: devHost,
+      port: Number(env.VITE_DEV_PORT || 9030) || 9030,
       proxy: {
         '/api': {
           target: proxyTarget,
           changeOrigin: true,
           secure: false,
+        },
+        '/avalon': {
+          target: avalonTarget,
+          changeOrigin: true,
+          secure: false,
+          ws: true,
+          rewrite: (path) => path.replace(/^\/avalon/, ''),
+        },
+        '/ai-bff': {
+          target: aiBffTarget,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/ai-bff/, ''),
         },
       },
       fs: {

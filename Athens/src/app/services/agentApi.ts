@@ -1,4 +1,5 @@
-import { API_BASE } from "@/lib/api-base";
+import { io, type Socket } from "socket.io-client";
+import { API_BASE, resolveDevServiceUrl } from "@/lib/api-base";
 import type {
   ActivityEntry,
   AvalonHealthData,
@@ -34,7 +35,62 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function avalonRelayUrl() {
-  return (import.meta.env.VITE_AVALON_SERVER || "http://localhost:3847").replace(/\/$/, "");
+  return resolveDevServiceUrl(
+    import.meta.env.VITE_AVALON_SERVER,
+    "/avalon",
+    "http://localhost:3847",
+  );
+}
+
+/** Socket.IO client options — proxied in dev for LAN access. */
+export function avalonRelaySocketOptions(): { url?: string; path?: string } {
+  const configured = import.meta.env.VITE_AVALON_SERVER?.trim();
+  if (import.meta.env.DEV && (!configured || avalonRelayUrl() === "/avalon")) {
+    return { path: "/avalon/socket.io" };
+  }
+  return {
+    url: avalonRelayUrl(),
+    path: "/socket.io",
+  };
+}
+
+const AVALON_SOCKET_COMMON = {
+  transports: ["websocket", "polling"] as const,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+};
+
+export function createAvalonSocket(serverUrl: string): Socket {
+  if (serverUrl === "/avalon") {
+    return io({ ...AVALON_SOCKET_COMMON, path: "/avalon/socket.io" });
+  }
+  return io(serverUrl, { ...AVALON_SOCKET_COMMON, path: "/socket.io" });
+}
+
+export function avalonRelayHealthUrl(): string {
+  const base = avalonRelayUrl();
+  return base === "/avalon" ? "/avalon/health" : `${base}/health`;
+}
+
+/** Wait for the relay HTTP health endpoint before opening a websocket (avoids Vite proxy noise on boot). */
+export async function waitForAvalonRelay(
+  attempts = 30,
+  intervalMs = 1000,
+): Promise<boolean> {
+  const healthUrl = avalonRelayHealthUrl();
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const res = await fetch(healthUrl, { cache: "no-store" });
+      if (res.ok) return true;
+    } catch {
+      // Relay still starting — retry.
+    }
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  return false;
 }
 
 /** Probe Avalon relay via HTTP — does not steal the controller socket slot. */
