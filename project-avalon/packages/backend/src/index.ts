@@ -1,3 +1,7 @@
+import { installTerminalLogger } from '@nextoffer/shared/terminal-log';
+
+installTerminalLogger('avalon-relay');
+
 import cors from 'cors';
 import express from 'express';
 import { createServer } from 'node:http';

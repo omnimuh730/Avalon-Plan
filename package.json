@@ -6,6 +6,14 @@
     "Athens-server",
     "unified-ai-server"
   ],
+  "dependencies": {
+    "@nextoffer/shared": "file:packages/shared",
+    "ink": "^5.2.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  },
   "scripts": {
     "prestart": "node scripts/prestart.mjs",
     "start": "node scripts/dev-start.mjs",

@@ -12,6 +12,10 @@
     "./skill-tokens": "./src/skill-tokens.js",
     "./skill-match": "./src/skill-match.js",
     "./score": "./src/score.js",
+    "./terminal-log": {
+      "types": "./src/terminal-log.d.ts",
+      "import": "./src/terminal-log.js"
+    },
     "./types": "./src/types.d.ts"
   },
   "types": "./src/types.d.ts"

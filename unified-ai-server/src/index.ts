@@ -1,3 +1,7 @@
+import { installTerminalLogger } from '@nextoffer/shared/terminal-log';
+
+installTerminalLogger('unified-ai');
+
 import express from 'express';
 import cors from 'cors';
 import { CONFIG } from './config.js';

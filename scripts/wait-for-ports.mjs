@@ -5,6 +5,7 @@
  * Also exports probe() for prestart infra checks.
  */
 import net from 'node:net';
+import { installTerminalLogger } from '@nextoffer/shared/terminal-log';
 
 export const targets = [
   { host: process.env.MONGO_HOST || '127.0.0.1', port: Number(process.env.MONGO_PORT || 27017), label: 'MongoDB' },
@@ -51,7 +52,8 @@ async function waitFor(target) {
 /** Only run wait loop when executed directly: node scripts/wait-for-ports.mjs */
 const isMain = process.argv[1]?.endsWith('wait-for-ports.mjs');
 if (isMain) {
-  for (const t of targets) {
-    await waitFor(t);
-  }
+	installTerminalLogger('infra');
+	for (const t of targets) {
+		await waitFor(t);
+	}
 }
