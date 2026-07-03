@@ -50,7 +50,10 @@ function parseActionPlan(
   };
 }
 
-export async function analyzeFormFields(options: AnalyzeFormOptions): Promise<FormAnalysisResult> {
+export async function analyzeFormFields(
+  options: AnalyzeFormOptions,
+  signal?: AbortSignal,
+): Promise<FormAnalysisResult> {
   const allFields = flattenActionableTree(options.tree);
   if (allFields.length === 0) {
     return { fields: [] };
@@ -72,6 +75,7 @@ export async function analyzeFormFields(options: AnalyzeFormOptions): Promise<Fo
         },
       ],
       responseSchema: FORM_ACTION_PLAN_SCHEMA,
+      signal,
     });
 
     const structured = response.structured as { fields?: Array<Record<string, unknown>> } | undefined;

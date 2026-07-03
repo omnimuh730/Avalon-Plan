@@ -75,12 +75,15 @@ export function toAiUsage(u: unknown): AiUsage | undefined {
   };
 }
 
-export async function verifyApplyOutcome(params: {
-  pageText: string;
-  jobTitle?: string;
-  /** Number of form controls still visible on the page. Used to disambiguate empty page text. */
-  controlCount?: number;
-}): Promise<ApplyVerifyResult> {
+export async function verifyApplyOutcome(
+  params: {
+    pageText: string;
+    jobTitle?: string;
+    /** Number of form controls still visible on the page. Used to disambiguate empty page text. */
+    controlCount?: number;
+  },
+  signal?: AbortSignal,
+): Promise<ApplyVerifyResult> {
   const text = (params.pageText || "").slice(0, 6000);
   const controlInfo =
     params.controlCount != null
@@ -106,6 +109,7 @@ export async function verifyApplyOutcome(params: {
     ],
     responseSchema: APPLY_VERIFY_SCHEMA,
     temperature: 0,
+    signal,
   });
 
   const usage = toAiUsage(response.usage);

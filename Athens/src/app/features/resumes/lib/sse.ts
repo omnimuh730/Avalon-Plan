@@ -2,11 +2,13 @@ export async function streamSSE(
   url: string,
   payload: unknown,
   onEvent: (event: string, data: Record<string, unknown>) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
   if (!res.ok) {
     let msg = `Request failed (${res.status})`;

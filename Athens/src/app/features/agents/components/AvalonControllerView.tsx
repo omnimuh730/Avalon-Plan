@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -22,8 +22,8 @@ import {
 import type { ActionableTree } from "@avalon/shared";
 import { useApplier } from "@/context/applier-context";
 import { cn } from "../../../lib/utils";
-import { formatApplierProfile } from "../avalon/ai/profile";
-import { useAvalonRelay, type JobPipelineState, type QueuedJob } from "../hooks/useAvalonRelay";
+import { useSessionRelay } from "../context/AgentSessionsContext";
+import type { JobPipelineState, useAvalonRelay } from "../hooks/useAvalonRelay";
 import { ApplyStatusPanel } from "./ApplyStatusPanel";
 import { AgentResumePdfPreview, agentJobResumePdfUrl } from "./AgentResumePdfPreview";
 
@@ -146,25 +146,16 @@ function StatusDot({ ok, warn }: { ok?: boolean; warn?: boolean }) {
 }
 
 export function AvalonControllerView({
-  initialJobs,
   onQueueJobs,
 }: {
-  initialJobs?: QueuedJob[];
   onQueueJobs?: () => void;
 }) {
   const { applier } = useApplier();
   const [showSettings, setShowSettings] = useState(false);
 
-  const applicantContext = useMemo(
-    () => formatApplierProfile(applier?.autoBidProfile as Record<string, unknown> | undefined),
-    [applier?.autoBidProfile],
-  );
-
-  const relay = useAvalonRelay(applicantContext, applier?.name ?? "");
-
-  useEffect(() => {
-    if (initialJobs?.length) relay.enqueueJobs(initialJobs);
-  }, [initialJobs, relay.enqueueJobs]);
+  // The relay lives in a persistent per-session engine (AgentSessionsProvider), so
+  // state survives navigation and background runs; here we just consume it.
+  const relay = useSessionRelay();
 
   const selectedFieldLabel =
     relay.selectedTreeFieldId && relay.actionableTree

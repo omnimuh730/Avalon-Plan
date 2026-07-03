@@ -39,6 +39,7 @@ export interface VerificationCodeRequest {
 export async function requestVerificationCode(
   applierName: string,
   options?: Omit<VerificationCodeRequest, "applierName">,
+  signal?: AbortSignal,
 ): Promise<VerificationCodeResult> {
   try {
     const res = await fetch(`${API_BASE}/mail/verification-code`, {
@@ -50,6 +51,7 @@ export async function requestVerificationCode(
         ...(options?.companyName ? { companyName: options.companyName } : {}),
         ...(options?.jobTitle ? { jobTitle: options.jobTitle } : {}),
       }),
+      signal,
     });
     if (!res.ok) return { code: null, link: null };
     const data = (await res.json()) as {

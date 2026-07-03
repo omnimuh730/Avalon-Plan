@@ -67,9 +67,9 @@ export async function removeJobs(ids: string[]): Promise<{ success?: boolean; de
 }
 
 /** Fetch a job's full detail (incl. description) by Mongo id. Returns "" if unavailable. */
-export async function fetchJobDescription(jobId: string): Promise<string> {
+export async function fetchJobDescription(jobId: string, signal?: AbortSignal): Promise<string> {
   try {
-    const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`);
+    const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`, { signal });
     if (!res.ok) return "";
     const data = (await res.json()) as { data?: { description?: string; jobDescription?: string } };
     return String(data.data?.description ?? data.data?.jobDescription ?? "").trim();
@@ -176,6 +176,7 @@ export async function generateJobResumeStream(
     forceRegenerate?: boolean;
   },
   onProgress?: (progress: ResumeGenerationProgress) => void,
+  signal?: AbortSignal,
 ): Promise<GeneratedJobResume> {
   let donePayload: Record<string, unknown> | null = null;
   await streamSSE(
@@ -214,6 +215,7 @@ export async function generateJobResumeStream(
       if (event === "done") donePayload = data;
       if (event === "error") throw new Error(String(data.error ?? "Résumé generation failed"));
     },
+    signal,
   );
   if (!donePayload) throw new Error("Résumé generation ended without a result");
   return parseGeneratedJobResume(donePayload, params.applierName);

@@ -158,11 +158,15 @@ function buildRecoveryUserMessage(ctx: RecoveryContext): string {
   return parts.join("\n");
 }
 
-export async function generateRecoveryScript(ctx: RecoveryContext): Promise<RecoveryResult> {
+export async function generateRecoveryScript(
+  ctx: RecoveryContext,
+  signal?: AbortSignal,
+): Promise<RecoveryResult> {
   const response = await chatCompletion({
     system: RECOVERY_SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildRecoveryUserMessage(ctx) }],
     responseSchema: RECOVERY_SCRIPT_SCHEMA,
+    signal,
   });
 
   const structured = response.structured as

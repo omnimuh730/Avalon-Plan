@@ -14,6 +14,7 @@ export async function chatCompletion(request: ChatRequest): Promise<ChatResponse
       ...(request.maxTokens != null ? { maxTokens: request.maxTokens } : {}),
       responseSchema: request.responseSchema,
     }),
+    signal: request.signal,
   });
 
   if (!response.ok) {

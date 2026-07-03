@@ -186,9 +186,20 @@ const EMPTY_PIPELINE: JobPipelineState = {
   verified: false,
 };
 
-export function useAvalonRelay(applicantContext: string, applierName = "") {
+/**
+ * Options for a relay instance. Multi-session mounts pass a distinct `sessionId`
+ * per engine and `persist: false` (the session list owns persistence); the default
+ * single-session mount omits both to preserve the original localStorage behavior.
+ */
+export interface AvalonRelayOptions {
+  sessionId?: string;
+  persist?: boolean;
+}
+
+export function useAvalonRelay(applicantContext: string, applierName = "", options?: AvalonRelayOptions) {
+  const persistSession = options?.persist !== false;
   const [serverUrl, setServerUrl] = useState(() => avalonRelayUrl());
-  const [sessionId, setSessionId] = useState(() => storedAvalonSessionId());
+  const [sessionId, setSessionId] = useState(() => options?.sessionId ?? storedAvalonSessionId());
   const [connected, setConnected] = useState(false);
   const [registered, setRegistered] = useState<RegisteredPayload | null>(null);
   const [peers, setPeers] = useState({ extension: false, controller: false });
@@ -240,7 +251,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const autoPauseRef = useRef(false);
   // Queue-level stop (survives per-job abort resets so "Apply all" fully halts).
   const queueAbortRef = useRef(false);
-  const pendingActionsRef = useRef<Map<string, (result: ActionResult) => void>>(new Map());
+  // Aborts in-flight fetches (résumé stream, AI calls) for the current run when Stop
+  // is pressed. Null when no run is active, so manual steps are never auto-aborted.
+  const runAbortRef = useRef<AbortController | null>(null);
+  const pendingActionsRef = useRef<
+    Map<string, { resolve: (result: ActionResult) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>
+  >(new Map());
   const resumeGenByJobIdRef = useRef<Map<string, Promise<AttachedFile>>>(new Map());
   // Debug run-logging: current run id, its job, a buffered event list + flush timer.
   const runIdRef = useRef<string | null>(null);
@@ -331,6 +347,43 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         costUsd,
       },
     ]);
+  }, []);
+
+  /**
+   * True for the AbortError we throw/reject with when the run is stopped — matches
+   * both our own thrown Errors and the DOMException fetch() raises on abort (which is
+   * not always `instanceof Error`).
+   */
+  const isAbortError = useCallback(
+    (error: unknown): boolean =>
+      typeof error === "object" && error !== null && (error as { name?: string }).name === "AbortError",
+    [],
+  );
+
+  /** Throw an AbortError if the current auto-run has been stopped (checked between awaits). */
+  const throwIfAborted = useCallback(() => {
+    if (autoAbortRef.current) {
+      const err = new Error("Auto-run stopped");
+      err.name = "AbortError";
+      throw err;
+    }
+  }, []);
+
+  /** Signal for the current run's fetches (résumé/AI). Undefined outside an active run. */
+  const runSignal = useCallback(() => runAbortRef.current?.signal, []);
+
+  /**
+   * Reject every in-flight extension round-trip (emitActionAsync) immediately — used
+   * by Stop so a 120s scan / 180s apply doesn't keep the loop hostage until timeout.
+   */
+  const abortAllPending = useCallback((reason = "Auto-run stopped") => {
+    for (const [, entry] of pendingActionsRef.current) {
+      clearTimeout(entry.timer);
+      const err = new Error(reason);
+      err.name = "AbortError";
+      entry.reject(err);
+    }
+    pendingActionsRef.current.clear();
   }, []);
 
   const markPipeline = useCallback((jobId: string, patch: Partial<JobPipelineState>) => {
@@ -462,10 +515,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
 
     next.on(SOCKET_EVENTS.ACTION_RESULT, (result: ActionResult) => {
       // Resolve any awaiting orchestration step (applyJob) before state updates.
-      const resolver = pendingActionsRef.current.get(result.actionId);
-      if (resolver) {
+      const entry = pendingActionsRef.current.get(result.actionId);
+      if (entry) {
         pendingActionsRef.current.delete(result.actionId);
-        resolver(result);
+        clearTimeout(entry.timer);
+        entry.resolve(result);
       }
       const data = result.data as
         | {
@@ -557,10 +611,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   }, [connect]);
 
   // Persist the configured session so a reload re-registers into the SAME
-  // session instead of falling back to the shared "default" one.
+  // session instead of falling back to the shared "default" one. Multi-session
+  // engines opt out (persist:false) — the session list owns their ids.
   useEffect(() => {
+    if (!persistSession) return;
     persistAvalonSessionId(sessionId);
-  }, [sessionId]);
+  }, [persistSession, sessionId]);
 
   // If the user edits the session ID while connected, re-register onto the new
   // session automatically (debounced) — otherwise commands keep routing through
@@ -673,7 +729,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         });
       }
 
-      const jd = await fetchJobDescription(job.id);
+      const jd = await fetchJobDescription(job.id, runSignal());
       if (!jd) throw new Error(`No job description for "${job.title}" — cannot generate tailored résumé`);
 
       pushLog(
@@ -695,6 +751,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             setResumeGeneratedSections((prev) => ({ ...prev, ...progress.completedSections }));
           }
         },
+        runSignal(),
       );
       if (!gen.reused) recordUsage(`Résumé generation${gen.model ? ` (${gen.model})` : ""}`, gen.usage);
       const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
@@ -716,7 +773,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       pushLog(`Résumé ${gen.reused ? "reused" : "generated"} for "${job.title}"${modelNote}${pathNote}`, true);
       return file;
     },
-    [applierName, markPipeline, pushLog, resumesByJobId],
+    [applierName, markPipeline, pushLog, recordUsage, resumesByJobId, runSignal],
   );
 
   /** Start résumé generation for a queued job (deduped per job id). */
@@ -738,6 +795,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         try {
           return await ensureJobResume(job, options);
         } catch (error) {
+          if (isAbortError(error)) {
+            pushLog("Résumé generation stopped", false);
+            throw error;
+          }
           const msg = error instanceof Error ? error.message : "Résumé generation failed";
           setResumeError(msg);
           pushLog(msg, false);
@@ -753,7 +814,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       resumeGenByJobIdRef.current.set(job.id, promise);
       return promise;
     },
-    [ensureJobResume, pushLog],
+    [ensureJobResume, isAbortError, pushLog],
   );
 
   const generateActiveJobResume = useCallback(
@@ -918,10 +979,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           pendingActionsRef.current.delete(action.id);
           reject(new Error(`Action "${action.action}" timed out`));
         }, timeoutMs);
-        pendingActionsRef.current.set(action.id, (result) => {
-          clearTimeout(timer);
-          resolve(result);
-        });
+        pendingActionsRef.current.set(action.id, { resolve, reject, timer });
         socketRef.current.emit(SOCKET_EVENTS.EXECUTE_ACTION, action);
         pushLog(`Sent ${action.action} (${action.id})`);
       }),
@@ -1071,17 +1129,20 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         ? tree.reduce((n, g) => n + g.children.filter((c) => c.controlType !== "link").length, 0)
         : 0;
 
-      const validity = await validateJobPage({
-        text,
-        title: pageCtx?.title,
-        url: pageCtx?.url ?? job.url,
-        fieldCount,
-        controlCount,
-      });
+      const validity = await validateJobPage(
+        {
+          text,
+          title: pageCtx?.title,
+          url: pageCtx?.url ?? job.url,
+          fieldCount,
+          controlCount,
+        },
+        runSignal(),
+      );
       recordUsage("Verify tab (AI)", validity.usage);
       return { validity, tree, pageCtx };
     },
-    [emitActionAsync, recordUsage],
+    [emitActionAsync, recordUsage, runSignal],
   );
 
   /** Pipeline step 2 — open the active job's URL in a fresh tab (open only). */
@@ -1290,7 +1351,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       ).catch(() => {});
       const state = await readApplyPageState(tabId, submitted);
       try {
-        const verdict = await verifyApplyOutcome({ pageText: state.text, jobTitle: job.title, controlCount: state.controlCount });
+        const verdict = await verifyApplyOutcome(
+          { pageText: state.text, jobTitle: job.title, controlCount: state.controlCount },
+          runSignal(),
+        );
         recordUsage("Verify result (AI)", verdict.usage);
         pushLog(`Verify (AI): ${verdict.status} — ${verdict.reason}`, verdict.status === "success");
         return { verdict, state };
@@ -1306,7 +1370,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         };
       }
     },
-    [emitActionAsync, pushLog, readApplyPageState],
+    [emitActionAsync, pushLog, readApplyPageState, recordUsage, runSignal],
   );
 
   /**
@@ -1343,10 +1407,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         }
 
         pushLog(`Greenhouse OTP: reading Gmail for "${applierName}" (attempt ${attempt}/${OTP_FETCH_MAX_ATTEMPTS})…`, true);
-        const inbox = await requestVerificationCode(applierName, {
-          companyName: companyName || undefined,
-          jobTitle: jobTitle || undefined,
-        });
+        const inbox = await requestVerificationCode(
+          applierName,
+          { companyName: companyName || undefined, jobTitle: jobTitle || undefined },
+          runSignal(),
+        );
 
         // Surface EXACTLY what was read + how the AI decided, into the Activity feed.
         if (inbox.emails?.length) {
@@ -1418,7 +1483,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
 
       return { filled: false, clicked: false };
     },
-    [applierName, emitActionAsync, pushLog, waitUnlessAborted],
+    [applierName, emitActionAsync, pushLog, runSignal, waitUnlessAborted],
   );
 
   /**
@@ -1544,7 +1609,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       let plan: InjectionPlan;
       setAnalyzing(true);
       try {
-        const result = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined });
+        const result = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined }, runSignal());
         setFormAnalysis(result);
         recordUsage("Analyze form", result.usage);
         const built = buildFormInjectionPlan({ tree, fields: result.fields });
@@ -1590,6 +1655,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       pushLog,
       recordUsage,
       runApplyWithPlan,
+      runSignal,
     ],
   );
 
@@ -1731,13 +1797,20 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     pushLog("Auto-run resumed", true);
   }, [pushLog]);
 
-  /** Stop the running auto-run/queue at the next step boundary. */
+  /**
+   * Stop the running auto-run/queue. Beyond flipping the interrupt flags this
+   * immediately (a) rejects every in-flight extension round-trip and (b) aborts the
+   * run's fetches (résumé stream + AI calls) so a long op can't hold the loop until
+   * its 120s/180s timeout — the loop's `throwIfAborted`/catch then unwinds cleanly.
+   */
   const stopAutoRun = useCallback(() => {
     autoAbortRef.current = true;
     autoPauseRef.current = false;
     queueAbortRef.current = true;
+    runAbortRef.current?.abort();
+    abortAllPending();
     pushLog("Stopping auto-run…", false);
-  }, [pushLog]);
+  }, [abortAllPending, pushLog]);
 
   /**
    * Auto-run pipeline steps 2–7 in order (open → verify tab → résumé → scan →
@@ -1766,8 +1839,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     autoRunningRef.current = true;
     autoAbortRef.current = false;
     autoPauseRef.current = false;
+    runAbortRef.current = new AbortController();
     setAutoRunning(true);
     setAutoRunState("running");
+    startRunLog(job, { url: job.url, company: job.company, source: job.source, mode: "auto-run" });
 
     const startStep = 2;
     let cycle = 0;
@@ -1776,9 +1851,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     let tree: ActionableTree | null = null;
     let plan: InjectionPlan | null = null;
     let resumeFile: AttachedFile | null = null;
+    let finalStatus = "stopped";
 
-    const abort = (message: string) => {
+    const abort = (message: string, status = "failed") => {
       pushLog(message, false);
+      finalStatus = status;
     };
 
     // Between-step interrupt gate: blocks while paused, returns false if stopped.
@@ -1868,6 +1945,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
                   /* non-fatal */
                 }
               }
+              finalStatus = `skipped-${validity.kind}`;
               return;
             }
             markPipeline(job.id, { validated: true });
@@ -1938,10 +2016,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           plan = null;
           setAnalyzing(true);
           try {
-            const result = await analyzeFormFields({
-              tree,
-              applicantContext: applicantContext || undefined,
-            });
+            const result = await analyzeFormFields(
+              { tree, applicantContext: applicantContext || undefined },
+              runSignal(),
+            );
             setFormAnalysis(result);
             recordUsage("Analyze form", result.usage);
             const built = buildFormInjectionPlan({ tree, fields: result.fields });
@@ -2002,6 +2080,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         setVerifyResult(null);
         try {
           await waitBeforeVerify();
+          throwIfAborted();
           let verify = await computeVerifyResult(tabId, job);
           setVerifyResult(verify);
           pushLog(`Verify result: ${verify.kind} — ${verify.reason}`, verify.kind === "success");
@@ -2054,28 +2133,47 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             markPipeline(job.id, { verified: true });
             await closeTab(tabId); // application done → close the job tab
             pushLog(`Auto-run complete — "${job.title}" submitted and verified.`, true);
+            finalStatus = "applied";
           } else {
             pushLog(
               `Auto-run finished — "${job.title}" not confirmed after ${MAX_VERIFY_RETRIES} retries; left for manual review.`,
               false,
             );
+            finalStatus = "unconfirmed";
           }
         } catch (error) {
-          const msg = error instanceof Error ? error.message : "Verify failed";
-          setVerifyResult({ kind: "failed", reason: msg });
-          pushLog(msg, false);
+          if (isAbortError(error)) {
+            pushLog("Verify stopped", false);
+            finalStatus = "stopped";
+          } else {
+            const msg = error instanceof Error ? error.message : "Verify failed";
+            setVerifyResult({ kind: "failed", reason: msg });
+            pushLog(msg, false);
+            finalStatus = "error";
+          }
         } finally {
           setApplyPhase((prev) => (prev?.phase === "verify-wait" ? null : prev));
           setVerifying(false);
         }
         return;
       }
+    } catch (error) {
+      if (isAbortError(error)) {
+        pushLog("Auto-run stopped", false);
+        finalStatus = "stopped";
+      } else {
+        pushLog(error instanceof Error ? error.message : "Auto-run failed", false);
+        finalStatus = "error";
+      }
     } finally {
       autoRunningRef.current = false;
       autoAbortRef.current = false;
       autoPauseRef.current = false;
+      runAbortRef.current = null;
       setAutoRunning(false);
       setAutoRunState("idle");
+      setApplyPhase((prev) => (prev?.phase === "verify-wait" ? null : prev));
+      endRunLog(finalStatus);
     }
   }, [
     applicantContext,
@@ -2084,9 +2182,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     closeTab,
     computeVerifyResult,
     emitActionAsync,
+    endRunLog,
     executeDisabledReason,
     getActiveQueuedJob,
     getResumeForJob,
+    isAbortError,
     markPipeline,
     probeComboboxes,
     pushLog,
@@ -2094,7 +2194,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     resetJobUsage,
     rescanAnalyzeApply,
     runApplyWithPlan,
+    runSignal,
     startResumeForJob,
+    startRunLog,
+    throwIfAborted,
     validateOpenedTab,
     waitBeforeVerify,
   ]);
@@ -2242,7 +2345,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             maxAttempts: MAX_RECOVERY_ATTEMPTS,
             applicantContext: applicantContext || undefined,
             otpCode,
-          });
+          }, runSignal());
           recordUsage(`Recovery ${attempt} (AI)`, recovery.usage);
         } catch (error) {
           pushLog(`Recovery ${attempt}: AI failed — ${error instanceof Error ? error.message : error}`, false);
@@ -2296,7 +2399,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       pushLog(`"${job.title}" still unconfirmed after ${MAX_RECOVERY_ATTEMPTS} recovery attempts`, false);
       return false;
     },
-    [applicantContext, applierName, emitActionAsync, handleGreenhouseOtpFlow, markJobApplied, pushLog, rescanTree, verifyAfterSubmit, logRunData],
+    [applicantContext, applierName, emitActionAsync, handleGreenhouseOtpFlow, markJobApplied, pushLog, rescanTree, runSignal, verifyAfterSubmit, logRunData],
   );
 
   /**
@@ -2373,7 +2476,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         });
 
         setAnalyzing(true);
-        const analysis = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined });
+        const analysis = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined }, runSignal());
         setAnalyzing(false);
         setActionableTree(tree);
         setTreePage(pageCtx);
@@ -2486,7 +2589,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         endRunLog(finalStatus);
       }
     },
-    [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, runRecoveryLoop, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
+    [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, runRecoveryLoop, runSignal, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
   );
 
   /**
