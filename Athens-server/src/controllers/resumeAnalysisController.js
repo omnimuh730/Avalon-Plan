@@ -1,5 +1,5 @@
 import { accountInfoCollection } from "../db/mongo.js";
-import { chatCompletion, getProvider } from "../services/llm/llmService.js";
+import { chatCompletion, resolveDefaultModel } from "../services/llm/llmService.js";
 import { JOB_ANALYSIS_PROMPT } from "../config/jobAnalysisPrompt.js";
 import { rankResumes, rankUploadedResumes } from "../services/resumeMatchService.js";
 import { listUserResumesForOwner } from "../services/userResumeService.js";
@@ -17,21 +17,11 @@ async function findAccount(applierNameRaw) {
   return acc;
 }
 
-function apiKeyFor(profile, providerId) {
-  const provider = getProvider(providerId);
-  return String(profile?.[provider.keyField] || "").trim();
-}
-
 async function analyzeJobDescription(jobDescription, profile) {
-  const providerId = profile?.openaiApiKey ? "openai" : profile?.deepseekApiKey ? "deepseek" : "openai";
-  const apiKey = apiKeyFor(profile, providerId);
+  const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
     throw new Error("No LLM API key configured in profile (OpenAI or DeepSeek).");
   }
-
-  const model = providerId === "openai"
-    ? (String(profile?.openaiModel || "").trim() || "gpt-4o-mini")
-    : "deepseek-v4-flash";
 
   const result = await chatCompletion({
     provider: providerId,

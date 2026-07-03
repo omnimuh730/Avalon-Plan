@@ -1,6 +1,6 @@
 import { ObjectId } from "mongodb";
 import { userResumesCollection, accountInfoCollection } from "../db/mongo.js";
-import { chatCompletion, getProvider } from "./llm/llmService.js";
+import { chatCompletion, resolveDefaultModel } from "./llm/llmService.js";
 import { RESUME_SKILL_ANALYSIS_PROMPT } from "../config/resumeSkillAnalysisPrompt.js";
 import {
   buildUserGraphFromResume,
@@ -23,26 +23,11 @@ async function findAccount(applierNameRaw) {
   return acc;
 }
 
-function apiKeyFor(profile, providerId) {
-  const provider = getProvider(providerId);
-  return String(profile?.[provider.keyField] || "").trim();
-}
-
 async function extractSkillsWithLlm(extractedText, profile) {
-  const providerId = profile?.deepseekApiKey
-    ? "deepseek"
-    : profile?.openaiApiKey
-      ? "openai"
-      : "deepseek";
-  const apiKey = apiKeyFor(profile, providerId);
+  const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
     throw new Error("No LLM API key configured in profile (OpenAI or DeepSeek).");
   }
-
-  const model =
-    providerId === "openai"
-      ? String(profile?.openaiModel || "").trim() || "gpt-4o-mini"
-      : "deepseek-v4-flash";
 
   const text = String(extractedText || "").trim();
   if (!text) throw new Error("Resume has no extractable text");

@@ -17,6 +17,7 @@ import {
   type KeyCheck,
 } from "./ProfileCards";
 import { CareerTimeline } from "./CareerTimeline";
+import { DefaultModelCard } from "./DefaultModelCard";
 
 export function ProfileTab() {
   const { applier, applierReady } = useApplier();
@@ -168,6 +169,14 @@ export function ProfileTab() {
                   onTestKey={(p) => void checkKey(p)}
                   openaiModels={openaiModels}
                 />
+                {applier?.name ? (
+                  <DefaultModelCard
+                    applierName={applier.name}
+                    currentProvider={profile.defaultProvider}
+                    currentModel={profile.defaultModel}
+                    onSaved={(defaultProvider, defaultModel) => patch({ defaultProvider, defaultModel })}
+                  />
+                ) : null}
               </div>
             </div>
 

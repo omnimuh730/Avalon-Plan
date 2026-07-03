@@ -33,7 +33,7 @@ export function DetectedSkillsPanel({ aiSkills }: { aiSkills?: AiSkill[] }) {
   if (!sorted.length) return null;
 
   return (
-    <section>
+    <section className="border-t border-border/60 pt-5">
       <div className="mb-3 flex items-center gap-2">
         <span className="inline-flex size-7 items-center justify-center rounded-lg bg-primary/10">
           <ScanSearch className="size-4 text-primary" />

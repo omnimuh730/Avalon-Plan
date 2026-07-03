@@ -54,6 +54,9 @@ export type UserProfile = {
   openaiApiKey: string;
   openaiModel: string;
   deepseekApiKey: string;
+  /** Default model used by all AI features (empty until set). */
+  defaultProvider: string;
+  defaultModel: string;
   defaultPassword: string;
   phone: string;
   linkedin: string;
@@ -108,6 +111,8 @@ export const emptyProfile = (): UserProfile => ({
   openaiApiKey: "",
   openaiModel: "gpt-5-nano",
   deepseekApiKey: "",
+  defaultProvider: "",
+  defaultModel: "",
   defaultPassword: "",
   phone: "",
   linkedin: "",
@@ -189,6 +194,8 @@ export function mapProfileFromApi(raw: Record<string, unknown> | undefined): Use
     openaiApiKey: String(raw.openaiApiKey ?? ""),
     openaiModel: String(raw.openaiModel ?? "gpt-5-nano") || "gpt-5-nano",
     deepseekApiKey: String(raw.deepseekApiKey ?? ""),
+    defaultProvider: raw.defaultProvider === "openai" || raw.defaultProvider === "deepseek" ? raw.defaultProvider : "",
+    defaultModel: String(raw.defaultModel ?? ""),
     defaultPassword: String(raw.defaultPassword ?? ""),
     phone: String(raw.phone ?? ""),
     linkedin: String(raw.linkedin ?? ""),

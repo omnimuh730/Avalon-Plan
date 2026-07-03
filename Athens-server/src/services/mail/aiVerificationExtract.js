@@ -7,7 +7,7 @@
  * Generic by construction: the model reads email CONTENT and decides; we never
  * branch on a sender, brand, or vendor string (per project-avalon/Guide.md).
  */
-import { PROVIDERS, getProvider, chatCompletion } from "../llm/llmService.js";
+import { chatCompletion, resolveDefaultModel } from "../llm/llmService.js";
 
 const SYSTEM_PROMPT = [
   "You extract the single most relevant account/application VERIFICATION credential from a list",
@@ -42,22 +42,10 @@ function parseJsonLoose(text) {
   return null;
 }
 
-/** Choose an available provider/key from the applier profile (OpenAI first, then DeepSeek). */
+/** The profile's default model/provider, or null if no key is configured. */
 function pickProvider(profile) {
-  for (const id of ["openai", "deepseek"]) {
-    const provider = getProvider(id);
-    const apiKey = String(profile?.[provider.keyField] || "").trim();
-    if (apiKey) {
-      const model =
-        id === "openai"
-          ? String(profile?.openaiModel || "").trim() || "gpt-4o-mini"
-          : Array.isArray(PROVIDERS.deepseek.models) && PROVIDERS.deepseek.models[0]
-            ? PROVIDERS.deepseek.models[0]
-            : "deepseek-chat";
-      return { provider: id, apiKey, model };
-    }
-  }
-  return null;
+  const resolved = resolveDefaultModel(profile);
+  return resolved.apiKey ? resolved : null;
 }
 
 /**

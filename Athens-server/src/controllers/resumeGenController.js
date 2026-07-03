@@ -11,6 +11,7 @@ import {
   verifyKey,
   addUsage,
   EMPTY_USAGE,
+  resolveDefaultModel,
 } from "../services/llm/llmService.js";
 
 const cleanString = (v) => String(v ?? "").trim();
@@ -134,16 +135,18 @@ function buildContextBlock(identity) {
 // Exported so the auto-bid agent path (agentResumeGenService) runs the SAME core
 // as the Editor — one implementation, no drift.
 export async function prepareGeneration(body) {
-  const providerId = PROVIDERS[body.provider] ? body.provider : "openai";
-  const model = String(body.model || "").trim();
   const steps = Array.isArray(body.steps) ? body.steps : [];
-  if (!model) return { ok: false, status: 400, error: "model is required" };
   if (!steps.length) return { ok: false, status: 400, error: "steps are required" };
 
+  // Provider + model always come from the profile's default (Settings → Profile),
+  // never from the request — there is no per-generation model picker anymore.
   const profile = await findProfile(body.applierName);
-  const apiKey = apiKeyFor(profile, providerId);
+  const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
-    return { ok: false, status: 400, error: `No ${getProvider(providerId).label} API key configured in profile.` };
+    return { ok: false, status: 400, error: `No ${getProvider(providerId).label} API key configured. Add it and set a default model in Settings → Profile.` };
+  }
+  if (!model) {
+    return { ok: false, status: 400, error: "No default model configured. Set one in Settings → Profile." };
   }
 
   // Exactly one final step per purpose that appears.

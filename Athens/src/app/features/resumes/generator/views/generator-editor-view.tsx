@@ -141,34 +141,11 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
         {/* Generation pipeline */}
         <div className="space-y-5 min-w-0">
           <div className={cardCls}>
-            <SectionTitle icon={Sparkles}>Provider, model &amp; identity</SectionTitle>
+            <SectionTitle icon={Sparkles}>Generation &amp; identity</SectionTitle>
+            <p className="text-[11px] text-neutral-400 dark:text-white/40 mb-3">
+              The model comes from your default in Settings → Profile.
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Provider">
-                <Dropdown<ProviderId>
-                  value={config.provider}
-                  onChange={(provider) => setConfig((c) => ({ ...c, provider, model: FALLBACK_MODELS[provider][0] }))}
-                  options={PROVIDER_OPTIONS}
-                />
-              </Field>
-              <Field label="Model">
-                <div className="flex items-center gap-1.5">
-                  <Dropdown<string>
-                    value={config.model}
-                    onChange={(model) => setConfig((c) => ({ ...c, model }))}
-                    options={modelOptions}
-                    width="w-full"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void loadModels(true)}
-                    disabled={modelsLoading || !applier?.name}
-                    title="Reload models from the provider"
-                    className="shrink-0 h-[42px] w-[42px] grid place-items-center rounded-xl border border-neutral-200 dark:border-white/10 hover:bg-neutral-100 dark:hover:bg-white/5 disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${modelsLoading ? "animate-spin" : ""}`} />
-                  </button>
-                </div>
-              </Field>
               {config.provider === "openai" && (
                 <Field label="Reasoning effort">
                   <Dropdown<ReasoningEffort>

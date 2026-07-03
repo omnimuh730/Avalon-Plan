@@ -28,6 +28,30 @@ export function getProvider(id) {
   return PROVIDERS[id] || PROVIDERS.openai;
 }
 
+/**
+ * Single source of truth for "which model do we call?" — resolves the profile's
+ * saved default (defaultProvider + defaultModel), set via Settings → Profile.
+ * Falls back to whichever provider has a key, then that provider's default
+ * model, so it works before a default is explicitly chosen. Every feature
+ * (resume generation, agent work, job skill extraction, resume analysis, mail
+ * verification) goes through this — no hardcoded provider/model anywhere else.
+ *
+ * @returns {{ provider: 'openai'|'deepseek', apiKey: string, model: string }}
+ */
+export function resolveDefaultModel(profile) {
+  const p = profile || {};
+  let provider = p.defaultProvider;
+  if (provider !== 'openai' && provider !== 'deepseek') {
+    provider = p.deepseekApiKey ? 'deepseek' : p.openaiApiKey ? 'openai' : 'deepseek';
+  }
+  const apiKey = String((provider === 'openai' ? p.openaiApiKey : p.deepseekApiKey) || '').trim();
+  const fallbackModel = provider === 'openai'
+    ? (String(p.openaiModel || '').trim() || 'gpt-4o-mini')
+    : (DEEPSEEK_MODELS[0] || 'deepseek-v4-flash');
+  const model = String(p.defaultModel || '').trim() || fallbackModel;
+  return { provider, apiKey, model };
+}
+
 export function getPricing(model) {
   const row = findPricing(model);
   if (!row) return null;

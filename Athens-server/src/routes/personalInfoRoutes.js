@@ -17,6 +17,7 @@ import {
 	getAutoBidProfile,
 	upsertAutoBidProfile,
 	updateAutoBidOpenAiModel,
+	setDefaultModel,
 	getResumeCatalog,
 	upsertResumeCatalog,
 	validateResumeCatalogHandler,
@@ -68,6 +69,7 @@ router.post('/personal/skills/update', updateSkills);
 router.get('/personal/auto-bid-profile', getAutoBidProfile);
 router.put('/personal/auto-bid-profile', upsertAutoBidProfile);
 router.post('/personal/auto-bid-profile/openai-model', updateAutoBidOpenAiModel);
+router.post('/personal/default-model', setDefaultModel);
 
 router.get('/personal/resume-catalog', getResumeCatalog);
 router.put('/personal/resume-catalog', upsertResumeCatalog);

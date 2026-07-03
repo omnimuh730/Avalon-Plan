@@ -79,14 +79,22 @@ export function RequiredSkillsMatch({
                       : undefined
               }
             >
-              {isBoosting ? (
-                <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
-              ) : isMatched ? (
-                <Check className="size-3 shrink-0" aria-hidden />
-              ) : isMissing ? (
-                <X className="size-3 shrink-0 opacity-60" aria-hidden />
+              {/* Icon lives in a stable wrapper span and the label in its own
+                  span so swapping the icon (or a browser extension wrapping the
+                  text) never reorders bare sibling nodes — avoids React's
+                  insertBefore NotFoundError. */}
+              {isBoosting || isMatched || isMissing ? (
+                <span className="inline-flex size-3 shrink-0 items-center justify-center" aria-hidden>
+                  {isBoosting ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : isMatched ? (
+                    <Check className="size-3" />
+                  ) : (
+                    <X className="size-3 opacity-60" />
+                  )}
+                </span>
               ) : null}
-              {skill}
+              <span>{skill}</span>
             </button>
           );
         })}

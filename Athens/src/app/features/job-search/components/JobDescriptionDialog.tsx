@@ -304,10 +304,7 @@ export function JobDescriptionDialog({
           />
 
           {displayJob.aiSkills?.length ? (
-            <>
-              <Separator />
-              <DetectedSkillsPanel aiSkills={displayJob.aiSkills} />
-            </>
+            <DetectedSkillsPanel aiSkills={displayJob.aiSkills} />
           ) : null}
 
           {displayJob.industries.length > 0 ? (
