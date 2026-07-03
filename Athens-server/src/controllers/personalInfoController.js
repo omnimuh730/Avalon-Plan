@@ -1,6 +1,7 @@
 
 import { personalInfoCollection, accountInfoCollection, getCloudMirrorStatus } from "../db/mongo.js";
 import { updateAccountInfoById } from "../services/accountInfoStore.js";
+import { verifyKey, getProvider } from "../services/llm/llmService.js";
 import { toCanonical } from "../services/skillNormalize.js";
 import { emptyResumeCatalog, validateResumeCatalog } from "../services/resumeCatalogService.js";
 
@@ -214,6 +215,8 @@ function normalizeAutoBidProfile(body) {
 		openaiApiKey: String(body.openaiApiKey || "").trim().slice(0, 256),
 		openaiModel: String(body.openaiModel || "gpt-5-nano").trim().slice(0, 64) || "gpt-5-nano",
 		deepseekApiKey: String(body.deepseekApiKey || "").trim().slice(0, 256),
+		defaultProvider: body.defaultProvider === "openai" || body.defaultProvider === "deepseek" ? body.defaultProvider : "",
+		defaultModel: String(body.defaultModel || "").trim().slice(0, 64),
 		defaultPassword: String(body.defaultPassword || "").trim().slice(0, 256),
 		phone: String(body.phone || "").trim(),
 		linkedin: String(body.linkedin || "").trim(),
@@ -268,6 +271,8 @@ function buildAutoBidProfileResponse(p) {
 		openaiApiKey: p.openaiApiKey || "",
 		openaiModel: p.openaiModel || "gpt-5-nano",
 		deepseekApiKey: p.deepseekApiKey || "",
+		defaultProvider: p.defaultProvider || "",
+		defaultModel: p.defaultModel || "",
 		defaultPassword: p.defaultPassword || "",
 		phone: p.phone || "",
 		linkedin: p.linkedin || "",
@@ -410,6 +415,52 @@ export async function updateAutoBidOpenAiModel(req, res) {
 		});
 	} catch (err) {
 		console.error("POST /api/personal/auto-bid-profile/openai-model error", err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+/**
+ * Set the profile's default model (provider + model) used by ALL AI features.
+ * Validates the stored API key for the chosen provider before saving — an
+ * invalid/missing key does not become the default.
+ * POST /personal/default-model { applierName, provider, model }
+ */
+export async function setDefaultModel(req, res) {
+	try {
+		if (!accountInfoCollection) return res.status(503).json({ success: false, error: "Database not ready" });
+		const name = String(req.body?.applierName || "").trim();
+		const provider = req.body?.provider === "openai" || req.body?.provider === "deepseek" ? req.body.provider : null;
+		const model = String(req.body?.model || "").trim().slice(0, 64);
+		if (!name) return res.status(400).json({ success: false, error: "applierName required" });
+		if (!provider) return res.status(400).json({ success: false, valid: false, error: "provider must be openai or deepseek" });
+		if (!model) return res.status(400).json({ success: false, valid: false, error: "model required" });
+
+		const acc = await findAccountByApplierName(name);
+		if (!acc) return res.status(404).json({ success: false, error: `No account named "${name}".` });
+
+		const profile = acc.autoBidProfile || {};
+		const apiKey = String(profile?.[getProvider(provider).keyField] || "").trim();
+		if (!apiKey) {
+			return res.json({ success: false, valid: false, error: `No ${getProvider(provider).label} API key saved. Add it and save your profile first.` });
+		}
+
+		const check = await verifyKey({ provider, apiKey });
+		if (!check.ok) {
+			return res.json({ success: false, valid: false, error: check.message || `${getProvider(provider).label} key is invalid.` });
+		}
+
+		const r = await updateAccountInfoById(acc._id, acc.name, {
+			$set: {
+				"autoBidProfile.defaultProvider": provider,
+				"autoBidProfile.defaultModel": model,
+				"autoBidProfile.updatedAt": new Date().toISOString(),
+			},
+		});
+		if (r.matchedCount === 0) return res.status(404).json({ success: false, error: `No account named "${name}".` });
+
+		return res.json({ success: true, valid: true, provider, model, message: `Default set to ${provider} · ${model}` });
+	} catch (err) {
+		console.error("POST /api/personal/default-model error", err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }

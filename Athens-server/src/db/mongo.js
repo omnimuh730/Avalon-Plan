@@ -27,6 +27,14 @@ let mailMessagesCollection;
 let mailSyncStateCollection;
 let mailUserLabelsCollection;
 let userResumesCollection;
+let avalonRunsCollection;
+// Materialized per-user job match scores (fan-out on write) + rescore state.
+let jobMatchScoresCollection;
+let matchProfileStateCollection;
+// Manual user skills with category + level — the sole source for match scoring.
+let userSkillsCollection;
+// Deduped global dictionary of every skill seen in a job description (AI-categorized).
+let skillDictionaryCollection;
 
 async function ensureMailCollectionsIndexes() {
 	if (mailMessagesCollection) {
@@ -78,6 +86,30 @@ async function ensureSkillCollectionsIndexes() {
 	}
 }
 
+async function ensureMatchScoreIndexes() {
+	if (jobMatchScoresCollection) {
+		// jobId completes the list-sort key so pagination is deterministic AND
+		// the sort stays a pure index scan (no in-memory SORT stage).
+		await jobMatchScoresCollection.createIndex({ applierName: 1, score: -1, postedAt: -1, jobId: -1 });
+		await jobMatchScoresCollection.createIndex({ applierName: 1, jobId: 1 }, { unique: true });
+		await jobMatchScoresCollection.createIndex({ jobId: 1 });
+		await jobMatchScoresCollection.createIndex({ applierName: 1, profileVersion: 1 });
+	}
+	if (matchProfileStateCollection) {
+		await matchProfileStateCollection.createIndex({ applierName: 1 }, { unique: true });
+		await matchProfileStateCollection.createIndex({ status: 1, requestedAt: 1 });
+	}
+	if (userSkillsCollection) {
+		await userSkillsCollection.createIndex({ applierName: 1, nameCanonical: 1 }, { unique: true });
+		await userSkillsCollection.createIndex({ applierName: 1, category: 1, level: -1 });
+	}
+	if (skillDictionaryCollection) {
+		await skillDictionaryCollection.createIndex({ nameCanonical: 1 }, { unique: true });
+		await skillDictionaryCollection.createIndex({ tokens: 1 });
+		await skillDictionaryCollection.createIndex({ jobCount: -1 });
+	}
+}
+
 async function initMongo() {
 	const mongoUrl = process.env.MONGO_URL;
 	if (!mongoUrl) {
@@ -110,9 +142,22 @@ async function initMongo() {
 	mailSyncStateCollection = db.collection('mail_sync_state');
 	mailUserLabelsCollection = db.collection('mail_user_labels');
 	userResumesCollection = db.collection('user_resumes');
+	avalonRunsCollection = db.collection('avalon_apply_runs');
+	jobMatchScoresCollection = db.collection('job_match_scores');
+	matchProfileStateCollection = db.collection('match_profile_state');
+	userSkillsCollection = db.collection('user_skills');
+	skillDictionaryCollection = db.collection('skill_dictionary');
+	try {
+		await avalonRunsCollection.createIndex({ runId: 1 }, { unique: true });
+		await avalonRunsCollection.createIndex({ applierName: 1, startedAt: -1 });
+		await avalonRunsCollection.createIndex({ 'job.id': 1, startedAt: -1 });
+	} catch (err) {
+		console.warn('[avalon_apply_runs] index creation failed:', err.message);
+	}
 	await ensureJobMarketIndexes(jobsCollection);
 	await ensureSkillCollectionsIndexes();
 	await ensureMailCollectionsIndexes();
+	await ensureMatchScoreIndexes();
 	// Remove pre-existing duplicate applyLink jobs, then enforce uniqueness so
 	// no duplicate links can be inserted afterward. Index creation must run only
 	// after the cleanup completes, otherwise it would fail on existing dupes.
@@ -237,5 +282,10 @@ export {
 	mailSyncStateCollection,
 	mailUserLabelsCollection,
 	userResumesCollection,
+	avalonRunsCollection,
+	jobMatchScoresCollection,
+	matchProfileStateCollection,
+	userSkillsCollection,
+	skillDictionaryCollection,
 	closeMongo
 };

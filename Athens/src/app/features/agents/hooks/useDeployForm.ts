@@ -15,9 +15,19 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [sources, setSources] = useState<SourceOption[]>([]);
   const [source, setSource] = useState("");
+  const [titleQuery, setTitleQuery] = useState("");
+  const [postedFrom, setPostedFrom] = useState("");
+  const [postedTo, setPostedTo] = useState("");
   const [fetched, setFetched] = useState<JobCandidate[]>([]);
   const [queue, setQueue] = useState<JobCandidate[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
+
+  // Debounce the free-text title filter so we don't refetch on every keystroke.
+  const [debouncedTitle, setDebouncedTitle] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedTitle(titleQuery.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [titleQuery]);
 
   useEffect(() => {
     if (!applierReady || !profileId) {
@@ -50,17 +60,24 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
   }, [profileId]);
 
   const applierName = applier?.name || "";
+  // Fetch when a source is chosen OR any filter is set — so title/date filters
+  // can stand on their own across all sources without picking a source first.
+  const hasFilter = Boolean(source || debouncedTitle || postedFrom || postedTo);
   useEffect(() => {
-    if (!applierName || !source) {
+    if (!applierName || !hasFilter) {
       setFetched([]);
       return;
     }
     setLoadingJobs(true);
-    fetchCandidateJobs(applierName, source, 200)
+    fetchCandidateJobs(applierName, source, 200, {
+      titleQuery: debouncedTitle,
+      postedFrom,
+      postedTo,
+    })
       .then(setFetched)
       .catch(() => setFetched([]))
       .finally(() => setLoadingJobs(false));
-  }, [applierName, source]);
+  }, [applierName, source, debouncedTitle, postedFrom, postedTo, hasFilter]);
 
   const queuedIds = new Set(queue.map((j) => j.id));
   const candidates = fetched.filter((j) => !queuedIds.has(j.id));
@@ -105,7 +122,8 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
     }
     setErr("");
     setLoading(true);
-    const sessionName = name.trim() || `${source || "Manual"} · ${new Date().toLocaleDateString()}`;
+    const autoLabel = source || (debouncedTitle ? `"${debouncedTitle}"` : "Manual");
+    const sessionName = name.trim() || `${autoLabel} · ${new Date().toLocaleDateString()}`;
     try {
       await onDeploy({
         name: sessionName,
@@ -140,6 +158,19 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
     sources,
     source,
     setSource,
+    titleQuery,
+    setTitleQuery,
+    postedFrom,
+    setPostedFrom,
+    postedTo,
+    setPostedTo,
+    hasFilter,
+    clearFilters: () => {
+      setSource("");
+      setTitleQuery("");
+      setPostedFrom("");
+      setPostedTo("");
+    },
     posted,
     candidates,
     queue,

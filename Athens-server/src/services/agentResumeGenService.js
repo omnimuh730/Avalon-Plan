@@ -1,33 +1,43 @@
 import { ObjectId } from "mongodb";
 import {
   accountInfoCollection,
-  resumeGeneratorConfigCollection,
   resumeGenerationsCollection,
   userResumesCollection,
 } from "../db/mongo.js";
 import { syncGeneratedResumeAfterRun } from "./generatedResumeService.js";
 import { analyzeGeneratedResumeSkills } from "./generatedResumeSkillAnalysis.js";
-import { defaultGeneratorConfig, stepsToPlan } from "../config/resumeGeneratorDefaults.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
-import { addUsage, getProvider } from "./llm/llmService.js";
+import { addUsage } from "./llm/llmService.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
-// Reuse the EXACT generation core the Resume Generator (Editor) uses, so the
-// auto-bid agent produces the same quality output — no drifted duplicate.
+import { readAgentDraftPdf, deleteAgentDraftPdf } from "./agentResumeDraftService.js";
 import { prepareGeneration, runGeneration } from "../controllers/resumeGenController.js";
+import {
+  buildGenerationRequestFromSavedConfig,
+  loadGeneratorConfig,
+} from "./resumeGenerationService.js";
 
-/** Render the generated sections to a PDF (best-effort) for agent upload + human review. */
-async function renderPdfForAgent(sections, identity, savedConfig, applierName, jobId) {
-  if (!sections) return {};
-  try {
-    const { buffer, savedPath } = await renderAgentResumePdf({
-      sections, identity, applierName, jobId, config: savedConfig,
-    });
-    return { pdfBase64: buffer.toString("base64"), resumePdfPath: savedPath };
-  } catch (e) {
-    console.warn("[agent-resume-gen] PDF render failed:", e.message);
-    return {};
+/** Render sections to PDF or read the on-disk draft (Node fs). */
+async function pdfPayloadForAgent(sections, identity, savedConfig, applierName, jobId) {
+  const onDisk = readAgentDraftPdf(applierName, jobId);
+  if (onDisk) {
+    // Buffer.from() guards against a non-Buffer (e.g. Uint8Array), whose
+    // .toString("base64") ignores the encoding and yields comma-joined bytes.
+    return { pdfBase64: Buffer.from(onDisk.buffer).toString("base64"), resumePdfPath: onDisk.draftPath };
   }
+  if (!sections) throw new Error("No résumé sections to render as PDF");
+  const { buffer, savedPath } = await renderAgentResumePdf({
+    sections,
+    identity,
+    applierName,
+    jobId,
+    config: savedConfig,
+  });
+  if (!buffer?.length) throw new Error("PDF render returned empty buffer");
+  // page.pdf() returns a Uint8Array in modern puppeteer — wrap so toString("base64")
+  // actually base64-encodes (a bare Uint8Array.toString("base64") returns garbage,
+  // which the extension's atob() then rejects → 0 files attached).
+  return { pdfBase64: Buffer.from(buffer).toString("base64"), resumePdfPath: savedPath };
 }
 
 const cleanString = (v) => String(v ?? "").trim();
@@ -55,21 +65,6 @@ async function findResumeCatalog(applierNameRaw) {
   }
   const catalog = acc?.resumeCatalog;
   return catalog && typeof catalog === "object" && !Array.isArray(catalog) ? catalog : null;
-}
-
-async function loadGeneratorConfig(applierName) {
-  if (!resumeGeneratorConfigCollection) return defaultGeneratorConfig();
-  const doc = await resumeGeneratorConfigCollection.findOne({ applierName });
-  const saved = doc?.config;
-  if (!saved || typeof saved !== "object") return defaultGeneratorConfig();
-  const base = defaultGeneratorConfig();
-  return {
-    ...base,
-    ...saved,
-    theme: { ...base.theme, ...(saved.theme ?? {}) },
-    layout: Array.isArray(saved.layout) && saved.layout.length ? saved.layout : base.layout,
-    steps: Array.isArray(saved.steps) && saved.steps.length ? saved.steps : base.steps,
-  };
 }
 
 function configSnapshot(body) {
@@ -160,10 +155,103 @@ export async function findExistingAgentJobResume(applierName, jobId) {
 }
 
 /**
+ * Batch variant of findExistingAgentJobResume: which of these job ids already
+ * have a completed generated résumé for this applier. Returns the subset of
+ * jobIds that do.
+ */
+export async function findAgentJobResumeStatuses(applierName, jobIds) {
+  const name = cleanString(applierName);
+  const ids = [...new Set((jobIds || []).map(cleanString).filter(Boolean))];
+  if (!name || !ids.length) return [];
+
+  const found = new Set();
+  if (userResumesCollection) {
+    const resumes = await userResumesCollection
+      .find(
+        { ownerName: name, generateParentJobId: { $in: ids }, source: "generated" },
+        { projection: { generateParentJobId: 1 } },
+      )
+      .toArray();
+    for (const r of resumes) found.add(String(r.generateParentJobId));
+  }
+
+  // Same fallback as findExistingAgentJobResume: a completed generation counts
+  // only when a library resume is still linked to it.
+  const remaining = ids.filter((id) => !found.has(id));
+  if (remaining.length && resumeGenerationsCollection && userResumesCollection) {
+    const generations = await resumeGenerationsCollection
+      .find(
+        { applierName: name, generate_parent_job_id: { $in: remaining }, status: "completed" },
+        { projection: { generate_parent_job_id: 1, libraryResumeId: 1 } },
+      )
+      .toArray();
+    if (generations.length) {
+      const genIds = generations.map((g) => String(g._id));
+      const libIds = generations
+        .map((g) => {
+          try {
+            return g.libraryResumeId ? new ObjectId(String(g.libraryResumeId)) : null;
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      const resumes = await userResumesCollection
+        .find(
+          {
+            $or: [
+              { ownerName: name, generationId: { $in: genIds } },
+              ...(libIds.length ? [{ _id: { $in: libIds } }] : []),
+            ],
+          },
+          { projection: { generationId: 1 } },
+        )
+        .toArray();
+      const linkedGenIds = new Set(resumes.map((r) => String(r.generationId || "")));
+      const linkedLibIds = new Set(resumes.map((r) => String(r._id)));
+      for (const g of generations) {
+        if (linkedGenIds.has(String(g._id)) || (g.libraryResumeId && linkedLibIds.has(String(g.libraryResumeId)))) {
+          found.add(String(g.generate_parent_job_id));
+        }
+      }
+    }
+  }
+
+  return [...found];
+}
+
+/** Read or render the per-job draft PDF (stable path under .local/agent-resumes/by-job). */
+export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
+  const name = cleanString(applierName);
+  const parentId = cleanString(jobId);
+  if (!name || !parentId) return null;
+
+  const onDisk = readAgentDraftPdf(name, parentId);
+  if (onDisk) return { buffer: onDisk.buffer, draftPath: onDisk.draftPath };
+
+  const existing = await findExistingAgentJobResume(name, parentId);
+  if (!existing?.generation?.sections) return null;
+
+  const profile = await findProfile(name);
+  if (!profile) return null;
+  const identity = identityFromProfile(profile);
+  const savedConfig = await loadGeneratorConfig(name);
+  const { buffer, savedPath } = await renderAgentResumePdf({
+    sections: existing.generation.sections,
+    identity,
+    applierName: name,
+    jobId: parentId,
+    config: savedConfig,
+  });
+  if (!buffer?.length) return null;
+  return { buffer, draftPath: savedPath };
+}
+
+/**
  * Generate (or reuse) a job-tailored resume for an agent run.
  * Uses saved resume-generator config; only the job description is replaced.
  */
-export async function ensureAgentJobResume({ applierName, jobId, jobDescription, modelOverride }) {
+export async function ensureAgentJobResume({ applierName, jobId, jobDescription, forceRegenerate = false, onStep }) {
   const name = cleanString(applierName);
   const parentId = cleanString(jobId);
   const jd = cleanString(jobDescription);
@@ -176,58 +264,47 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   const identity = identityFromProfile(profile);
   const savedConfig = await loadGeneratorConfig(name);
 
-  const existing = await findExistingAgentJobResume(name, parentId);
+  if (forceRegenerate) {
+    deleteAgentDraftPdf(name, parentId);
+  }
+
+  const existing = forceRegenerate ? null : await findExistingAgentJobResume(name, parentId);
   if (existing?.resume) {
+    if (onStep) onStep({ phase: "reused", name: "Existing draft" });
     const usage = usageToAgentShape(existing.generation?.usage, existing.generation?.model);
-    // Re-render the PDF from the stored sections so the agent always uploads a real PDF.
-    const pdf = await renderPdfForAgent(existing.generation?.sections, identity, savedConfig, name, parentId);
+    const pdf = await pdfPayloadForAgent(
+      existing.generation?.sections,
+      identity,
+      savedConfig,
+      name,
+      parentId,
+    );
+    const fileName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
     return {
       reused: true,
       resumeId: String(existing.resume._id),
-      fileName: existing.resume.fileName,
+      fileName,
       techStack: existing.resume.techStack || "Generated",
       extractedText: existing.resume.extractedText || "",
       generationId: existing.generation ? String(existing.generation._id) : existing.resume.generationId,
       usage,
       model: usage.model,
+      provider: existing.generation?.provider ?? savedConfig.provider ?? null,
       ...pdf,
     };
   }
 
-  const plan = stepsToPlan(savedConfig.steps);
-
-  // Use the SAME provider/model the Resume Generator (Editor) uses for this
-  // profile — straight from the saved config, matching the Editor. We do NOT
-  // override with the run's browser model (that made the résumé worse).
-  //
-  // BUT guard against an invalid provider/model pairing: if the saved config pairs
-  // a provider with a model that provider can't serve (e.g. DeepSeek + the stale
-  // "gpt-3.5-turbo"), the API 400s on EVERY job. When the provider has a known
-  // model allowlist and the saved model isn't in it, fall back to the run's model
-  // (when valid) or the provider's first supported model.
-  const providerDef = getProvider(savedConfig.provider);
-  let resumeModel = savedConfig.model;
-  const allowed = Array.isArray(providerDef.models) ? providerDef.models : null;
-  if (allowed?.length && !allowed.includes(resumeModel)) {
-    resumeModel = allowed.includes(modelOverride) ? modelOverride : allowed[0];
-    console.warn(
-      `[agent-resume-gen] saved model "${savedConfig.model}" is not valid for provider "${savedConfig.provider}"; using "${resumeModel}" instead.`,
-    );
-  }
-  const body = {
+  const body = buildGenerationRequestFromSavedConfig({
     applierName: name,
-    provider: savedConfig.provider,
-    model: resumeModel,
-    reasoningEffort: savedConfig.reasoningEffort,
-    templateId: savedConfig.templateId,
-    theme: savedConfig.theme,
-    layout: savedConfig.layout,
-    systemInstruction: savedConfig.systemInstruction,
     jobDescription: jd,
+    savedConfig,
     identity,
-    steps: plan,
     generateParentJobId: parentId,
-  };
+  });
+
+  console.info(
+    `[agent-resume-gen] ${name} job ${parentId.slice(0, 8)}… — provider=${body.provider} model=${body.model}`,
+  );
 
   const prep = await prepareGeneration(body);
   if (!prep.ok) {
@@ -237,14 +314,17 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   }
 
   const startedAt = new Date();
-  const result = await runGeneration({
-    ...prep,
-    systemInstruction: body.systemInstruction,
-    identity,
-    applierName: name,
-    jobDescription: jd,
-    reasoningEffort: body.reasoningEffort,
-  });
+  const result = await runGeneration(
+    {
+      ...prep,
+      systemInstruction: body.systemInstruction,
+      identity,
+      applierName: name,
+      jobDescription: jd,
+      reasoningEffort: body.reasoningEffort,
+    },
+    onStep,
+  );
 
   let skillProfile = [];
   let techStack = null;
@@ -252,6 +332,7 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   const catalog = await findResumeCatalog(name);
 
   try {
+    if (onStep) onStep({ phase: "step-start", name: "Skill analysis", purpose: "skills" });
     const skillResult = await analyzeGeneratedResumeSkills({
       sections: result.sections,
       identity,
@@ -260,7 +341,9 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
       providerId: prep.providerId,
       apiKey: prep.apiKey,
       model: prep.model,
+      onProgress: onStep,
     });
+    if (onStep) onStep({ phase: "step-done", name: "Skill analysis", purpose: "skills" });
     skillProfile = skillResult.skillProfile;
     techStack = skillResult.techStack;
     result.perStep.push({ index: result.perStep.length + 1, ...skillResult.perStep });
@@ -270,8 +353,6 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
     console.warn("[agent-resume-gen] skill analysis failed:", err.message);
   }
 
-  // Persisting the run to history + the generated-resume library is secondary; it must NEVER
-  // fail the generation (e.g. Neo4j down, a unique-index race). The agent only needs the PDF.
   let generationId = null;
   let sync = null;
   try {
@@ -313,16 +394,20 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   }
 
   const usage = usageToAgentShape(result.usage, prep.model);
-  const pdf = await renderPdfForAgent(result.sections, identity, savedConfig, name, parentId);
+  if (onStep) onStep({ phase: "rendering-pdf", name: "Rendering PDF" });
+  const pdf = await pdfPayloadForAgent(result.sections, identity, savedConfig, name, parentId);
+  const finalName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
+
   return {
     reused: false,
     resumeId: sync?.resumeId || null,
-    fileName: sync?.fileName || null,
+    fileName: finalName,
     techStack: sync?.techStack || techStack || "Generated",
     extractedText: sectionsToText(result.sections, identity),
     generationId: generationId ? String(generationId) : null,
     usage,
     model: prep.model,
+    provider: prep.providerId,
     ...pdf,
   };
 }

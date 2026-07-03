@@ -2,9 +2,12 @@ import React, { useState } from "react";
 import {
   Bookmark,
   Building2,
+  CheckCircle2,
   ExternalLink,
   FileText,
+  Loader2,
   MapPin,
+  Sparkles,
   Wifi,
 } from "lucide-react";
 import { Av, Badge, Score } from "../../../components/ui";
@@ -12,8 +15,11 @@ import { Button } from "../../../components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
 import { cn } from "../../../lib/utils";
 import type { BadgeVariant, Job } from "../../../types";
+import { useApplier } from "@/context/applier-context";
 import { JobDescriptionDialog } from "./JobDescriptionDialog";
+import { JobResumePreviewDialog } from "./JobResumePreviewDialog";
 import { JobStatusActions } from "./JobStatusActions";
+import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 
 const STATUS_LABELS: Record<Job["status"], string> = {
   posted: "Posted",
@@ -51,6 +57,8 @@ type JobCardProps = {
   onMarkDeclined?: () => void;
   onCancel?: () => void;
   onJobScoresUpdated?: (job: Job) => void;
+  resumeState?: JobResumeGenerationState;
+  onGenerateResume?: () => void;
 };
 
 function CompanyLogo({ job }: { job: Job }) {
@@ -98,8 +106,13 @@ export function JobCard({
   onMarkDeclined,
   onCancel,
   onJobScoresUpdated,
+  resumeState,
+  onGenerateResume,
 }: JobCardProps) {
   const [jdOpen, setJdOpen] = useState(false);
+  const [resumeOpen, setResumeOpen] = useState(false);
+  const { applier } = useApplier();
+  const resumeReady = resumeState?.status === "done";
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;
@@ -219,6 +232,42 @@ export function JobCard({
               <FileText className="w-4 h-4" />
               View JD
             </Button>
+            {onGenerateResume ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={resumeState?.status === "generating"}
+                title={
+                  resumeState?.status === "generating"
+                    ? resumeState.step ?? "Generating résumé…"
+                    : resumeState?.status === "error"
+                      ? `${resumeState.error ?? "Résumé generation failed"} — click to retry`
+                      : resumeReady
+                        ? "Résumé already generated — click to preview the PDF"
+                        : "Generate a tailored résumé for this job"
+                }
+                className={cn(
+                  resumeReady &&
+                    "text-emerald-600 border-emerald-500/40 hover:text-emerald-700",
+                  resumeState?.status === "error" &&
+                    "text-rose-600 border-rose-500/40 hover:text-rose-700",
+                )}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (resumeReady) setResumeOpen(true);
+                  else onGenerateResume();
+                }}
+              >
+                {resumeState?.status === "generating" ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : resumeReady ? (
+                  <CheckCircle2 className="w-4 h-4" />
+                ) : (
+                  <Sparkles className="w-4 h-4" />
+                )}
+                {resumeReady ? "View résumé" : "Resume"}
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="icon"
@@ -255,6 +304,15 @@ export function JobCard({
         onCancel={() => onCancel?.()}
         onJobScoresUpdated={onJobScoresUpdated}
       />
+      ) : null}
+
+      {resumeOpen && applier?.name ? (
+        <JobResumePreviewDialog
+          job={job}
+          applierName={applier.name}
+          open
+          onOpenChange={setResumeOpen}
+        />
       ) : null}
     </>
   );

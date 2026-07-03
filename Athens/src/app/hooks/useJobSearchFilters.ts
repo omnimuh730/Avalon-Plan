@@ -31,6 +31,8 @@ export type JobSearchFilterState = {
   postedTo: string;
   scores: JobScoreFilters;
   sort: JobSortKey;
+  /** Show only jobs whose skills have been AI-extracted. */
+  aiExtractedOnly: boolean;
 };
 
 export const DEFAULT_SCORE_RANGE: ScoreRange = { min: 0, max: 100 };
@@ -51,6 +53,7 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
     skill: { ...DEFAULT_SCORE_RANGE },
   },
   sort: "matchScore",
+  aiExtractedOnly: false,
 };
 
 function inScoreRange(value: number, range: ScoreRange) {

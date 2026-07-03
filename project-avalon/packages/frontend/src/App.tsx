@@ -6,6 +6,11 @@ import type { FieldActionPlan, FormAnalysisResult } from './ai/types.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import {
+  NotificationStack,
+  type NotificationItem,
+  type NotificationKind,
+} from './components/NotificationStack';
+import {
   ACTION_DEFINITIONS,
   DEFAULT_SESSION_ID,
   SOCKET_EVENTS,
@@ -93,9 +98,11 @@ export default function App() {
   const [selectedTreeFieldId, setSelectedTreeFieldId] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const profileFileRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const applyingRef = useRef(false);
+  const lastNotifiedErrorRef = useRef<string | null>(null);
 
   const actionPlanByFieldId = useMemo(() => {
     const map = new Map<string, FieldActionPlan>();
@@ -140,15 +147,45 @@ export default function App() {
     ]);
   }, []);
 
+  const notify = useCallback((message: string, kind: NotificationKind = 'info', title?: string) => {
+    setNotifications((prev) => [
+      ...prev,
+      { id: `${Date.now()}_${Math.random()}`, message, kind, title },
+    ]);
+  }, []);
+
+  const dismissNotification = useCallback((id: string) => {
+    setNotifications((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const describeConnectionError = useCallback(
+    (error: Error) => {
+      const raw = error.message || String(error);
+      if (/ECONNREFUSED|connection refused|ERR_CONNECTION_REFUSED|xhr poll error/i.test(raw)) {
+        return `Relay server unreachable at ${serverUrl}. Start the Avalon backend (port 3847).`;
+      }
+      return `Relay connection failed: ${raw}`;
+    },
+    [serverUrl],
+  );
+
   const connect = useCallback(() => {
     socketRef.current?.removeAllListeners();
     socketRef.current?.disconnect();
-    const next = io(serverUrl, { transports: ['websocket', 'polling'] });
+    const next = io(serverUrl, {
+      transports: ['polling', 'websocket'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 2000,
+      timeout: 20000,
+    });
     socketRef.current = next;
 
     next.on('connect', () => {
+      lastNotifiedErrorRef.current = null;
       setConnected(true);
       pushLog('Connected to relay server');
+      notify('Connected to relay server', 'success', 'Relay online');
       next.emit(
         SOCKET_EVENTS.REGISTER,
         { role: 'controller', sessionId: sessionId || undefined },
@@ -165,6 +202,17 @@ export default function App() {
       setConnected(false);
       setRegistered(null);
       pushLog('Disconnected');
+      notify('Disconnected from relay server', 'warning', 'Relay offline');
+    });
+
+    next.on('connect_error', (error: Error) => {
+      setConnected(false);
+      const message = describeConnectionError(error);
+      pushLog(message, false);
+      if (message !== lastNotifiedErrorRef.current) {
+        lastNotifiedErrorRef.current = message;
+        notify(message, 'error', 'Relay offline');
+      }
     });
 
     next.on('peers-update', (payload: { peers: typeof peers }) => {
@@ -253,7 +301,7 @@ export default function App() {
         }
       },
     );
-  }, [pushLog, serverUrl, sessionId]);
+  }, [describeConnectionError, notify, pushLog, serverUrl, sessionId]);
 
   useEffect(() => {
     return () => {
@@ -519,8 +567,12 @@ export default function App() {
 
   return (
     <div className="app">
-      <header>
-        <h1>Avalon Controller</h1>
+      <NotificationStack items={notifications} onDismiss={dismissNotification} />
+      <header className="app-header">
+        <div className="app-brand">
+          <h1>Avalon Controller</h1>
+          <p>Scan, analyze, and apply through your Chrome extension relay.</p>
+        </div>
         <div className="status-pill">
           <span className={`status-dot ${connected ? 'connected' : ''}`} />
           {connected ? 'Connected' : 'Offline'}

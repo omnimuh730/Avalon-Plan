@@ -10,6 +10,7 @@ import {
 	deleteGmailLabel,
 	addLabelsToMessage,
 	removeLabelsFromMessage,
+	fetchRecentInboxWithBodies,
 } from '../services/mail/imapClient.js';
 import { sendMail } from '../services/mail/smtpClient.js';
 import {
@@ -29,7 +30,16 @@ import {
 	folderToMailbox,
 } from '../services/mail/mailSyncService.js';
 import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
-import { extractVerificationCode } from '../services/mail/verificationCode.js';
+import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js';
+
+const OTP_EMAIL_LIMIT = 10;
+
+/** Newest-first slice — index 0 is the most recent message. */
+function takeNewestEmails(docs, limit = OTP_EMAIL_LIMIT) {
+	return [...docs]
+		.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+		.slice(0, limit);
+}
 
 function parsePageQuery(req) {
 	const page = Math.max(1, Number.parseInt(String(req.query.page || '1'), 10) || 1);
@@ -53,6 +63,7 @@ export async function getMailThreads(req, res) {
 		const search = req.query.search ? String(req.query.search) : undefined;
 		const { page, pageSize } = parsePageQuery(req);
 		const cacheOnly = req.query.cacheOnly === 'true' || req.query.cacheOnly === '1';
+		const forceRefresh = req.query.force === 'true' || req.query.force === '1';
 
 		const creds = await resolveMailCredentials(applierName);
 		if (!creds.ok) {
@@ -70,7 +81,7 @@ export async function getMailThreads(req, res) {
 		} else if (label || search) {
 			result = await loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize });
 		} else {
-			result = await loadFolderPage(applierName, folder, page, pageSize);
+			result = await loadFolderPage(applierName, folder, page, pageSize, { forceRefresh });
 		}
 
 		if (!result.ok) {
@@ -183,10 +194,9 @@ export async function syncMail(req, res) {
 }
 
 /**
- * POST /api/mail/verification-code — pull the newest mail and return the most
- * recent one-time / verification code (Phase D: OTP handling for auto-apply).
- * Body: { applierName, sinceMs? }. Generic — matches on verification vocabulary,
- * not on any sender or vendor.
+ * POST /api/mail/verification-code — sync inbox, send the 10 newest emails to AI,
+ * and return the best-matching application verification code for the given company/role.
+ * Body: { applierName, companyName?, jobTitle? }.
  */
 export async function getVerificationCode(req, res) {
 	try {
@@ -196,47 +206,99 @@ export async function getVerificationCode(req, res) {
 		const applierName = await requireApplier(req, res);
 		if (!applierName) return;
 
+		const companyName = String(req.body?.companyName || '').trim();
+		const jobTitle = String(req.body?.jobTitle || '').trim();
+
 		const creds = await resolveMailCredentials(applierName);
 		if (!creds.ok) {
 			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
 		}
 
-		// Best-effort pull of the newest messages before we scan.
-		await runIncrementalSync(applierName, { force: true }).catch((err) => {
-			console.warn('[verification-code] sync failed (continuing with cache):', err.message);
-		});
-
-		const sinceMs = Math.min(60 * 60 * 1000, Math.max(60 * 1000, Number(req.body?.sinceMs) || 15 * 60 * 1000));
-		const cutoff = new Date(Date.now() - sinceMs);
-		const docs = await mailMessagesCollection
-			.find({ applierName, date: { $gte: cutoff } })
-			.sort({ date: -1 })
-			.limit(10)
-			.toArray();
-
-		for (const doc of docs) {
-			let text = `${doc.subject || ''}\n${doc.snippet || ''}\n${doc.bodyText || ''}`;
-			let code = extractVerificationCode(text);
-			// Codes often live only in the body — fetch it lazily for likely candidates.
-			if (!code && !doc.bodyText && doc.uid) {
-				const bodyResult = await ensureMessageBody(applierName, doc.uid, doc.mailbox).catch(() => null);
-				if (bodyResult?.message?.bodyText) {
-					text += `\n${bodyResult.message.bodyText}`;
-					code = extractVerificationCode(text);
-				}
-			}
-			if (code) {
-				return res.json({
-					success: true,
-					code,
-					subject: doc.subject || null,
-					from: doc.from?.address || doc.from?.text || null,
-					date: doc.date || null,
-				});
-			}
+		// Read the newest INBOX emails DIRECTLY from Gmail. An OTP code MUST come from
+		// the live mailbox: the synced Mongo cache can lag or hold a stale/empty body
+		// for a just-arrived message, and typing a wrong/old code is worse than
+		// reporting "not found". So there is intentionally NO cache fallback here — if
+		// the live IMAP read fails, we return no code and let the caller retry.
+		let emails = [];
+		try {
+			const live = await fetchRecentInboxWithBodies(creds.email, creds.password, OTP_EMAIL_LIMIT);
+			emails = live.map((m) => ({
+				from: m.fromName ? `${m.fromName} <${m.from}>` : m.from,
+				subject: m.subject || '',
+				snippet: '',
+				body: m.bodyText || m.bodyHtml || '',
+				date: m.date,
+			}));
+		} catch (err) {
+			console.warn('[verification-code] live IMAP fetch failed (no cache fallback for OTP):', err.message);
+			return res.json({
+				success: true,
+				code: null,
+				link: null,
+				scanned: 0,
+				emails: [],
+				via: 'imap',
+				debug: { selectedIndex: null, aiFound: false, note: `live Gmail read failed: ${err.message}` },
+			});
 		}
 
-		return res.json({ success: true, code: null });
+		// Compact list of what we actually read — surfaced to the client so the
+		// Agent-page Activity shows exactly which emails were scanned (titles/senders).
+		const scannedEmails = emails.map((e, i) => ({
+			index: i,
+			from: String(e.from || ''),
+			subject: String(e.subject || ''),
+			date: e.date ? new Date(e.date).toISOString() : null,
+		}));
+
+		if (emails.length === 0) {
+			console.log('[verification-code] live Gmail inbox empty for', applierName);
+			return res.json({
+				success: true,
+				code: null,
+				link: null,
+				scanned: 0,
+				emails: [],
+				via: 'imap',
+				debug: { selectedIndex: null, aiFound: false, note: 'live Gmail inbox returned no messages' },
+			});
+		}
+
+		console.log(
+			`[verification-code] scanning ${emails.length} newest live email(s) for ${applierName}:`,
+			scannedEmails.map((e) => `#${e.index} ${e.date} "${e.subject}"`).join(' | '),
+		);
+
+		const acc = await findAccountByApplierName(applierName);
+		const ai = await aiExtractVerification(emails, acc?.autoBidProfile || {}, {
+			companyName,
+			jobTitle,
+		});
+
+		const debug = {
+			selectedIndex: Number.isInteger(ai.emailIndex) ? ai.emailIndex : null,
+			aiFound: Boolean(ai.found),
+			note: ai.note || null,
+		};
+
+		if (ai.found && (ai.code || ai.link)) {
+			const idx = Number.isInteger(ai.emailIndex) ? ai.emailIndex : 0;
+			const src = emails[idx] ?? emails[0];
+			return res.json({
+				success: true,
+				code: ai.code,
+				link: ai.link,
+				subject: src?.subject || null,
+				from: src?.from || null,
+				date: src?.date || null,
+				via: 'imap',
+				scanned: emails.length,
+				emails: scannedEmails,
+				debug,
+			});
+		}
+
+		return res.json({ success: true, code: null, link: null, scanned: emails.length, emails: scannedEmails, debug, via: 'imap' });
 	} catch (err) {
 		console.error('POST /api/mail/verification-code error', err);
 		return res.status(500).json({ success: false, error: err.message });

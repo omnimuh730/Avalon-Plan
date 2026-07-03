@@ -46,7 +46,7 @@ export function SignInPage() {
         <AppLogo size={40} />
         <div>
           <p className="font-bold text-foreground" style={display}>
-            AthenAI
+            AthensAI
           </p>
           <p className="text-xs text-muted-foreground">Sign in to continue</p>
         </div>
@@ -101,13 +101,14 @@ export function SignInPage() {
           )}
         </Button>
       </form>
+    </AuthSplitLayout>
+  );
+}
 
+/*
       <p className="text-center text-sm text-muted-foreground mt-8">
         No account?{" "}
         <Link to="/signup" className="text-primary font-semibold hover:underline">
           Create one
         </Link>
-      </p>
-    </AuthSplitLayout>
-  );
-}
+      </p>*/

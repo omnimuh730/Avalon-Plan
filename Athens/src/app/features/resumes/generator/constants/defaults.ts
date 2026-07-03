@@ -35,6 +35,34 @@ export const FALLBACK_MODELS: Record<ProviderId, string[]> = {
   deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
 };
 
+/** Pick a model that belongs to the selected provider (e.g. reject gpt-* on DeepSeek). */
+export function resolveModelForProvider(provider: ProviderId, savedModel: string | undefined): string {
+  const fallbacks = FALLBACK_MODELS[provider];
+  const model = savedModel?.trim();
+  if (!model) return fallbacks[0];
+  if (provider === "deepseek") return fallbacks.includes(model) ? model : fallbacks[0];
+  if (model.startsWith("deepseek-")) return fallbacks[0];
+  return model;
+}
+
+/** Merge a partial saved config (localStorage or MongoDB) onto defaults. */
+export function mergeStoredConfig(parsed: Partial<GeneratorConfig> | null | undefined): GeneratorConfig {
+  const base = defaultConfig();
+  if (!parsed || typeof parsed !== "object") return base;
+  const provider: ProviderId = parsed.provider === "deepseek" ? "deepseek" : "openai";
+  return ensurePurposes({
+    provider,
+    model: resolveModelForProvider(provider, parsed.model ?? base.model),
+    reasoningEffort: parsed.reasoningEffort ?? base.reasoningEffort,
+    templateId: parsed.templateId ?? base.templateId,
+    theme: { ...base.theme, ...(parsed.theme ?? {}) },
+    layout: Array.isArray(parsed.layout) && parsed.layout.length ? (parsed.layout as LayoutSection[]) : base.layout,
+    systemInstruction: parsed.systemInstruction ?? base.systemInstruction,
+    jobDescription: parsed.jobDescription ?? base.jobDescription,
+    steps: Array.isArray(parsed.steps) && parsed.steps.length ? (parsed.steps as GenStep[]) : base.steps,
+  });
+}
+
 const SERIF_FONTS = new Set(["Georgia", "Times New Roman", "Garamond", "Cambria", "Source Serif 4", "Merriweather", "Lora", "PT Serif"]);
 const MONO_FONTS = new Set(["Roboto Mono", "JetBrains Mono"]);
 

@@ -1,95 +1,39 @@
 #!/usr/bin/env node
 /**
- * Mandatory bootstrap before `npm start`:
- * 1. Ensure MongoDB + Redis + Qdrant are running (Docker if needed, or skip if already up)
- * 2. Wait until ports are open
- * 3. Backfill jobs.skillsNormalized + Redis skill index
+ * Bootstrap before `npm start`. The app is Mongo-only — no Docker, Redis, or
+ * Qdrant. This just verifies MongoDB is reachable, then builds the AI gateway.
  */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { allPortsReady, targets } from './wait-for-ports.mjs';
+import { probe } from './wait-for-ports.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const composeFile = path.join(ROOT, 'Athens-server', 'docker-compose.yml');
-const skipDocker = (process.env.SKIP_DOCKER || '').toLowerCase() === '1'
-  || (process.env.SKIP_DOCKER || '').toLowerCase() === 'true';
+
+const MONGO_HOST = process.env.MONGO_HOST || '127.0.0.1';
+const MONGO_PORT = Number(process.env.MONGO_PORT || 27017);
 
 function run(cmd, args, opts = {}) {
   console.log(`\n> ${cmd} ${args.join(' ')}`);
   const r = spawnSync(cmd, args, { stdio: 'inherit', cwd: ROOT, ...opts });
-  if (r.status !== 0) {
-    process.exit(r.status ?? 1);
-  }
+  if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
-function dockerDaemonReady() {
-  const r = spawnSync('docker', ['info'], { stdio: 'ignore' });
-  return r.status === 0;
-}
-
-function printInfraHelp(reason) {
-  const ports = targets.map((t) => `${t.label} ${t.host}:${t.port}`).join(', ');
+if (!(await probe(MONGO_HOST, MONGO_PORT))) {
   console.error(`
-[prestart] ${reason}
+[prestart] MongoDB is not reachable at ${MONGO_HOST}:${MONGO_PORT}.
 
-MongoDB, Redis, and Qdrant must be reachable (${ports}) before NextOffer can start.
-
-Option A — Docker Desktop (recommended)
-  1. Open Docker Desktop and wait until it says "Running"
-  2. Run: npm start
-
-Option B — Homebrew (no Docker)
-  brew install mongodb-community redis
+Start a local MongoDB (no Docker needed):
   brew services start mongodb-community
-  brew services start redis
-  cd Athens-server && npm run qdrant:start
-  SKIP_DOCKER=1 npm start
+  # or run mongod however you prefer
 
-Option C — Start Docker containers manually
-  npm run infra:up
-  npm start
-
-If databases are already running elsewhere, use:
-  SKIP_DOCKER=1 npm start
+Then: npm start
 `);
+  process.exit(1);
 }
+console.log(`[prestart] MongoDB ready on ${MONGO_HOST}:${MONGO_PORT}`);
 
-async function ensureInfra() {
-  if (await allPortsReady()) {
-    console.log('[prestart] MongoDB + Redis + Qdrant already running — skipping Docker');
-    return;
-  }
-
-  if (skipDocker) {
-    console.log('[prestart] SKIP_DOCKER set — waiting for existing MongoDB + Redis + Qdrant…');
-    run('node', [path.join(ROOT, 'scripts', 'wait-for-ports.mjs')]);
-    return;
-  }
-
-  if (!dockerDaemonReady()) {
-    printInfraHelp('Docker is not running (docker.sock not found)');
-    process.exit(1);
-  }
-
-  console.log('[prestart] Starting infrastructure (MongoDB + Redis + Qdrant) via Docker…');
-  const up = spawnSync(
-    'docker',
-    ['compose', '-f', composeFile, 'up', '-d', 'mongodb', 'redis', 'qdrant'],
-    { stdio: 'inherit', cwd: ROOT },
-  );
-  if (up.status !== 0) {
-    printInfraHelp('docker compose failed to start MongoDB/Redis/Qdrant');
-    process.exit(up.status ?? 1);
-  }
-
-  run('node', [path.join(ROOT, 'scripts', 'wait-for-ports.mjs')]);
-}
-
-await ensureInfra();
-
-console.log('[prestart] Backfilling job skills + Redis index…');
+// Build the unified AI gateway that all LLM calls route through.
 run('npm', ['run', 'build', '-w', 'unified-ai-server']);
-run('npm', ['run', 'backfill-job-skills', '-w', 'Athens-server']);
 
 console.log('[prestart] Bootstrap complete.\n');

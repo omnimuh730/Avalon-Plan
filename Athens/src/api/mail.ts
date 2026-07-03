@@ -45,6 +45,7 @@ export async function fetchMailThreads(
     page?: number;
     pageSize?: number;
     cacheOnly?: boolean;
+    force?: string;
   } = {},
 ): Promise<MailThreadsResult> {
   const query = qs({
@@ -55,6 +56,7 @@ export async function fetchMailThreads(
     page: opts.page,
     pageSize: opts.pageSize,
     cacheOnly: opts.cacheOnly ? "true" : undefined,
+    force: opts.force,
   });
   const data = await mailFetch<MailThreadsResult>(`mail/threads${query}`);
   return {

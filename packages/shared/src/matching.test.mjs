@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compactSkillText } from './skill-compact.js';
 import { skillTokens, buildProfileTokens } from './skill-tokens.js';
-import { jobSkillMatchesProfile, buildProfileCompacts } from './skill-match.js';
+import { jobSkillMatchesProfile, jobSkillMatchWeight, buildProfileCompacts } from './skill-match.js';
 import { extractSkillsFromTitle, enrichJobSkillsFromTitle } from '../../../Athens-server/src/services/matching/jobSkillExtraction.js';
-import { computeHybridScore } from '../../../Athens-server/src/services/matching/coverageScore.js';
+import { computeHybridScore, computeCoverageScore } from '../../../Athens-server/src/services/matching/coverageScore.js';
 
 test('extractSkillsFromTitle pulls technology tokens, skips role filler', () => {
   const skills = extractSkillsFromTitle('Senior Salesforce Developer (m/f/d)');
@@ -82,6 +82,71 @@ test('generic word alone does not cross-match unrelated roles', () => {
   assert.equal(jobSkillMatchesProfile('Backend Development', ctx), false);
   // but a real shared word still matches
   assert.ok(jobSkillMatchesProfile('React Native', ctx));
+});
+
+test('single-char language skills match by word, never by substring', () => {
+  const ctx = profileCtx(['C']);
+  assert.ok(jobSkillMatchesProfile('C Programming', ctx));
+  assert.ok(jobSkillMatchesProfile('Embedded C', ctx));
+  assert.equal(jobSkillMatchesProfile('Calculation', ctx), false);
+  // c++ / c# are distinct tokens, not the C language
+  assert.equal(jobSkillMatchesProfile('C++', ctx), false);
+  assert.equal(jobSkillMatchesProfile('C#', ctx), false);
+
+  const rCtx = profileCtx(['R']);
+  assert.ok(jobSkillMatchesProfile('R Studio', rCtx));
+  assert.equal(jobSkillMatchesProfile('Ruby', rCtx), false);
+
+  // non-allowlisted single letters stay dropped
+  assert.deepEqual(skillTokens('Plan B'), ['plan']);
+  assert.deepEqual(skillTokens('C Programming'), ['c']);
+});
+
+test('React profile activates the React word family', () => {
+  const ctx = profileCtx(['React']);
+  assert.ok(jobSkillMatchesProfile('React Native', ctx));
+  assert.ok(jobSkillMatchesProfile('React.js', ctx)); // via >=5 compact shim
+});
+
+test('jobSkillMatchWeight returns best matching weight via word tokens', () => {
+  const ctx = {
+    tokenWeights: { react: 1.0, mentoring: 0.38, aws: 0.85, c: 0.9 },
+    compactWeights: [{ c: 'react', w: 1.0 }],
+  };
+  assert.equal(jobSkillMatchWeight('React Native', ctx), 1.0);
+  assert.equal(jobSkillMatchWeight('React.js', ctx), 1.0); // compact shim carries the weight
+  assert.equal(jobSkillMatchWeight('Mentoring', ctx), 0.38);
+  assert.equal(jobSkillMatchWeight('AWS Lambda', ctx), 0.85);
+  assert.equal(jobSkillMatchWeight('C Programming', ctx), 0.9);
+  assert.equal(jobSkillMatchWeight('Calculation', ctx), 0);
+  assert.equal(jobSkillMatchWeight('Kubernetes', ctx), 0);
+});
+
+test('jobSkillMatchWeight compact shim never fires for short skills', () => {
+  const ctx = { tokenWeights: {}, compactWeights: [{ c: 'ai', w: 1.0 }, { c: 'c', w: 1.0 }] };
+  assert.equal(jobSkillMatchWeight('Gmail', ctx), 0);
+  assert.equal(jobSkillMatchWeight('Calculation', ctx), 0);
+});
+
+test('requirement-weighted coverage: perfect candidate scores exactly 100 (no suppression)', () => {
+  const aiSkills = [
+    { name: 'React', category: 'hard', requirement: 5 },
+    { name: 'Mentoring', category: 'soft', requirement: 2 },
+  ];
+  // Proficiency-only maps (category applied job-side); max proficiency = 1.0
+  const perfect = { tokenWeights: { react: 1.0, mentoring: 1.0 }, compactWeights: [{ c: 'react', w: 1.0 }] };
+  assert.equal(computeCoverageScore(aiSkills, perfect).matchScore, 100);
+
+  // Only the mandatory hard skill covered → still high (hard req5 dominates)
+  const reactOnly = { tokenWeights: { react: 1.0 }, compactWeights: [{ c: 'react', w: 1.0 }] };
+  const s1 = computeCoverageScore(aiSkills, reactOnly).matchScore;
+  assert.ok(s1 >= 80 && s1 < 100, `expected high not perfect, got ${s1}`);
+
+  // Only the soft nice-to-have covered → low (mandatory hard gap dominates)
+  const softOnly = { tokenWeights: { mentoring: 0.76 }, compactWeights: [] };
+  const s2 = computeCoverageScore(aiSkills, softOnly).matchScore;
+  assert.ok(s2 < 20, `expected low, got ${s2}`);
+  assert.ok(s1 > s2);
 });
 
 test('computeHybridScore blends skill and vector scores', () => {

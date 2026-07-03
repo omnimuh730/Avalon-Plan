@@ -3,7 +3,12 @@ import express from "express";
 import {
 	getProfileMatchSkills,
 	addProfileMatchSkill,
+	removeProfileMatchSkill,
 } from "../controllers/profileMatchSkillsController.js";
+import {
+	getSkillDictionary,
+	getSkillCoverage,
+} from "../controllers/skillDictionaryController.js";
 import {
 	getSkills,
 	addSkill,
@@ -12,6 +17,7 @@ import {
 	getAutoBidProfile,
 	upsertAutoBidProfile,
 	updateAutoBidOpenAiModel,
+	setDefaultModel,
 	getResumeCatalog,
 	upsertResumeCatalog,
 	validateResumeCatalogHandler,
@@ -21,6 +27,9 @@ import {
   generateResume,
   generateResumeStream,
   generateResumeForAgentJob,
+  generateResumeForAgentJobStream,
+  getAgentJobResumePdf,
+  getAgentJobResumesStatus,
   getGeneratorConfig,
 	saveGeneratorConfig,
   listGenerations,
@@ -47,6 +56,10 @@ const router = express.Router();
 
 router.get('/personal/profile-match-skills', getProfileMatchSkills);
 router.post('/personal/profile-match-skills', addProfileMatchSkill);
+router.delete('/personal/profile-match-skills', removeProfileMatchSkill);
+
+router.get('/personal/skill-dictionary', getSkillDictionary);
+router.get('/personal/skill-dictionary/coverage', getSkillCoverage);
 
 router.get('/personal/skills', getSkills);
 router.post('/personal/skills', addSkill);
@@ -56,6 +69,7 @@ router.post('/personal/skills/update', updateSkills);
 router.get('/personal/auto-bid-profile', getAutoBidProfile);
 router.put('/personal/auto-bid-profile', upsertAutoBidProfile);
 router.post('/personal/auto-bid-profile/openai-model', updateAutoBidOpenAiModel);
+router.post('/personal/default-model', setDefaultModel);
 
 router.get('/personal/resume-catalog', getResumeCatalog);
 router.put('/personal/resume-catalog', upsertResumeCatalog);
@@ -65,6 +79,9 @@ router.get('/personal/llm-models', getLlmModels);
 router.post('/personal/resume-generate', generateResume);
 router.post('/personal/resume-generate/stream', generateResumeStream);
 router.post('/personal/resume-generate/for-agent-job', generateResumeForAgentJob);
+router.post('/personal/resume-generate/for-agent-job/stream', generateResumeForAgentJobStream);
+router.get('/personal/agent-job-resume/:jobId/pdf', getAgentJobResumePdf);
+router.post('/personal/agent-job-resumes/status', getAgentJobResumesStatus);
 router.get('/personal/resume-generator/config', getGeneratorConfig);
 router.put('/personal/resume-generator/config', saveGeneratorConfig);
 router.get('/personal/resume-generations', listGenerations);

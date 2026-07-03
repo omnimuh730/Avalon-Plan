@@ -1,4 +1,5 @@
-import { API_BASE } from "@/lib/api-base";
+import { io, type Socket } from "socket.io-client";
+import { API_BASE, resolveDevServiceUrl } from "@/lib/api-base";
 import type {
   ActivityEntry,
   AvalonHealthData,
@@ -34,7 +35,85 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function avalonRelayUrl() {
-  return (import.meta.env.VITE_AVALON_SERVER || "http://localhost:3847").replace(/\/$/, "");
+  return resolveDevServiceUrl(
+    import.meta.env.VITE_AVALON_SERVER,
+    "/avalon",
+    "http://localhost:3847",
+  );
+}
+
+const AVALON_SESSION_STORAGE_KEY = "athens-avalon-session";
+
+/**
+ * The user-configured Avalon session ID, persisted across reloads so this
+ * Athens instance always re-registers into ITS session — never the shared
+ * "default" one that another user's extension may occupy.
+ */
+export function storedAvalonSessionId(): string {
+  try {
+    return localStorage.getItem(AVALON_SESSION_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function persistAvalonSessionId(sessionId: string) {
+  try {
+    localStorage.setItem(AVALON_SESSION_STORAGE_KEY, sessionId);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** Socket.IO client options — proxied in dev for LAN access. */
+export function avalonRelaySocketOptions(): { url?: string; path?: string } {
+  const configured = import.meta.env.VITE_AVALON_SERVER?.trim();
+  if (import.meta.env.DEV && (!configured || avalonRelayUrl() === "/avalon")) {
+    return { path: "/avalon/socket.io" };
+  }
+  return {
+    url: avalonRelayUrl(),
+    path: "/socket.io",
+  };
+}
+
+const AVALON_SOCKET_COMMON = {
+  transports: ["websocket", "polling"] as const,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+};
+
+export function createAvalonSocket(serverUrl: string): Socket {
+  if (serverUrl === "/avalon") {
+    return io({ ...AVALON_SOCKET_COMMON, path: "/avalon/socket.io" });
+  }
+  return io(serverUrl, { ...AVALON_SOCKET_COMMON, path: "/socket.io" });
+}
+
+export function avalonRelayHealthUrl(): string {
+  const base = avalonRelayUrl();
+  return base === "/avalon" ? "/avalon/health" : `${base}/health`;
+}
+
+/** Wait for the relay HTTP health endpoint before opening a websocket (avoids Vite proxy noise on boot). */
+export async function waitForAvalonRelay(
+  attempts = 30,
+  intervalMs = 1000,
+): Promise<boolean> {
+  const healthUrl = avalonRelayHealthUrl();
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const res = await fetch(healthUrl, { cache: "no-store" });
+      if (res.ok) return true;
+    } catch {
+      // Relay still starting — retry.
+    }
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  return false;
 }
 
 /** Probe Avalon relay via HTTP — does not steal the controller socket slot. */
@@ -109,23 +188,46 @@ export interface JobCandidate {
   source: string;
 }
 
+/** Optional filters for the candidate transfer list (mirror Job Search's filters). */
+export interface CandidateJobFilters {
+  /** Title contains (case-insensitive). Maps to the backend `q` param. */
+  titleQuery?: string;
+  /** Posted on/after this date (YYYY-MM-DD). */
+  postedFrom?: string;
+  /** Posted on/before this date (YYYY-MM-DD). */
+  postedTo?: string;
+}
+
 /**
  * Candidate jobs for the transfer list, in Job Search's **Best match** rank order
  * (sort=recommended), posted (not-yet-applied) only — so the list matches what the
  * user sees in Job Search. Hits the same /jobs/list endpoint Job Search uses.
+ *
+ * `source` is optional: when omitted, all job sources are searched (lets the
+ * title/date filters stand on their own without picking a source first).
  */
-export async function fetchCandidateJobs(applierName: string, source: string, limit = 200): Promise<JobCandidate[]> {
+export async function fetchCandidateJobs(
+  applierName: string,
+  source: string,
+  limit = 200,
+  filters: CandidateJobFilters = {},
+): Promise<JobCandidate[]> {
+  const body: Record<string, unknown> = {
+    sort: "recommended", // Best match
+    applied: false, // posted, not yet applied
+    applierName,
+    page: 1,
+    limit,
+  };
+  if (source) body.jobSources = source;
+  if (filters.titleQuery?.trim()) body.q = filters.titleQuery.trim();
+  if (filters.postedFrom) body.postedAtFrom = filters.postedFrom;
+  if (filters.postedTo) body.postedAtTo = filters.postedTo;
+
   const res = await fetch(`${API_BASE.replace(/\/$/, "")}/jobs/list`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sort: "recommended", // Best match
-      applied: false, // posted, not yet applied
-      applierName,
-      jobSources: source,
-      page: 1,
-      limit,
-    }),
+    body: JSON.stringify(body),
   });
   const data = (await res.json().catch(() => ({}))) as { data?: Record<string, unknown>[] };
   const docs = Array.isArray(data.data) ? data.data : [];

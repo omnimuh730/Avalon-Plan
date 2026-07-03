@@ -2,6 +2,7 @@ import React from "react";
 import { JobCard } from "./JobCard";
 import { cn } from "../../../lib/utils";
 import type { Job } from "../../../types";
+import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 
 type JobListViewProps = {
   jobs: Job[];
@@ -17,6 +18,8 @@ type JobListViewProps = {
   onMarkDeclined?: (job: Job) => void;
   onCancel?: (job: Job) => void;
   onJobScoresUpdated?: (job: Job) => void;
+  resumeStates?: Record<string, JobResumeGenerationState>;
+  onGenerateResume?: (job: Job) => void;
 };
 
 export function JobListView({
@@ -33,6 +36,8 @@ export function JobListView({
   onMarkDeclined,
   onCancel,
   onJobScoresUpdated,
+  resumeStates,
+  onGenerateResume,
 }: JobListViewProps) {
   if (jobs.length === 0) {
     return (
@@ -66,6 +71,8 @@ export function JobListView({
           onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
           onCancel={onCancel ? () => onCancel(job) : undefined}
           onJobScoresUpdated={onJobScoresUpdated}
+          resumeState={resumeStates?.[job.id]}
+          onGenerateResume={onGenerateResume ? () => onGenerateResume(job) : undefined}
         />
       ))}
     </div>

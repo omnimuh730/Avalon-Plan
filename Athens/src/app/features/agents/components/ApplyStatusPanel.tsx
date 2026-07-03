@@ -33,7 +33,12 @@ const STAGE_INDEX: Record<StageKey, number> = {
 };
 
 /** Map the current live phase to the pipeline stage it belongs to. */
-function activeStage(phase: ApplyProgress | null, analyzing: boolean): StageKey {
+function activeStage(
+  phase: ApplyProgress | null,
+  analyzing: boolean,
+  generatingResume?: boolean,
+): StageKey {
+  if (generatingResume) return "resume";
   if (analyzing) return "analyze";
   switch (phase?.phase) {
     case "navigating":
@@ -44,6 +49,8 @@ function activeStage(phase: ApplyProgress | null, analyzing: boolean): StageKey 
       // The recovery loop reuses the 'fields' phase for self-healing.
       return phase.message?.toLowerCase().includes("self-healing") ? "verify" : "fill";
     case "submit-wait":
+    case "verify-wait":
+      return phase.phase === "verify-wait" ? "verify" : "submit";
     case "submitted":
       return "submit";
     case "done":
@@ -53,25 +60,45 @@ function activeStage(phase: ApplyProgress | null, analyzing: boolean): StageKey 
   }
 }
 
+type StageIconState = "done" | "active" | "idle";
+
+function ApplyStageIcon({ state }: { state: StageIconState }) {
+  return (
+    <span className="inline-flex shrink-0" aria-hidden>
+      {state === "done" ? (
+        <CheckCircle2 className="w-3.5 h-3.5" />
+      ) : state === "active" ? (
+        <Loader2 className="w-3 h-3 animate-spin" />
+      ) : (
+        <Circle className="w-3 h-3" />
+      )}
+    </span>
+  );
+}
+
 export function ApplyStatusPanel({
   applying,
   analyzing,
+  generatingResume,
   applyPhase,
   activeResume,
   jobTitle,
 }: {
   applying: boolean;
   analyzing: boolean;
+  generatingResume?: boolean;
   applyPhase: ApplyProgress | null;
   activeResume: JobResume | null;
   jobTitle?: string;
 }) {
-  if (!applying && !applyPhase) return null;
+  if (!applying && !applyPhase && !generatingResume && !analyzing) return null;
 
-  const current = activeStage(applyPhase, analyzing);
+  const current = activeStage(applyPhase, analyzing, generatingResume);
   const currentIdx = STAGE_INDEX[current];
   const isError = applyPhase?.phase === "error";
-  const isDone = !applying && applyPhase?.phase === "done";
+  const isDone = !applying && (applyPhase?.phase === "done" || applyPhase?.phase === "submitted");
+  const errorMessage = isError ? applyPhase?.message : null;
+  const verifyWaiting = applyPhase?.phase === "verify-wait";
 
   const total = applyPhase?.totalSteps ?? 0;
   const doneSteps = applyPhase?.appliedSteps ?? 0;
@@ -86,13 +113,15 @@ export function ApplyStatusPanel({
     >
       <div className="px-4 py-2.5 border-b border-border/60 flex items-center justify-between gap-2 bg-gradient-to-r from-violet-500/5 to-transparent">
         <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
-          {applying ? (
-            <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
-          ) : isError ? (
-            <AlertTriangle className="w-4 h-4 text-red-600" />
-          ) : (
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          )}
+          <span key={applying ? "busy" : isError ? "error" : "done"} className="inline-flex shrink-0" aria-hidden>
+            {applying ? (
+              <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
+            ) : isError ? (
+              <AlertTriangle className="w-4 h-4 text-red-600" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            )}
+          </span>
           Apply status
           {jobTitle && <span className="text-xs font-normal text-muted-foreground truncate max-w-[200px]">· {jobTitle}</span>}
         </h2>
@@ -102,7 +131,8 @@ export function ApplyStatusPanel({
       <div className="px-4 py-3 flex items-center gap-1 overflow-x-auto">
         {STAGES.map((stage, i) => {
           const done = i < currentIdx || isDone;
-          const active = i === currentIdx && applying && !isDone;
+          const active = i === currentIdx && (applying || verifyWaiting) && !isDone;
+          const iconState: StageIconState = done ? "done" : active ? "active" : "idle";
           return (
             <div key={stage.key} className="flex items-center shrink-0">
               <div
@@ -114,16 +144,10 @@ export function ApplyStatusPanel({
                   !done && !active && "text-muted-foreground",
                 )}
               >
-                {done ? (
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                ) : active ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <Circle className="w-3 h-3" />
-                )}
+                <ApplyStageIcon key={iconState} state={iconState} />
                 {stage.label}
               </div>
-              {i < STAGES.length - 1 && <span className="w-3 h-px bg-border mx-0.5 shrink-0" />}
+              {i < STAGES.length - 1 && <span className="w-3 h-px bg-border mx-0.5 shrink-0" aria-hidden />}
             </div>
           );
         })}
@@ -137,7 +161,8 @@ export function ApplyStatusPanel({
             isError ? "text-red-700" : "text-foreground",
           )}
         >
-          {applyPhase?.phase === "submit-wait" && applyPhase.secondsLeft != null ? (
+          {(applyPhase?.phase === "submit-wait" || applyPhase?.phase === "verify-wait") &&
+          applyPhase.secondsLeft != null ? (
             <span className="inline-flex items-center gap-1.5">
               <span className="w-5 h-5 rounded-full bg-violet-600 text-white text-[10px] font-bold flex items-center justify-center">
                 {applyPhase.secondsLeft}
@@ -145,7 +170,7 @@ export function ApplyStatusPanel({
               {applyPhase.message}
             </span>
           ) : (
-            <span>{applyPhase?.message ?? (applying ? "Working…" : "Idle")}</span>
+            <span>{errorMessage ?? applyPhase?.message ?? (applying ? "Working…" : "Idle")}</span>
           )}
         </div>
 
@@ -159,6 +184,12 @@ export function ApplyStatusPanel({
         )}
 
         {/* Résumé sub-status */}
+        {generatingResume && !activeResume && (
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-600 shrink-0" />
+            <span>Generating tailored résumé PDF…</span>
+          </div>
+        )}
         {activeResume && (
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <FileText className="w-3.5 h-3.5 text-violet-600 shrink-0" />

@@ -6,17 +6,14 @@ import express from "express";
 import cors from 'cors';
 
 import { initMongo } from "./src/db/mongo.js";
-import { initRedis } from "./src/db/redis.js";
 import { initSocket } from "./src/socketHub.js";
 import { startJobAnalysisWorker } from "./src/services/jobAnalysis/index.js";
-import { initQdrantCollections } from "./src/services/vectorStore/qdrantClient.js";
-import { checkOllamaEmbeddingReady } from "./src/services/embeddings/embeddingService.js";
+import { startMatchScoreWorker } from "./src/services/matching/matchScoreWorker.js";
 
 import openTabsRoutes from "./src/routes/openTabsRoutes.js";
 import jobRoutes from "./src/routes/jobRoutes.js";
 import personalInfoRoutes from "./src/routes/personalInfoRoutes.js";
 import skillCategoryRoutes from "./src/routes/skillCategoryRoutes.js";
-import skillGraphRoutes from "./src/routes/skillGraphRoutes.js";
 import reportRoutes from "./src/routes/reportRoutes.js";
 import accountInfoRoutes from "./src/routes/accountInfoRoutes.js";
 import foxRoutes from "./src/routes/foxRoutes.js";
@@ -42,20 +39,11 @@ app.use(express.json({ limit: '50mb' }));
 app.use(cors({ origin: '*' }));
 
 async function bootstrap() {
+	// Mongo-only startup — no Redis/Qdrant/Ollama/Docker. Matching is served from
+	// the materialized job_match_scores collection; skills come from AI extraction.
 	await initMongo();
-	await initRedis();
 	startJobAnalysisWorker();
-	try {
-		await initQdrantCollections();
-	} catch (err) {
-		console.error('Qdrant init failed — optional similar-jobs feature disabled:', err.message);
-	}
-	const ollamaCheck = await checkOllamaEmbeddingReady();
-	if (!ollamaCheck.ok) {
-		console.warn('[embeddings] Ollama not ready:', ollamaCheck.error);
-	} else if (ollamaCheck.model) {
-		console.log(`[embeddings] Ollama ready — model ${ollamaCheck.model}`);
-	}
+	startMatchScoreWorker();
 }
 
 bootstrap().catch(err => {
@@ -67,7 +55,6 @@ app.use('/api', openTabsRoutes);
 app.use('/api', jobRoutes);
 app.use('/api', personalInfoRoutes);
 app.use('/api', skillCategoryRoutes);
-app.use('/api', skillGraphRoutes);
 app.use('/api', reportRoutes);
 app.use('/api', accountInfoRoutes);
 app.use('/api', foxRoutes);

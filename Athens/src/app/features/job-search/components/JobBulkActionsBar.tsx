@@ -1,5 +1,5 @@
 import React from "react";
-import { Download, Loader2, Send, Sparkles, Trash2 } from "lucide-react";
+import { Download, FileText, Loader2, Send, Trash2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
 
@@ -12,12 +12,10 @@ type JobBulkActionsBarProps = {
   onApplyAll: () => void;
   onDownload: () => void;
   onRemove: () => void;
-  missingEmbeddings?: number;
-  embeddingRunning?: boolean;
-  embeddingLoading?: boolean;
-  embeddingProgress?: { embedded: number; processed: number; total: number };
-  onStartEmbedding?: () => void;
-  onStopEmbedding?: () => void;
+  onGenerateResumes?: () => void;
+  onStopGenerateResumes?: () => void;
+  resumeGenerating?: boolean;
+  resumeProgress?: { done: number; total: number };
   className?: string;
 };
 
@@ -30,12 +28,10 @@ export function JobBulkActionsBar({
   onApplyAll,
   onDownload,
   onRemove,
-  missingEmbeddings = 0,
-  embeddingRunning = false,
-  embeddingLoading = false,
-  embeddingProgress,
-  onStartEmbedding,
-  onStopEmbedding,
+  onGenerateResumes,
+  onStopGenerateResumes,
+  resumeGenerating = false,
+  resumeProgress,
   className,
 }: JobBulkActionsBarProps) {
   const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
@@ -69,42 +65,33 @@ export function JobBulkActionsBar({
       </label>
 
       <div className="flex items-center gap-1 ml-auto">
-        {(missingEmbeddings > 0 || embeddingRunning) && onStartEmbedding ? (
-          embeddingRunning ? (
+        {onGenerateResumes ? (
+          resumeGenerating ? (
             <Button
               variant="ghost"
               size="sm"
               className="h-8 px-2.5 gap-1 text-amber-700 hover:text-amber-800 hover:bg-amber-50"
-              onClick={onStopEmbedding}
-              disabled={embeddingLoading}
+              onClick={onStopGenerateResumes}
+              title="Stop after in-flight résumés finish"
             >
-              {embeddingLoading ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="w-3.5 h-3.5" />
-              )}
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
               <span className="hidden sm:inline">
-                {embeddingProgress
-                  ? `Embedding ${embeddingProgress.embedded}/${embeddingProgress.total}`
-                  : "Embedding…"}
+                {resumeProgress
+                  ? `Résumés ${resumeProgress.done}/${resumeProgress.total} · Stop`
+                  : "Generating résumés… · Stop"}
               </span>
             </Button>
           ) : (
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 px-2.5 gap-1 text-amber-700 hover:text-amber-800 hover:bg-amber-50"
-              onClick={onStartEmbedding}
-              disabled={embeddingLoading}
+              className="h-8 px-2.5 gap-1"
+              onClick={onGenerateResumes}
+              disabled={totalSelected === 0}
+              title="Generate tailored résumés for the selected jobs (max 10 at a time)"
             >
-              {embeddingLoading ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="w-3.5 h-3.5" />
-              )}
-              <span className="hidden sm:inline">
-                Embed {missingEmbeddings} job{missingEmbeddings === 1 ? "" : "s"}
-              </span>
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Resumes</span>
             </Button>
           )
         ) : null}

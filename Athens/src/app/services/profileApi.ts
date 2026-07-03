@@ -75,6 +75,40 @@ export async function saveAutoBidProfile(
   return { success: true };
 }
 
+/** List available models for a provider (uses the profile's stored key for OpenAI). */
+export async function fetchLlmModels(
+  provider: "openai" | "deepseek",
+  applierName: string,
+): Promise<string[]> {
+  const url = `${API_BASE.replace(/\/$/, "")}/personal/llm-models?provider=${provider}&applierName=${encodeURIComponent(applierName)}`;
+  const res = await fetch(url);
+  const data = (await parseJson(res)) as { success?: boolean; models?: string[] } | null;
+  return Array.isArray(data?.models) ? data!.models! : [];
+}
+
+/** Validate the stored key for `provider` and set (provider, model) as the default. */
+export async function setDefaultModel(
+  applierName: string,
+  provider: "openai" | "deepseek",
+  model: string,
+): Promise<{ success: boolean; valid: boolean; message?: string; error?: string }> {
+  const url = `${API_BASE.replace(/\/$/, "")}/personal/default-model`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applierName, provider, model }),
+  });
+  const data = (await parseJson(res)) as
+    | { success?: boolean; valid?: boolean; message?: string; error?: string }
+    | null;
+  return {
+    success: Boolean(data?.success),
+    valid: Boolean(data?.valid),
+    message: data?.message,
+    error: data?.error,
+  };
+}
+
 export async function testLlmKey(
   provider: "openai" | "deepseek",
   apiKey: string,

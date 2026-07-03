@@ -1,7 +1,6 @@
 import { ObjectId, GridFSBucket } from "mongodb";
 import { userResumesCollection, userKnowledgeGraphsCollection } from "../db/mongo.js";
 import { rebuildProfileGraph } from "./userKnowledgeGraph/index.js";
-import { removeResumeEmbedding, upsertProfileEmbedding } from "./embeddings/embeddingIngest.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
 
 const INLINE_MAX_BYTES = 8 * 1024 * 1024; // 8MB
@@ -279,8 +278,6 @@ export async function deleteUserResume(id, ownerName) {
 
   await deleteStoredContent(doc);
   await userResumesCollection.deleteOne({ _id: objectId });
-  await removeResumeEmbedding(String(objectId));
-  await upsertProfileEmbedding(name);
   invalidateRecommendationCache(name);
 
   if (userKnowledgeGraphsCollection) {

@@ -1,7 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import { AthensInput, AthensSelect, FormField } from "../../../../components/forms";
 import type { EditorDraft } from "../../../../types/resume";
-import { FALLBACK_MODELS } from "../../lib/generatorDefaults";
 
 type ProviderIdentityPanelProps = {
   draft: EditorDraft;
@@ -13,11 +12,6 @@ type ProviderIdentityPanelProps = {
   onModelChange: (model: string) => void;
   onReasoningChange: (effort: string) => void;
 };
-
-const PROVIDERS = [
-  { id: "openai", label: "OpenAI" },
-  { id: "deepseek", label: "DeepSeek" },
-];
 
 const REASONING = [
   { value: "default", label: "Default" },
@@ -38,12 +32,11 @@ export function ProviderIdentityPanel({
   onReasoningChange,
 }: ProviderIdentityPanelProps) {
   const { identity } = draft.document;
-  const modelList = models.length ? models : FALLBACK_MODELS[draft.provider] ?? FALLBACK_MODELS.openai;
 
   return (
     <div className="bg-card border border-border rounded-xl p-5 shadow-sm space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-foreground">Provider, model & identity</h3>
+        <h3 className="text-sm font-bold text-foreground">Generation & identity</h3>
         <button
           type="button"
           onClick={onReloadProfile}
@@ -54,10 +47,10 @@ export function ProviderIdentityPanel({
           Reload from Settings
         </button>
       </div>
-      <p className="text-xs text-muted-foreground">Identity loads from your MongoDB profile (Settings → Profile).</p>
+      <p className="text-xs text-muted-foreground">
+        The model comes from your default in Settings → Profile. Identity loads from your MongoDB profile.
+      </p>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <AthensSelect label="Provider" value={draft.provider} onChange={onProviderChange} options={PROVIDERS.map((p) => ({ value: p.id, label: p.label }))} />
-        <AthensSelect label="Model" value={draft.model} onChange={onModelChange} options={modelList.map((m) => ({ value: m, label: m }))} />
         <AthensSelect label="Reasoning" value={draft.reasoningEffort} onChange={onReasoningChange} options={REASONING} />
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -1,5 +1,6 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
+import { withPooledClient } from './imapPool.js';
 import {
 	ALL_MAIL_PATH,
 	FOLDER_MAILBOX,
@@ -87,18 +88,11 @@ function inlineCidImages(html, attachments) {
 }
 
 async function withMailboxPath(email, password, mailboxPath, fn) {
-	const client = await createClient(email, password);
-	const lock = await client.getMailboxLock(mailboxPath);
-	try {
-		return await fn(client);
-	} finally {
-		lock.release();
-		await client.logout();
-	}
+	return withPooledClient(email, password, mailboxPath, fn);
 }
 
 async function withMailbox(email, password, fn) {
-	return withMailboxPath(email, password, ALL_MAIL_PATH, fn);
+	return withPooledClient(email, password, ALL_MAIL_PATH, fn);
 }
 
 /**
@@ -129,6 +123,47 @@ export async function fetchRecentEnvelopes(email, password, count, applierName) 
 			highestUid: uids.length ? Math.max(...uids) : 0,
 			lowestUid: uids.length ? Math.min(...uids) : 0,
 		};
+	});
+}
+
+/**
+ * Fetch the most recent `count` INBOX messages WITH fully-parsed bodies, straight
+ * from Gmail — no Mongo cache. Used for time-critical reads (e.g. an emailed OTP
+ * code) where the synced cache may lag or hold a not-yet-materialized body for a
+ * just-arrived message. Returns newest-first.
+ */
+export async function fetchRecentInboxWithBodies(email, password, count = 10, mailboxPath = 'INBOX') {
+	return withMailboxPath(email, password, mailboxPath, async (client) => {
+		const total = client.mailbox.exists ?? 0;
+		if (total === 0) return [];
+
+		const start = Math.max(1, total - count + 1);
+		const range = `${start}:${total}`;
+		const out = [];
+
+		for await (const message of client.fetch(range, { source: true, uid: true, flags: true, envelope: true })) {
+			if (!message?.source) continue;
+			try {
+				const parsed = await simpleParser(message.source);
+				const from = parsed.from?.value?.[0];
+				const textBody = parsed.text?.trim() || stripHtml(parsed.html ?? '');
+				out.push({
+					uid: message.uid,
+					from: from?.address || '',
+					fromName: from?.name || parsed.from?.text || '',
+					subject: parsed.subject || '',
+					date: parsed.date ?? message.envelope?.date ?? null,
+					bodyText: textBody || '',
+					bodyHtml: extractHtmlBody(parsed) || '',
+				});
+			} catch {
+				/* skip unparseable message */
+			}
+		}
+
+		// Sequence fetch returns ascending (oldest→newest); sort newest-first.
+		out.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+		return out.slice(0, count);
 	});
 }
 
@@ -315,12 +350,7 @@ export async function moveToInbox(email, password, uid, mailboxPath = ALL_MAIL_P
 }
 
 async function withClient(email, password, fn) {
-	const client = await createClient(email, password);
-	try {
-		return await fn(client);
-	} finally {
-		await client.logout();
-	}
+	return withPooledClient(email, password, undefined, fn);
 }
 
 /**
@@ -441,9 +471,10 @@ export async function fetchMailboxPage(email, password, folder, page, pageSize, 
  * Live folder totals from Gmail (total + unread for inbox).
  */
 export async function fetchFolderCounts(email, password) {
-	const client = await createClient(email, password);
-	const counts = {};
-	try {
+	// Use the pool directly without a pre-selected mailbox — we need to
+	// visit multiple mailboxes to count each folder.
+	return withPooledClient(email, password, undefined, async (client) => {
+		const counts = {};
 		for (const [folder, path] of Object.entries(FOLDER_MAILBOX)) {
 			const lock = await client.getMailboxLock(path);
 			try {
@@ -462,8 +493,6 @@ export async function fetchFolderCounts(email, password) {
 				lock.release();
 			}
 		}
-	} finally {
-		await client.logout();
-	}
-	return counts;
+		return counts;
+	});
 }

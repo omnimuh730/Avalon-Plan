@@ -84,9 +84,12 @@ export type ActionType =
   | 'set_attribute'
   | 'navigate'
   | 'open_tab'
+  | 'close_tab'
   | 'reload'
   | 'screenshot'
   | 'execute_script'
+  | 'read_page_state'
+  | 'fill_verification_code'
   | 'fetch_actionable_tree'
   | 'apply_injection_plan';
 
@@ -193,24 +196,9 @@ export const SOCKET_EVENTS = {
   SCREENSHOT_RESULT: 'screenshot-result',
   /** Live apply lifecycle updates (file upload, field fill, submit countdown). */
   APPLY_PROGRESS: 'apply-progress',
-  /** WebRTC signaling for the live tab view (relayed between controller and extension). */
-  WEBRTC_SIGNAL: 'webrtc-signal',
   PING: 'ping',
   PONG: 'pong',
 } as const;
-
-/** A single WebRTC signaling message relayed between the controller (Athens) and the extension. */
-export interface WebRtcSignal {
-  sessionId?: string;
-  /** request: viewer wants the stream · stop: viewer left · offer/answer/ice: SDP/ICE exchange · error: capture failed. */
-  kind: 'request' | 'stop' | 'offer' | 'answer' | 'ice' | 'error';
-  /** Human-readable reason when kind === 'error'. */
-  message?: string;
-  /** Tab to capture (sent with 'request'). */
-  tabId?: number;
-  /** RTCSessionDescriptionInit for offer/answer, or RTCIceCandidateInit for ice. */
-  data?: unknown;
-}
 
 /** Lifecycle phases reported while an injection plan is being applied. */
 export type ApplyPhase =
@@ -218,6 +206,7 @@ export type ApplyPhase =
   | 'files' // uploading résumé / file inputs (top priority, runs first)
   | 'fields' // filling the remaining form fields
   | 'submit-wait' // counting down before the auto-submit click
+  | 'verify-wait' // counting down after submit before reading the result page
   | 'submitted' // submit / apply / next was clicked
   | 'done' // apply finished (no submit control found)
   | 'error';
@@ -227,7 +216,7 @@ export interface ApplyProgress {
   sessionId?: string;
   phase: ApplyPhase;
   message: string;
-  /** Seconds remaining during the `submit-wait` countdown. */
+  /** Seconds remaining during the `submit-wait` or `verify-wait` countdown. */
   secondsLeft?: number;
   /** Steps applied so far / total, for a progress bar. */
   appliedSteps?: number;
@@ -280,9 +269,20 @@ export const ACTION_DEFINITIONS: Record<
   set_attribute: { label: 'Set attribute', description: 'Set attribute value', needsTarget: true },
   navigate: { label: 'Navigate', description: 'Open URL in tab', needsTarget: false },
   open_tab: { label: 'Open tab', description: 'Open URL in a new tab and wait for load', needsTarget: false },
+  close_tab: { label: 'Close tab', description: 'Close the target tab', needsTarget: false },
   reload: { label: 'Reload', description: 'Reload current tab', needsTarget: false },
   screenshot: { label: 'Screenshot', description: 'Capture visible tab', needsTarget: false },
   execute_script: { label: 'Execute script', description: 'Run JS in page context', needsTarget: false },
+  read_page_state: {
+    label: 'Read page state',
+    description: 'Read page innerText and control count after submit (CSP-safe via chrome.scripting)',
+    needsTarget: false,
+  },
+  fill_verification_code: {
+    label: 'Fill verification code',
+    description: 'Fill an emailed one-time/verification code into the page code inputs and submit (CSP-safe)',
+    needsTarget: false,
+  },
   fetch_actionable_tree: {
     label: 'Fetch actionable tree',
     description:

@@ -13,19 +13,21 @@ import {
 	getJobSkillAnalysis,
 	getJobById,
 	getJobSkillRadar,
-	getJobEmbeddingsStatus,
-	startJobEmbeddings,
-	stopJobEmbeddings,
 } from "../controllers/jobController.js";
+import {
+	getSkillExtractStatus,
+	startSkillExtract,
+	stopSkillExtract,
+} from "../controllers/jobSkillExtractController.js";
 
 const router = express.Router();
 
 router.post('/jobs', createJob);
 router.post('/jobs/list', getJobs);
 router.post('/jobs/list/counts', getJobStatusCounts);
-router.get('/jobs/embeddings/status', getJobEmbeddingsStatus);
-router.post('/jobs/embeddings/start', startJobEmbeddings);
-router.post('/jobs/embeddings/stop', stopJobEmbeddings);
+router.get('/jobs/skill-extract/status', getSkillExtractStatus);
+router.post('/jobs/skill-extract/start', startSkillExtract);
+router.post('/jobs/skill-extract/stop', stopSkillExtract);
 router.get('/jobs/:id', getJobById);
 router.get('/jobs/:id/skill-radar', getJobSkillRadar);
 router.post('/jobs/:id/analyze', analyzeJob);

@@ -15,14 +15,9 @@ import {
 	JOB_DETAIL_PROJECTION,
 } from '../services/jobListQuery.js';
 import { queueJobAnalysis, getJobAnalysisStatus } from '../services/jobAnalysis/index.js';
-import { matchJobsForApplier } from '../services/matching/matchingService.js';
+import { listRecommendedJobs } from '../services/matching/matchScoreReader.js';
 import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../services/matching/skillIndex.js';
-import { upsertJobEmbeddingAsync } from '../services/embeddings/embeddingIngest.js';
-import {
-	getJobEmbeddingStatus,
-	startJobEmbeddingSession,
-	stopJobEmbeddingSession,
-} from '../services/embeddings/jobEmbeddingWorker.js';
+import { deleteScoresForJobs } from '../services/matching/matchScoreStore.js';
 import { buildJobSkillRadar } from '../services/jobSkillRadarService.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
@@ -142,12 +137,15 @@ export async function createJob(req, res) {
 
 		// MongoDB only on ingest — world graph enrichment runs from Knowledge Graph page.
 		job.skillAnalysis = { status: 'pending' };
+		// Match-score worker fans this job out to every user profile.
+		job.matchScoreStatus = 'pending';
+		// Queue for AI skill extraction (run manually from the Extract skills button).
+		job.aiSkillStatus = 'pending';
 		Object.assign(job, attachStaticScoreFields({ ...job, skills }));
 
 		const result = jobsCollection ? await jobsCollection.insertOne(job) : null;
 
 		if (result?.insertedId) {
-			upsertJobEmbeddingAsync(String(result.insertedId));
 			void indexJobInRedis(String(result.insertedId), job.skillsNormalized, job.skillTokens).catch(() => {});
 		}
 
@@ -220,7 +218,9 @@ export async function removeJobsForRule(req, res) {
 			});
 		}
 
+		const doomed = await jobsCollection.find(query, { projection: { _id: 1 } }).toArray();
 		const result = await jobsCollection.deleteMany(query);
+		void deleteScoresForJobs(doomed.map((d) => d._id)).catch(() => {});
 		return res.json({ success: true, deletedCount: result.deletedCount });
 	} catch (err) {
 		console.error(`DELETE /api/jobs/rule/${req.params.name} error`, err);
@@ -299,11 +299,12 @@ export async function getJobs(req, res) {
 		let total;
 		let recommendationFallback = false;
 		let recommendationReason = null;
+		let recommendationWarming = false;
 		let catalogTotal = null;
 		const useRecommendation = sort === 'recommended' && applierName;
 
 		if (useRecommendation) {
-			const result = await matchJobsForApplier({
+			const result = await listRecommendedJobs({
 				applierName,
 				mongoQuery: query,
 				scoreFilters,
@@ -315,6 +316,7 @@ export async function getJobs(req, res) {
 				docs = result.docs;
 				total = result.total;
 				catalogTotal = result.catalogTotal ?? total;
+				recommendationWarming = Boolean(result.recommendationWarming);
 			} else {
 				recommendationFallback = true;
 				recommendationReason = result.reason || 'unknown';
@@ -360,6 +362,7 @@ export async function getJobs(req, res) {
 			data: docs,
 			recommendationFallback,
 			recommendationReason,
+			recommendationWarming,
 			catalogTotal,
 			pagination: {
 				total,
@@ -492,6 +495,7 @@ export async function removeJobs(req, res) {
 		}).filter(Boolean);
 
 		const result = await jobsCollection.deleteMany({ _id: { $in: objectIds } });
+		void deleteScoresForJobs(objectIds).catch(() => {});
 		return res.json({ success: true, deletedCount: result.deletedCount });
 	} catch (err) {
 		console.error('POST /api/jobs/remove error', err);
@@ -603,44 +607,6 @@ export async function getJobSkillRadar(req, res) {
 				: 500;
 		console.error(`GET /api/jobs/${req.params.id}/skill-radar error`, err);
 		return res.status(status).json({ success: false, error: err.message });
-	}
-}
-
-/** Count jobs missing embeddings + optional active backfill session. */
-export async function getJobEmbeddingsStatus(req, res) {
-	try {
-		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
-		const status = await getJobEmbeddingStatus();
-		return res.json({ success: true, ...status });
-	} catch (err) {
-		console.error('GET /api/jobs/embeddings/status error', err);
-		return res.status(500).json({ success: false, error: err.message });
-	}
-}
-
-/** Embed all jobs that are not yet indexed in Qdrant. */
-export async function startJobEmbeddings(req, res) {
-	try {
-		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
-		const limit = req.body?.limit;
-		const result = await startJobEmbeddingSession({ limit });
-		const statusCode = result.started ? 202 : 200;
-		return res.status(statusCode).json({ success: true, ...result });
-	} catch (err) {
-		const status = err.message.includes('already running') ? 409 : 503;
-		console.error('POST /api/jobs/embeddings/start error', err);
-		return res.status(status).json({ success: false, error: err.message });
-	}
-}
-
-/** Stop an in-progress job embedding session. */
-export async function stopJobEmbeddings(req, res) {
-	try {
-		const result = stopJobEmbeddingSession();
-		return res.json({ success: true, ...result });
-	} catch (err) {
-		console.error('POST /api/jobs/embeddings/stop error', err);
-		return res.status(500).json({ success: false, error: err.message });
 	}
 }
 

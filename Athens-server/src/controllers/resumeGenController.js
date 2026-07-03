@@ -11,6 +11,7 @@ import {
   verifyKey,
   addUsage,
   EMPTY_USAGE,
+  resolveDefaultModel,
 } from "../services/llm/llmService.js";
 
 const cleanString = (v) => String(v ?? "").trim();
@@ -134,16 +135,18 @@ function buildContextBlock(identity) {
 // Exported so the auto-bid agent path (agentResumeGenService) runs the SAME core
 // as the Editor — one implementation, no drift.
 export async function prepareGeneration(body) {
-  const providerId = PROVIDERS[body.provider] ? body.provider : "openai";
-  const model = String(body.model || "").trim();
   const steps = Array.isArray(body.steps) ? body.steps : [];
-  if (!model) return { ok: false, status: 400, error: "model is required" };
   if (!steps.length) return { ok: false, status: 400, error: "steps are required" };
 
+  // Provider + model always come from the profile's default (Settings → Profile),
+  // never from the request — there is no per-generation model picker anymore.
   const profile = await findProfile(body.applierName);
-  const apiKey = apiKeyFor(profile, providerId);
+  const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
-    return { ok: false, status: 400, error: `No ${getProvider(providerId).label} API key configured in profile.` };
+    return { ok: false, status: 400, error: `No ${getProvider(providerId).label} API key configured. Add it and set a default model in Settings → Profile.` };
+  }
+  if (!model) {
+    return { ok: false, status: 400, error: "No default model configured. Set one in Settings → Profile." };
   }
 
   // Exactly one final step per purpose that appears.
@@ -202,6 +205,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
       jsonMode: isFinal,
       cacheKey: `resume-${applierName || "anon"}`, // stable → prompt-cache the prefix
       reasoningEffort,
+      feature: `resume-generate:${step.purpose || step.kind || "step"}`,
     });
     messages.push({ role: "assistant", content });
     usage = addUsage(usage, stepUsage);
@@ -727,6 +731,98 @@ export async function deleteGeneration(req, res) {
   }
 }
 
+/** GET /personal/agent-job-resume/:jobId/pdf?applierName= — stream on-disk draft PDF for Agent preview. */
+export async function getAgentJobResumePdf(req, res) {
+  try {
+    const applierName = cleanString(req.query?.applierName);
+    const jobId = cleanString(req.params?.jobId);
+    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
+    if (!jobId) return res.status(400).json({ success: false, error: "jobId is required" });
+
+    const { resolveAgentJobDraftPdf } = await import("../services/agentResumeGenService.js");
+    const draft = await resolveAgentJobDraftPdf({ applierName, jobId });
+    if (!draft?.buffer?.length) {
+      return res.status(404).json({ success: false, error: "No draft PDF for this job yet — generate résumé first" });
+    }
+
+    const safeName = applierName.replace(/[^\w.\-()+ ]+/g, "_").trim() || "resume";
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}-${jobId.slice(0, 8)}.pdf"`);
+    return res.end(draft.buffer);
+  } catch (err) {
+    console.warn("GET /api/personal/agent-job-resume/:jobId/pdf error:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+/**
+ * POST /personal/agent-job-resumes/status — batch check which jobs already have
+ * a generated résumé for this applier. Body: { applierName, jobIds: [] }.
+ * Returns { success, jobIds: [ids with an existing résumé] }.
+ */
+export async function getAgentJobResumesStatus(req, res) {
+  try {
+    const applierName = cleanString(req.body?.applierName);
+    const jobIds = Array.isArray(req.body?.jobIds) ? req.body.jobIds : [];
+    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
+
+    const { findAgentJobResumeStatuses } = await import("../services/agentResumeGenService.js");
+    const found = await findAgentJobResumeStatuses(applierName, jobIds);
+    return res.json({ success: true, jobIds: found });
+  } catch (err) {
+    console.warn("POST /api/personal/agent-job-resumes/status error:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+/** POST /personal/resume-generate/for-agent-job/stream — SSE progress for agent résumé generation. */
+export async function generateResumeForAgentJobStream(req, res) {
+  const body = req.body || {};
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const applierName = cleanString(body.applierName);
+    const jobId = cleanString(body.jobId);
+    const jobDescription = cleanString(body.jobDescription);
+    if (!applierName) {
+      send("error", { error: "applierName is required" });
+      return res.end();
+    }
+    if (!jobId) {
+      send("error", { error: "jobId is required" });
+      return res.end();
+    }
+    if (!jobDescription) {
+      send("error", { error: "jobDescription is required" });
+      return res.end();
+    }
+
+    const { ensureAgentJobResume } = await import("../services/agentResumeGenService.js");
+    const result = await ensureAgentJobResume({
+      applierName,
+      jobId,
+      jobDescription,
+      forceRegenerate: Boolean(body.forceRegenerate),
+      onStep: (evt) => send("step", evt),
+    });
+    send("done", result);
+  } catch (err) {
+    const status = Number.isInteger(err?.status) ? err.status : 500;
+    console.warn(`POST /api/personal/resume-generate/for-agent-job/stream failed (${status}): ${err.message}`);
+    send("error", { error: err.message, status });
+  }
+  res.end();
+}
+
 /** POST /personal/resume-generate/for-agent-job — agent autobid per-job resume (reuse or generate). */
 export async function generateResumeForAgentJob(req, res) {
   try {
@@ -738,9 +834,13 @@ export async function generateResumeForAgentJob(req, res) {
     if (!jobId) return res.status(400).json({ success: false, error: "jobId is required" });
     if (!jobDescription) return res.status(400).json({ success: false, error: "jobDescription is required" });
 
-    const modelOverride = cleanString(body.model);
     const { ensureAgentJobResume } = await import("../services/agentResumeGenService.js");
-    const result = await ensureAgentJobResume({ applierName, jobId, jobDescription, modelOverride });
+    const result = await ensureAgentJobResume({
+      applierName,
+      jobId,
+      jobDescription,
+      forceRegenerate: Boolean(body.forceRegenerate),
+    });
     return res.json({ success: true, ...result });
   } catch (err) {
     const status = Number.isInteger(err?.status) ? err.status : 500;

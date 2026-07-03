@@ -47,10 +47,22 @@ function deriveOp(action: FieldAction, controlType: ControlType): InjectionStepO
 
 function describeStep(step: InjectionStep, index: number): string {
   const head = `${index + 1}. ${step.op} "${step.label}"`;
-  if (step.op === 'attachFile') return `${head} → default résumé`;
+  if (step.op === 'attachFile') return `${head} → tailored PDF`;
   if (step.op === 'setChecked') return `${head} = ${step.checked ? 'checked' : 'unchecked'}`;
   if (step.op === 'click') return head;
   return `${head} = ${step.value ?? ''}`;
+}
+
+/** Only create attachFile when Analyze chose FileUpload with shouldSkip No (tailored PDF). */
+function fileUploadStep(
+  id: string,
+  label: string,
+  field: FieldActionPlan | undefined,
+  control: InjectionStep['control'],
+): InjectionStep | null {
+  if (!field || field.shouldSkip === 'Yes') return null;
+  if (field.action !== 'FileUpload') return null;
+  return { id, label, op: 'attachFile', control, value: field.value };
 }
 
 export function buildFormInjectionPlan(options: BuildInjectionPlanOptions): InjectionPlanResult {
@@ -59,15 +71,14 @@ export function buildFormInjectionPlan(options: BuildInjectionPlanOptions): Inje
   const steps: InjectionStep[] = [];
   const fieldPreviews: FieldInjectionPreview[] = [];
 
-  // Iterate the tree (not just the analysis output) so file uploads are never
-  // missed: every file control gets an attachFile step regardless of whether the
-  // analysis included it or marked it skip — the résumé is top priority.
   tree.forEach((group, groupIdx) => {
     group.children.forEach((entry, childIdx) => {
       const id = `${groupIdx}:${childIdx}`;
+      const label = entry.target || id;
 
       if (entry.controlType === 'file') {
-        steps.push({ id, label: entry.target || id, op: 'attachFile', control: entry.control });
+        const step = fileUploadStep(id, label, planById.get(id), entry.control);
+        if (step) steps.push(step);
         return;
       }
 

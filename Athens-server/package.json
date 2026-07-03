@@ -9,15 +9,10 @@
 		"test:matching": "node --test ../packages/shared/src/pricing.test.mjs ../packages/shared/src/matching.test.mjs",
 		"migrate": "node src/db/migration.js",
 		"migrate-passwords": "node src/db/migratePasswords.js",
-		"backfill-job-embeddings": "node src/scripts/backfillJobEmbeddings.js",
-		"backfill-resume-embeddings": "node src/scripts/backfillResumeEmbeddings.js",
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
-		"reset-job-embeddings": "node src/scripts/resetJobEmbeddings.js",
-		"ollama-pull-embed": "ollama pull mxbai-embed-large",
-		"qdrant:start": "bash scripts/start-qdrant.sh",
-		"qdrant:stop": "bash scripts/stop-qdrant.sh",
-		"qdrant:start-native": "bash scripts/start-qdrant-local.sh",
-		"qdrant:stop-native": "bash scripts/stop-qdrant-local.sh"
+		"backfill-match-scores": "node src/scripts/backfillMatchScores.js",
+		"reset-skills": "node src/scripts/resetSkills.js",
+		"remove-embeddings": "node src/scripts/removeEmbeddings.js"
 	},
 	"dependencies": {
 		"@nextoffer/shared": "file:../packages/shared",

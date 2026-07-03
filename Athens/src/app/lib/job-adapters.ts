@@ -109,6 +109,16 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
       ? (doc.skillAnalysis as Job["skillAnalysis"])
       : undefined;
 
+  const aiSkills = Array.isArray(doc.aiSkills)
+    ? (doc.aiSkills as { name?: unknown; category?: unknown; requirement?: unknown }[])
+        .map((row) => ({
+          name: String(row?.name ?? "").trim(),
+          category: String(row?.category ?? "hard"),
+          requirement: Math.min(5, Math.max(1, Number(row?.requirement) || 1)),
+        }))
+        .filter((row) => row.name)
+    : undefined;
+
   const skills = Array.isArray(doc.skills) ? doc.skills.map(String).filter(Boolean) : [];
   const tags = Array.isArray(doc.tags) ? doc.tags.map(String).filter(Boolean) : [];
   const applicantsObj = doc.applicants as { text?: string; count?: number } | undefined;
@@ -153,6 +163,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     bestResumeTechStack,
     bestResumeId,
     skillHighlights,
+    aiSkills,
   };
 }
 
@@ -170,6 +181,7 @@ export function mergeListJobMetadata(listJob: Job, detailJob: Job): Job {
     bestResumeTechStack: listJob.bestResumeTechStack ?? detailJob.bestResumeTechStack,
     bestResumeId: listJob.bestResumeId ?? detailJob.bestResumeId,
     skillHighlights: listJob.skillHighlights?.length ? listJob.skillHighlights : detailJob.skillHighlights,
+    aiSkills: detailJob.aiSkills?.length ? detailJob.aiSkills : listJob.aiSkills,
   };
 }
 

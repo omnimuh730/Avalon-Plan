@@ -7,7 +7,6 @@ import {
   mergeSkillsIntoPersonalInfo,
   rebuildProfileGraph,
 } from "./userKnowledgeGraph/index.js";
-import { syncEmbeddingsAfterResumeAnalysis } from "./embeddings/embeddingIngest.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
 
 function cleanString(v) {
@@ -177,7 +176,6 @@ export async function syncGeneratedResumeAfterRun({
     });
     await mergeSkillsIntoPersonalInfo(profile.map((s) => s.name));
     await rebuildProfileGraph(ownerName);
-    await syncEmbeddingsAfterResumeAnalysis(resumeIdStr, ownerName, { applierName: ownerName });
     invalidateRecommendationCache(ownerName);
   }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 import {
   DEFAULT_SESSION_ID,
   SOCKET_EVENTS,
@@ -20,14 +20,27 @@ import { analyzeFormFields } from "../avalon/ai/analyze-form";
 import { buildApplyInjectionPlanPayload } from "../avalon/ai/apply-injection-plan";
 import { buildFormInjectionPlan } from "../avalon/ai/generate-injection-plan";
 import type { FieldActionPlan, FormAnalysisResult } from "../avalon/ai/types";
-import { avalonRelayUrl } from "../../../services/agentApi";
-import { applyToJob, fetchJobDescription, generateJobResume } from "../../../api/jobs";
-import { requestVerificationCode } from "../../../api/mail";
+import {
+  avalonRelayUrl,
+  createAvalonSocket,
+  persistAvalonSessionId,
+  storedAvalonSessionId,
+} from "../../../services/agentApi";
+import { applyToJob, fetchJobDescription, generateJobResumeStream, type ResumeSectionPurpose } from "../../../api/jobs";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
+import { verifyApplyOutcome, type ApplyVerifyResult } from "../avalon/ai/verify-apply";
+import { validateJobPage, type PageValidityResult } from "../avalon/ai/validate-page";
+import { postApplyLog, type ApplyLogEvent } from "../../../api/avalonLog";
+import { requestVerificationCode } from "../../../api/mail";
+
+/** Short unique id for one apply run (used to correlate the debug log file + Mongo doc). */
+function newRunId(): string {
+  return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
 /** Max self-healing retries for a single failed apply (per Phase C). */
-const MAX_RECOVERY_ATTEMPTS = 10;
+const MAX_RECOVERY_ATTEMPTS = 4;
 
 /**
  * Generic cues that a page is asking for an emailed verification / one-time code
@@ -44,18 +57,85 @@ interface StepRunResult {
   error?: string;
 }
 
+/**
+ * Result of the manual "Verify result" step (pipeline step 6). Three outcomes:
+ *  - success:    the application was submitted/received.
+ *  - failed:     rejected or unconfirmed — `reason` explains why.
+ *  - additional: an extra step is required (OTP / email verification code / link).
+ */
+export interface ManualVerifyResult {
+  kind: "success" | "failed" | "additional";
+  reason: string;
+  detail?: string;
+}
+
+/** One AI request's token + cost usage, for the per-job usage panel. */
+export interface UsageEntry {
+  label: string;
+  at: string;
+  promptTokens: number;
+  cachedTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+/** Loose usage shape accepted from any AI call (ai-bff, résumé gen, analyze). */
+type UsageLike =
+  | {
+      promptTokens?: number;
+      cachedTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+      costUsd?: number;
+      cost?: { totalUsd?: number } | number;
+    }
+  | undefined
+  | null;
+
 /** A generated per-job résumé held for attach + preview. */
 export interface JobResume {
   jobId: string;
   file: AttachedFile;
   reused: boolean;
   generationId: string | null;
+  resumePdfPath?: string | null;
 }
 
 /** Manual/link-only jobs have no Mongo id or JD, so no tailored résumé is generated. */
 function isManualJob(job: QueuedJob): boolean {
   return job.source === "manual" || job.id.startsWith("manual:");
 }
+
+  /** Read a suggested pipeline restart step from verify guidance (language/numbers only). */
+export function parseRetryPipelineStep(detail?: string, reason?: string): number {
+  const text = `${detail ?? ""} ${reason ?? ""}`.toLowerCase();
+  const explicit = text.match(/\b(?:re-?run|retry|from)\s*(?:step\s*)?([2-8])\b/);
+  if (explicit) return Number(explicit[1]);
+  const markers = [...text.matchAll(/\b([5-8])\s*·/g)].map((m) => Number(m[1]));
+  if (markers.length) return Math.min(...markers);
+  if (/\bscan\b/.test(text) && /\banaly/.test(text)) return 5;
+  if (/verify again/.test(text)) return 8;
+  return 5;
+}
+
+const PIPELINE_AUTO_MAX_CYCLES = 4;
+/** Grace period after submit / OTP fill / inbox poll (Greenhouse OTP flow). */
+const VERIFY_RESULT_WAIT_MS = 10_000;
+const OTP_STEP_WAIT_MS = 10_000;
+/** How many times to poll Gmail before giving up on a Greenhouse OTP. */
+const OTP_FETCH_MAX_ATTEMPTS = 5;
+
+/**
+ * When step 8 · Verify result is not "success" we loop, but the recovery differs by
+ * cause:
+ *  - "additional" (a security/verification code page appeared) → run the OTP flow;
+ *    never re-scan (that would wipe the code boxes).
+ *  - "failed" (something else — e.g. a missing/next form) → re-run 5 · Scan →
+ *    6 · Analyze → 7 · Apply.
+ * Bounded to this many retries to avoid spinning forever.
+ */
+const MAX_VERIFY_RETRIES = 3;
 
 export interface AvalonLogEntry {
   id: string;
@@ -72,9 +152,43 @@ export interface QueuedJob {
   source: string;
 }
 
+/** Greenhouse-only OTP automation — other ATS platforms stay manual at step 8. */
+function isGreenhouseJob(job: QueuedJob | null | undefined): boolean {
+  return /greenhouse\.io/i.test(job?.url ?? "");
+}
+
+/** Company name for OTP inbox matching — job.company, else Greenhouse ?for= slug. */
+function greenhouseOtpCompanyName(job: QueuedJob | null | undefined): string {
+  const fromJob = job?.company?.trim() || "";
+  if (fromJob) return fromJob;
+  const slug = job?.url?.match(/[?&]for=([^&]+)/i)?.[1];
+  return slug ? decodeURIComponent(slug).replace(/\+/g, " ") : "";
+}
+
+/** Per-job manual pipeline progress (steps 2–8). */
+export interface JobPipelineState {
+  opened: boolean;
+  validated: boolean;
+  resumeReady: boolean;
+  scanned: boolean;
+  analyzed: boolean;
+  applied: boolean;
+  verified: boolean;
+}
+
+const EMPTY_PIPELINE: JobPipelineState = {
+  opened: false,
+  validated: false,
+  resumeReady: false,
+  scanned: false,
+  analyzed: false,
+  applied: false,
+  verified: false,
+};
+
 export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [serverUrl, setServerUrl] = useState(() => avalonRelayUrl());
-  const [sessionId, setSessionId] = useState("");
+  const [sessionId, setSessionId] = useState(() => storedAvalonSessionId());
   const [connected, setConnected] = useState(false);
   const [registered, setRegistered] = useState<RegisteredPayload | null>(null);
   const [peers, setPeers] = useState({ extension: false, controller: false });
@@ -97,18 +211,50 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const [jobQueue, setJobQueue] = useState<QueuedJob[]>([]);
   const [activeJobIndex, setActiveJobIndex] = useState(0);
   const [applyPhase, setApplyPhase] = useState<ApplyProgress | null>(null);
-  const [monitorMode, setMonitorMode] = useState<"webrtc" | "screenshot">("screenshot");
   const [appliedJobIds, setAppliedJobIds] = useState<Set<string>>(new Set());
   const [resumesByJobId, setResumesByJobId] = useState<Record<string, JobResume>>({});
   const [resumeJobId, setResumeJobId] = useState<string | null>(null);
+  const [generatingResume, setGeneratingResume] = useState(false);
+  const [generatingResumeJobId, setGeneratingResumeJobId] = useState<string | null>(null);
+  const [resumeGenerateStep, setResumeGenerateStep] = useState<string | null>(null);
+  const [resumeGeneratedSections, setResumeGeneratedSections] = useState<
+    Partial<Record<ResumeSectionPurpose, boolean>>
+  >({});
+  const [pipelineByJobId, setPipelineByJobId] = useState<Record<string, JobPipelineState>>({});
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const [verifyResult, setVerifyResult] = useState<ManualVerifyResult | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [tabValidity, setTabValidity] = useState<PageValidityResult | null>(null);
+  const [validatingTab, setValidatingTab] = useState(false);
+  const [usageRequests, setUsageRequests] = useState<UsageEntry[]>([]);
+  const [applyDone, setApplyDone] = useState(false);
+  const [autoRunning, setAutoRunning] = useState(false);
+  // "idle" | "running" | "paused" — drives the Pause/Resume/Stop controls.
+  const [autoRunState, setAutoRunState] = useState<"idle" | "running" | "paused">("idle");
 
   const socketRef = useRef<Socket | null>(null);
   const applyingRef = useRef(false);
+  const autoRunningRef = useRef(false);
+  // Interrupt controls for the auto-run/queue loops (checked between steps).
+  const autoAbortRef = useRef(false);
+  const autoPauseRef = useRef(false);
+  // Queue-level stop (survives per-job abort resets so "Apply all" fully halts).
+  const queueAbortRef = useRef(false);
   const pendingActionsRef = useRef<Map<string, (result: ActionResult) => void>>(new Map());
+  const resumeGenByJobIdRef = useRef<Map<string, Promise<AttachedFile>>>(new Map());
+  // Debug run-logging: current run id, its job, a buffered event list + flush timer.
+  const runIdRef = useRef<string | null>(null);
+  const runJobRef = useRef<QueuedJob | null>(null);
+  const runEventsRef = useRef<ApplyLogEvent[]>([]);
+  const runFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef(sessionId);
   const selectedTabIdRef = useRef(selectedTabId);
+  const jobQueueRef = useRef(jobQueue);
+  const activeJobIndexRef = useRef(activeJobIndex);
   sessionIdRef.current = sessionId;
   selectedTabIdRef.current = selectedTabId;
+  jobQueueRef.current = jobQueue;
+  activeJobIndexRef.current = activeJobIndex;
 
   const canExecute = connected && peers.extension;
   const executeDisabledReason = !connected
@@ -117,17 +263,145 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       ? `Extension not on session "${sessionId || DEFAULT_SESSION_ID}". Install the Avalon extension and match the session ID.`
       : null;
 
-  const pushLog = useCallback((message: string, success?: boolean) => {
-    setLogs((prev) => [
+  /** Flush buffered run-log events to the backend (local JSONL + Mongo). */
+  const flushRunLog = useCallback(
+    (extra?: { status?: string; finished?: boolean }) => {
+      const runId = runIdRef.current;
+      if (!runId) return;
+      const events = runEventsRef.current.splice(0);
+      if (!events.length && !extra?.status && !extra?.finished) return;
+      void postApplyLog({
+        runId,
+        applierName: applierName || undefined,
+        job: runJobRef.current ?? undefined,
+        events,
+        ...extra,
+      });
+    },
+    [applierName],
+  );
+
+  const scheduleRunFlush = useCallback(() => {
+    if (runFlushTimerRef.current) return;
+    runFlushTimerRef.current = setTimeout(() => {
+      runFlushTimerRef.current = null;
+      flushRunLog();
+    }, 800);
+  }, [flushRunLog]);
+
+  const pushLog = useCallback(
+    (message: string, success?: boolean) => {
+      setLogs((prev) => [
+        {
+          id: `${Date.now()}_${Math.random()}`,
+          at: new Date().toLocaleTimeString(),
+          message,
+          success,
+        },
+        ...prev.slice(0, 199),
+      ]);
+      // Mirror every UI log line into the active run's debug log.
+      if (runIdRef.current) {
+        runEventsRef.current.push({
+          at: new Date().toISOString(),
+          level: success === false ? "error" : success === true ? "success" : "info",
+          message,
+        });
+        scheduleRunFlush();
+      }
+    },
+    [scheduleRunFlush],
+  );
+
+  /** Record one AI request's token/cost usage for the per-job usage panel. */
+  const recordUsage = useCallback((label: string, u: UsageLike) => {
+    if (!u) return;
+    const costUsd =
+      u.costUsd ?? (typeof u.cost === "number" ? u.cost : u.cost?.totalUsd) ?? 0;
+    if ((u.totalTokens ?? 0) === 0 && costUsd === 0) return;
+    setUsageRequests((prev) => [
+      ...prev,
       {
-        id: `${Date.now()}_${Math.random()}`,
+        label,
         at: new Date().toLocaleTimeString(),
-        message,
-        success,
+        promptTokens: u.promptTokens ?? 0,
+        cachedTokens: u.cachedTokens ?? 0,
+        completionTokens: u.completionTokens ?? 0,
+        totalTokens: u.totalTokens ?? 0,
+        costUsd,
       },
-      ...prev.slice(0, 49),
     ]);
   }, []);
+
+  const markPipeline = useCallback((jobId: string, patch: Partial<JobPipelineState>) => {
+    if (!jobId) return;
+    setPipelineByJobId((prev) => ({
+      ...prev,
+      [jobId]: { ...EMPTY_PIPELINE, ...prev[jobId], ...patch },
+    }));
+  }, []);
+
+  /** Clear scan/analyze state when switching queue jobs (pipeline flags stay per job). */
+  const resetJobWorkspace = useCallback(() => {
+    setActionableTree(null);
+    setFormAnalysis(null);
+    setTreePage(null);
+    setTabValidity(null);
+    setVerifyResult(null);
+    setApplyDone(false);
+    setInjectionPlan(null);
+    setGeneratedScript("");
+    setFieldScriptsById({});
+    setSelectedTreeFieldId(null);
+  }, []);
+
+  const resetJobUsage = useCallback(() => setUsageRequests([]), []);
+
+  /** Begin a new debug run (starts a JSONL file + Mongo doc via the meta event). */
+  const startRunLog = useCallback(
+    (job: QueuedJob, meta: Record<string, unknown>) => {
+      const runId = newRunId();
+      runIdRef.current = runId;
+      runJobRef.current = job;
+      runEventsRef.current = [];
+      void postApplyLog({
+        runId,
+        applierName: applierName || undefined,
+        job,
+        meta: { startedAt: new Date().toISOString(), ...meta },
+        status: "running",
+      });
+      return runId;
+    },
+    [applierName],
+  );
+
+  /** Log a structured, data-rich event to the active run (no UI line). */
+  const logRunData = useCallback(
+    (phase: string, data: unknown, message?: string) => {
+      if (!runIdRef.current) return;
+      runEventsRef.current.push({
+        at: new Date().toISOString(),
+        level: "info",
+        phase,
+        message: message ?? `[${phase}]`,
+        data,
+      });
+      scheduleRunFlush();
+    },
+    [scheduleRunFlush],
+  );
+
+  /** Close out the current debug run and flush everything. */
+  const endRunLog = useCallback(
+    (status: string) => {
+      if (!runIdRef.current) return;
+      flushRunLog({ status, finished: true });
+      runIdRef.current = null;
+      runJobRef.current = null;
+    },
+    [flushRunLog],
+  );
 
   const emitAction = useCallback(
     (remoteAction: RemoteAction) => {
@@ -144,12 +418,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   const connect = useCallback(() => {
     socketRef.current?.removeAllListeners();
     socketRef.current?.disconnect();
-    const next = io(serverUrl, {
-      transports: ["websocket", "polling"],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-    });
+    const next = createAvalonSocket(serverUrl);
     socketRef.current = next;
 
     next.on("connect", () => {
@@ -219,6 +488,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           setTreePage(data.page);
           setSelectedTabId(data.page.tabId);
         }
+        const activeJob = jobQueueRef.current[activeJobIndexRef.current];
+        if (activeJob) {
+          markPipeline(activeJob.id, { scanned: true, analyzed: false, applied: false, verified: false });
+        }
         const groups = data.tree.length;
         const targets = data.tree.reduce((n, g) => n + g.children.length, 0);
         const pageHint = data.page?.url ? ` · ${data.page.url}` : "";
@@ -251,7 +524,17 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     });
 
     next.on(SOCKET_EVENTS.APPLY_PROGRESS, (progress: ApplyProgress) => {
-      setApplyPhase(progress);
+      setApplyPhase((prev) => {
+        if (
+          prev?.phase === "error" &&
+          progress.phase !== "error" &&
+          progress.phase !== "done" &&
+          progress.phase !== "submitted"
+        ) {
+          return prev;
+        }
+        return progress;
+      });
       pushLog(progress.message, progress.phase !== "error");
     });
 
@@ -263,7 +546,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         pushLog(`Screenshot failed: ${payload.error}`, false);
       }
     });
-  }, [pushLog, serverUrl]);
+  }, [markPipeline, pushLog, serverUrl]);
 
   useEffect(() => {
     connect();
@@ -272,6 +555,49 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       socketRef.current?.disconnect();
     };
   }, [connect]);
+
+  // Persist the configured session so a reload re-registers into the SAME
+  // session instead of falling back to the shared "default" one.
+  useEffect(() => {
+    persistAvalonSessionId(sessionId);
+  }, [sessionId]);
+
+  // If the user edits the session ID while connected, re-register onto the new
+  // session automatically (debounced) — otherwise commands keep routing through
+  // the previously registered session until they remember to hit Reconnect.
+  useEffect(() => {
+    if (!connected || !registered) return;
+    const desired = sessionId.trim() || DEFAULT_SESSION_ID;
+    if (desired === registered.sessionId) return;
+    const timer = setTimeout(() => {
+      const sock = socketRef.current;
+      if (!sock?.connected) return;
+      sock.emit(
+        SOCKET_EVENTS.REGISTER,
+        { role: "controller", sessionId: desired },
+        (response: RegisteredPayload) => {
+          setRegistered(response);
+          setPeers(response.peers);
+          pushLog(`Registered session ${response.sessionId}`);
+        },
+      );
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [connected, registered, sessionId, pushLog]);
+
+  /** Aggregated token + cost usage for the current job (total + per-request list). */
+  const jobUsage = useMemo(() => {
+    const sum = (k: keyof UsageEntry) =>
+      usageRequests.reduce((n, r) => n + (typeof r[k] === "number" ? (r[k] as number) : 0), 0);
+    return {
+      requests: usageRequests,
+      totalTokens: sum("totalTokens"),
+      promptTokens: sum("promptTokens"),
+      cachedTokens: sum("cachedTokens"),
+      completionTokens: sum("completionTokens"),
+      totalCostUsd: usageRequests.reduce((n, r) => n + r.costUsd, 0),
+    };
+  }, [usageRequests]);
 
   const actionPlanByFieldId = useMemo(() => {
     const map = new Map<string, FieldActionPlan>();
@@ -315,11 +641,163 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     });
   }, [emitAction, probeComboboxes, selectedTabId]);
 
+  const getActiveQueuedJob = useCallback((): QueuedJob | null => {
+    const queue = jobQueueRef.current;
+    const idx = activeJobIndexRef.current;
+    return queue[idx] ?? null;
+  }, []);
+
+  /**
+   * Generate (or reuse) a per-job résumé via the Resume Generator pipeline.
+   * Throws on failure — apply must abort (no bundled fallback).
+   */
+  const ensureJobResume = useCallback(
+    async (job: QueuedJob, options?: { forceRegenerate?: boolean }): Promise<AttachedFile> => {
+      if (!applierName) throw new Error("Select an applier profile before applying");
+      if (isManualJob(job)) throw new Error(`"${job.title}" is a manual job — résumé generation requires a saved job with description`);
+
+      if (!options?.forceRegenerate) {
+        const cached = resumesByJobId[job.id];
+        if (cached) {
+          setResumeJobId(job.id);
+          setResumeError(null);
+          markPipeline(job.id, { resumeReady: true });
+          return cached.file;
+        }
+      } else {
+        resumeGenByJobIdRef.current.delete(job.id);
+        setResumesByJobId((prev) => {
+          const next = { ...prev };
+          delete next[job.id];
+          return next;
+        });
+      }
+
+      const jd = await fetchJobDescription(job.id);
+      if (!jd) throw new Error(`No job description for "${job.title}" — cannot generate tailored résumé`);
+
+      pushLog(
+        options?.forceRegenerate
+          ? `Regenerating tailored résumé for "${job.title}" (Resume Generator + JD)…`
+          : `Generating tailored résumé for "${job.title}" (Resume Generator config)…`,
+        true,
+      );
+      const gen = await generateJobResumeStream(
+        {
+          applierName,
+          jobId: job.id,
+          jobDescription: jd,
+          forceRegenerate: options?.forceRegenerate,
+        },
+        (progress) => {
+          if (progress.stepLabel) setResumeGenerateStep(progress.stepLabel);
+          if (Object.keys(progress.completedSections).length > 0) {
+            setResumeGeneratedSections((prev) => ({ ...prev, ...progress.completedSections }));
+          }
+        },
+      );
+      if (!gen.reused) recordUsage(`Résumé generation${gen.model ? ` (${gen.model})` : ""}`, gen.usage);
+      const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
+      setResumesByJobId((prev) => ({
+        ...prev,
+        [job.id]: {
+          jobId: job.id,
+          file,
+          reused: gen.reused,
+          generationId: gen.generationId,
+          resumePdfPath: gen.resumePdfPath ?? null,
+        },
+      }));
+      setResumeJobId(job.id);
+      setResumeError(null);
+      markPipeline(job.id, { resumeReady: true });
+      const modelNote = gen.model ? ` · ${gen.provider ? `${gen.provider}/` : ""}${gen.model}` : "";
+      const pathNote = gen.resumePdfPath ? ` · saved ${gen.resumePdfPath}` : "";
+      pushLog(`Résumé ${gen.reused ? "reused" : "generated"} for "${job.title}"${modelNote}${pathNote}`, true);
+      return file;
+    },
+    [applierName, markPipeline, pushLog, resumesByJobId],
+  );
+
+  /** Start résumé generation for a queued job (deduped per job id). */
+  const startResumeForJob = useCallback(
+    (job: QueuedJob, options?: { forceRegenerate?: boolean }): Promise<AttachedFile | null> => {
+      if (isManualJob(job)) return Promise.resolve(null);
+      if (!options?.forceRegenerate) {
+        const inflight = resumeGenByJobIdRef.current.get(job.id);
+        if (inflight) return inflight.then((file) => file);
+      }
+
+      const promise = (async () => {
+        setGeneratingResume(true);
+        setGeneratingResumeJobId(job.id);
+        setResumeGenerateStep("Starting generation…");
+        setResumeGeneratedSections({});
+        setResumeJobId(job.id);
+        setResumeError(null);
+        try {
+          return await ensureJobResume(job, options);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "Résumé generation failed";
+          setResumeError(msg);
+          pushLog(msg, false);
+          throw error;
+        } finally {
+          setGeneratingResume(false);
+          setGeneratingResumeJobId(null);
+          setResumeGenerateStep(null);
+          resumeGenByJobIdRef.current.delete(job.id);
+        }
+      })();
+
+      resumeGenByJobIdRef.current.set(job.id, promise);
+      return promise;
+    },
+    [ensureJobResume, pushLog],
+  );
+
+  const generateActiveJobResume = useCallback(
+    async (forceRegenerate = false) => {
+      const job = getActiveQueuedJob();
+      if (!job) {
+        pushLog("Select a queued job first", false);
+        return;
+      }
+      if (isManualJob(job)) {
+        pushLog(`"${job.title}" is manual — résumé generation needs a MongoDB job with description`, false);
+        return;
+      }
+      try {
+        await startResumeForJob(job, { forceRegenerate });
+      } catch {
+        /* logged in startResumeForJob */
+      }
+    },
+    [getActiveQueuedJob, pushLog, startResumeForJob],
+  );
+
+  const getResumeForJob = useCallback(
+    (job: QueuedJob): AttachedFile | null => {
+      const entry = resumesByJobId[job.id];
+      return entry?.file?.base64 ? entry.file : null;
+    },
+    [resumesByJobId],
+  );
+
   const analyzeTree = useCallback(async () => {
     if (!actionableTree?.length) {
       pushLog("Fetch an actionable tree first", false);
       return;
     }
+    if (!treePage?.tabId) {
+      pushLog("No page context — scan the form on the target tab first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot execute", false);
+      return;
+    }
+
     setAnalyzing(true);
     try {
       const result = await analyzeFormFields({
@@ -327,6 +805,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         applicantContext: applicantContext || undefined,
       });
       setFormAnalysis(result);
+      recordUsage("Analyze form", result.usage);
       setGeneratedScript("");
       setFieldScriptsById({});
       setInjectionPlan(null);
@@ -337,12 +816,24 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         true,
       );
       buildPlanFromFields(result.fields);
+      const job = getActiveQueuedJob();
+      if (job) markPipeline(job.id, { analyzed: true });
     } catch (error) {
       pushLog(error instanceof Error ? error.message : "Analysis failed", false);
     } finally {
       setAnalyzing(false);
     }
-  }, [actionableTree, applicantContext, buildPlanFromFields, pushLog]);
+  }, [
+    actionableTree,
+    applicantContext,
+    buildPlanFromFields,
+    canExecute,
+    executeDisabledReason,
+    getActiveQueuedJob,
+    markPipeline,
+    pushLog,
+    treePage,
+  ]);
 
   const generatePlan = useCallback((): InjectionPlan | null => {
     if (!formAnalysis?.fields.length) {
@@ -351,57 +842,6 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     }
     return buildPlanFromFields(formAnalysis.fields);
   }, [buildPlanFromFields, formAnalysis?.fields.length, pushLog]);
-
-  const applyActionPlan = useCallback(async () => {
-    if (!actionableTree?.length || !formAnalysis?.fields.length) {
-      pushLog("Analyze the form first to build an action plan", false);
-      return;
-    }
-    if (!treePage?.tabId) {
-      pushLog("No page context — fetch the actionable tree on the target tab first", false);
-      return;
-    }
-    if (!canExecute) {
-      pushLog(executeDisabledReason ?? "Cannot execute", false);
-      return;
-    }
-
-    applyingRef.current = true;
-    setApplying(true);
-
-    try {
-      const plan = injectionPlan ?? generatePlan();
-      if (!plan || plan.steps.length === 0) {
-        applyingRef.current = false;
-        setApplying(false);
-        pushLog("No fill plan to apply", false);
-        return;
-      }
-
-      const payload = buildApplyInjectionPlanPayload(plan, treePage);
-      emitAction({
-        id: createActionId(),
-        tabId: treePage.tabId,
-        action: "apply_injection_plan",
-        payload: payload as unknown as Record<string, unknown>,
-      });
-      pushLog(`Applying fill plan (${plan.steps.length} steps) on tab ${treePage.tabId}…`);
-    } catch (error) {
-      applyingRef.current = false;
-      setApplying(false);
-      pushLog(error instanceof Error ? error.message : "Apply failed", false);
-    }
-  }, [
-    actionableTree?.length,
-    canExecute,
-    emitAction,
-    executeDisabledReason,
-    formAnalysis?.fields.length,
-    generatePlan,
-    injectionPlan,
-    pushLog,
-    treePage,
-  ]);
 
   const highlightControl = useCallback(
     (control: TargetSelector) => {
@@ -488,7 +928,270 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     [pushLog],
   );
 
-  /** Read the post-submit page (innerText + remaining control count) via execute_script. */
+  const runApplyWithPlan = useCallback(
+    async (plan: InjectionPlan, page: ActionablePageContext, resumeFile: AttachedFile) => {
+      applyingRef.current = true;
+      setApplying(true);
+      try {
+        const payload = buildApplyInjectionPlanPayload(plan, page, { autoSubmit: true, resumeFile });
+        const applyRes = await emitActionAsync(
+          {
+            id: createActionId(),
+            tabId: page.tabId,
+            action: "apply_injection_plan",
+            payload: payload as unknown as Record<string, unknown>,
+          },
+          180000,
+        );
+        if (!applyRes.success) throw new Error(applyRes.error || "Apply failed");
+        const applyData = applyRes.data as
+          | { submitted?: boolean; filesFound?: number; filesAttached?: number }
+          | undefined;
+        const filesFound = applyData?.filesFound ?? 0;
+        const filesAttached = applyData?.filesAttached ?? 0;
+        if (filesFound > 0 && filesAttached === 0) {
+          throw new Error(`Résumé was not attached (${filesAttached}/${filesFound})`);
+        }
+        if (filesFound > 0) {
+          pushLog(`Résumé uploaded to ${filesAttached}/${filesFound} field(s)`, filesAttached > 0);
+        }
+        pushLog(
+          applyData?.submitted ? "Fill plan applied and submitted" : "Fill plan applied — review before submit",
+          true,
+        );
+      } finally {
+        applyingRef.current = false;
+        setApplying(false);
+      }
+    },
+    [emitActionAsync, pushLog],
+  );
+
+  const applyActionPlan = useCallback(async () => {
+    if (!actionableTree?.length || !formAnalysis?.fields.length) {
+      pushLog("Analyze the form first to build an action plan", false);
+      return;
+    }
+    if (!treePage?.tabId) {
+      pushLog("No page context — fetch the actionable tree on the target tab first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot execute", false);
+      return;
+    }
+
+    const plan = injectionPlan ?? generatePlan();
+    if (!plan || plan.steps.length === 0) {
+      pushLog("No fill plan to apply", false);
+      return;
+    }
+
+    const job = getActiveQueuedJob();
+    if (!job || isManualJob(job)) {
+      pushLog("Select a queued MongoDB job with a drafted résumé", false);
+      return;
+    }
+
+    const resumeFile = getResumeForJob(job);
+    if (!resumeFile) {
+      pushLog("Generate tailored résumé first (step 1) — preview the PDF before applying", false);
+      return;
+    }
+
+    try {
+      await runApplyWithPlan(plan, treePage, resumeFile);
+      setApplyDone(true);
+      markPipeline(job.id, { applied: true });
+    } catch (error) {
+      pushLog(error instanceof Error ? error.message : "Apply failed", false);
+    }
+  }, [
+    actionableTree?.length,
+    canExecute,
+    executeDisabledReason,
+    formAnalysis?.fields.length,
+    generatePlan,
+    getActiveQueuedJob,
+    getResumeForJob,
+    injectionPlan,
+    markPipeline,
+    pushLog,
+    runApplyWithPlan,
+    treePage,
+  ]);
+
+  /** Open the active queue job URL in a new browser tab (step 2 — after résumé preview). */
+  /** Close a tab (best-effort) via the extension. */
+  const closeTab = useCallback(
+    async (tabId: number) => {
+      await emitActionAsync({ id: createActionId(), tabId, action: "close_tab", payload: {} }, 10000).catch(() => {});
+    },
+    [emitActionAsync],
+  );
+
+  /**
+   * Validity gate — after a job tab is opened, read the page + scan its structure
+   * and let the AI decide whether it's a live application form. Returns the scanned
+   * tree/page so callers can reuse them (no double scan). Probing is off (fast).
+   */
+  const validateOpenedTab = useCallback(
+    async (
+      tabId: number,
+      job: QueuedJob,
+    ): Promise<{ validity: PageValidityResult; tree: ActionableTree | null; pageCtx: ActionablePageContext | null }> => {
+      let text = "";
+      let controlCount = 0;
+      try {
+        const st = await emitActionAsync(
+          { id: createActionId(), tabId, action: "read_page_state", payload: {} },
+          15000,
+        );
+        const d = (st.data as { text?: string; controlCount?: number } | undefined) ?? {};
+        text = d.text ?? "";
+        controlCount = d.controlCount ?? 0;
+      } catch {
+        /* read failed → treated as low signal below */
+      }
+
+      let tree: ActionableTree | null = null;
+      let pageCtx: ActionablePageContext | null = null;
+      try {
+        const tr = await emitActionAsync(
+          { id: createActionId(), tabId, action: "fetch_actionable_tree", payload: { probeComboboxes: false } },
+          60000,
+        );
+        const d = (tr.data as { tree?: ActionableTree; page?: ActionablePageContext } | undefined) ?? {};
+        tree = d.tree ?? null;
+        pageCtx = d.page ?? null;
+      } catch {
+        /* scan failed */
+      }
+      const fieldCount = tree
+        ? tree.reduce((n, g) => n + g.children.filter((c) => c.controlType !== "link").length, 0)
+        : 0;
+
+      const validity = await validateJobPage({
+        text,
+        title: pageCtx?.title,
+        url: pageCtx?.url ?? job.url,
+        fieldCount,
+        controlCount,
+      });
+      recordUsage("Verify tab (AI)", validity.usage);
+      return { validity, tree, pageCtx };
+    },
+    [emitActionAsync, recordUsage],
+  );
+
+  /** Pipeline step 2 — open the active job's URL in a fresh tab (open only). */
+  const openActiveJob = useCallback(async () => {
+    const job = getActiveQueuedJob();
+    if (!job) {
+      pushLog("Select a queued job first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot open job — extension not connected", false);
+      return;
+    }
+    setTabValidity(null);
+    setVerifyResult(null);
+    setApplyDone(false);
+    resetJobUsage();
+    try {
+      const opened = await emitActionAsync({
+        id: createActionId(),
+        action: "open_tab",
+        payload: { url: job.url },
+      });
+      if (!opened.success) throw new Error(opened.error || "Failed to open tab");
+      const openedData = opened.data as { tabId?: number; page?: ActionablePageContext };
+      const tabId = openedData.tabId;
+      setActionableTree(null);
+      setFormAnalysis(null);
+      setInjectionPlan(null);
+      setGeneratedScript("");
+      setFieldScriptsById({});
+      setSelectedTreeFieldId(null);
+      setTabValidity(null);
+      setVerifyResult(null);
+      setApplyDone(false);
+      if (tabId) setSelectedTabId(tabId);
+      setTreePage(openedData.page ?? null);
+      markPipeline(job.id, {
+        opened: true,
+        validated: false,
+        scanned: false,
+        analyzed: false,
+        applied: false,
+        verified: false,
+      });
+      pushLog(`Opened "${job.title}" — verify it's a valid application form next`, true);
+    } catch (error) {
+      pushLog(error instanceof Error ? error.message : "Failed to open job", false);
+    }
+  }, [canExecute, emitActionAsync, executeDisabledReason, getActiveQueuedJob, markPipeline, pushLog]);
+
+  /**
+   * Pipeline step 3 — verify the opened tab is a live job-application form. If it's
+   * expired / not found / an error / not a form, close the tab and mark the job
+   * handled so the queue moves on (per the requested flow).
+   */
+  const validateActiveTab = useCallback(async () => {
+    const job = getActiveQueuedJob();
+    const tabId = treePage?.tabId ?? (typeof selectedTabId === "number" ? selectedTabId : undefined);
+    if (!tabId) {
+      pushLog("Open the job link first (step 2)", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot verify — extension not connected", false);
+      return;
+    }
+    setValidatingTab(true);
+    setTabValidity(null);
+    try {
+      const jobForCheck: QueuedJob =
+        job ?? { id: "", title: treePage?.title ?? "this application", company: "", url: treePage?.url ?? "", source: "" };
+      const { validity } = await validateOpenedTab(tabId, jobForCheck);
+      setTabValidity(validity);
+      if (validity.valid) {
+        if (job) markPipeline(job.id, { validated: true });
+        pushLog(`Valid application form — ${validity.reason}`, true);
+      } else {
+        pushLog(`Not a usable form (${validity.kind}) — ${validity.reason}; closing tab`, false);
+        await closeTab(tabId);
+        if (job) {
+          setAppliedJobIds((prev) => new Set(prev).add(job.id));
+          if (!isManualJob(job) && applierName) {
+            try {
+              await applyToJob(job.id, applierName);
+            } catch {
+              /* non-fatal */
+            }
+          }
+        }
+      }
+    } catch (error) {
+      pushLog(error instanceof Error ? error.message : "Validity check failed", false);
+    } finally {
+      setValidatingTab(false);
+    }
+  }, [
+    applierName,
+    canExecute,
+    closeTab,
+    executeDisabledReason,
+    getActiveQueuedJob,
+    markPipeline,
+    pushLog,
+    selectedTabId,
+    treePage,
+    validateOpenedTab,
+  ]);
+
+  /** Read the post-submit page (innerText + remaining control count) via CSP-safe read_page_state. */
   const readApplyPageState = useCallback(
     async (tabId: number, submitted: boolean) => {
       try {
@@ -496,22 +1199,63 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           {
             id: createActionId(),
             tabId,
-            action: "execute_script",
-            payload: {
-              source:
-                "const c=document.querySelectorAll('input:not([type=hidden]):not([disabled]),textarea,select,[contenteditable=\"true\"]');return {text:(document.body.innerText||'').slice(0,4000),controlCount:c.length};",
-            },
+            action: "read_page_state",
+            payload: {},
           },
           15000,
         );
-        const data = (res.data as { text?: string; controlCount?: number } | undefined) ?? {};
-        return { text: data.text ?? "", controlCount: data.controlCount ?? 0, submitted };
+        const data =
+          (res.data as { text?: string; controlCount?: number; otpInputs?: number } | undefined) ?? {};
+        return {
+          text: data.text ?? "",
+          controlCount: data.controlCount ?? 0,
+          otpInputs: data.otpInputs ?? 0,
+          submitted,
+        };
       } catch {
-        return { text: "", controlCount: 0, submitted };
+        return { text: "", controlCount: 0, otpInputs: 0, submitted };
       }
     },
     [emitActionAsync],
   );
+
+  /**
+   * setTimeout-based wait that bails out early (~250ms granularity) the moment the
+   * auto-run Stop is pressed (autoAbortRef). Returns false if aborted, true if it
+   * slept the whole duration. `onSecond` drives the countdown UI.
+   */
+  const waitUnlessAborted = useCallback(
+    async (ms: number, onSecond?: (secondsLeft: number) => void): Promise<boolean> => {
+      const stepMs = 250;
+      let remaining = ms;
+      let lastSecond = -1;
+      while (remaining > 0) {
+        if (autoAbortRef.current) return false;
+        const secondsLeft = Math.ceil(remaining / 1000);
+        if (onSecond && secondsLeft !== lastSecond) {
+          onSecond(secondsLeft);
+          lastSecond = secondsLeft;
+        }
+        const chunk = Math.min(stepMs, remaining);
+        await new Promise((resolve) => setTimeout(resolve, chunk));
+        remaining -= chunk;
+      }
+      return true;
+    },
+    [],
+  );
+
+  /** Pause after submit so the result page can load before step 8 reads it. */
+  const waitBeforeVerify = useCallback(async (): Promise<void> => {
+    await waitUnlessAborted(VERIFY_RESULT_WAIT_MS, (secondsLeft) =>
+      setApplyPhase({
+        phase: "verify-wait",
+        message: `Waiting for result page (${secondsLeft}s)…`,
+        secondsLeft,
+        at: Date.now(),
+      }),
+    );
+  }, [waitUnlessAborted]);
 
   /** Mark a (non-manual) queued job Applied in the pipeline and badge it locally. */
   const markJobApplied = useCallback(
@@ -527,7 +1271,839 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     [applierName, pushLog],
   );
 
-  /** Re-scan the page's actionable tree (probing on) for the recovery loop. */
+  /**
+   * Verify the post-submit outcome with the AI: wait for the page to settle after
+   * the submit click, read its innerText, and let the model decide success vs a
+   * verification-code step vs errors — far more reliable than phrase matching.
+   * Falls back to the heuristic classifier only if the AI call fails.
+   */
+  const verifyAfterSubmit = useCallback(
+    async (
+      tabId: number,
+      job: QueuedJob,
+      submitted: boolean,
+      settleMs = OTP_STEP_WAIT_MS,
+    ): Promise<{ verdict: ApplyVerifyResult; state: ApplyPageState }> => {
+      await emitActionAsync(
+        { id: createActionId(), tabId, action: "wait", payload: { ms: settleMs } },
+        settleMs + 5000,
+      ).catch(() => {});
+      const state = await readApplyPageState(tabId, submitted);
+      try {
+        const verdict = await verifyApplyOutcome({ pageText: state.text, jobTitle: job.title, controlCount: state.controlCount });
+        recordUsage("Verify result (AI)", verdict.usage);
+        pushLog(`Verify (AI): ${verdict.status} — ${verdict.reason}`, verdict.status === "success");
+        return { verdict, state };
+      } catch (error) {
+        const outcome = classifyApplyOutcome(state);
+        pushLog(
+          `Verify (AI failed, using heuristic): ${outcome.applied ? "success" : "unconfirmed"} — ${error instanceof Error ? error.message : error}`,
+          outcome.applied,
+        );
+        return {
+          verdict: { status: outcome.applied ? "success" : "incomplete", reason: outcome.reason },
+          state,
+        };
+      }
+    },
+    [emitActionAsync, pushLog, readApplyPageState],
+  );
+
+  /**
+   * Greenhouse-only: poll Gmail (via Athens-server IMAP) for the emailed OTP,
+   * fill the security-code inputs in the extension, and click submit. Each poll
+   * waits OTP_STEP_WAIT_MS so the verification email has time to arrive.
+   */
+  const handleGreenhouseOtpFlow = useCallback(
+    async (tabId: number, job: QueuedJob | null): Promise<{ filled: boolean; clicked: boolean }> => {
+      if (!applierName) {
+        pushLog("Greenhouse OTP: no applier profile — cannot read Gmail", false);
+        return { filled: false, clicked: false };
+      }
+
+      const companyName = greenhouseOtpCompanyName(job);
+      const jobTitle = job?.title?.trim() || "";
+
+      for (let attempt = 1; attempt <= OTP_FETCH_MAX_ATTEMPTS; attempt += 1) {
+        if (autoAbortRef.current) {
+          pushLog("Greenhouse OTP: stopped", false);
+          return { filled: false, clicked: false };
+        }
+        const slept = await waitUnlessAborted(OTP_STEP_WAIT_MS, (secondsLeft) =>
+          setApplyPhase({
+            phase: "verify-wait",
+            message: `Waiting for verification email (${attempt}/${OTP_FETCH_MAX_ATTEMPTS}, ${secondsLeft}s)…`,
+            secondsLeft,
+            at: Date.now(),
+          }),
+        );
+        if (!slept) {
+          pushLog("Greenhouse OTP: stopped while waiting for the verification email", false);
+          return { filled: false, clicked: false };
+        }
+
+        pushLog(`Greenhouse OTP: reading Gmail for "${applierName}" (attempt ${attempt}/${OTP_FETCH_MAX_ATTEMPTS})…`, true);
+        const inbox = await requestVerificationCode(applierName, {
+          companyName: companyName || undefined,
+          jobTitle: jobTitle || undefined,
+        });
+
+        // Surface EXACTLY what was read + how the AI decided, into the Activity feed.
+        if (inbox.emails?.length) {
+          pushLog(
+            `Greenhouse OTP: scanned ${inbox.emails.length} newest email(s) → ` +
+              inbox.emails
+                .map((e) => `#${e.index} ${e.from ? `${e.from.replace(/^.*<|>.*$/g, "").trim()} ` : ""}"${e.subject || "(no subject)"}"`)
+                .join("  |  "),
+            false,
+          );
+        } else {
+          pushLog(
+            `Greenhouse OTP: inbox returned ${inbox.scanned ?? 0} email(s), none listed — the verification email may not have synced into the mailbox yet`,
+            false,
+          );
+        }
+        if (inbox.debug) {
+          pushLog(
+            `Greenhouse OTP: AI ${
+              inbox.debug.aiFound ? `picked email #${inbox.debug.selectedIndex}` : "did not find a verification email"
+            }${inbox.debug.note ? ` — ${inbox.debug.note}` : ""}`,
+            Boolean(inbox.code),
+          );
+        }
+
+        if (!inbox.code) {
+          pushLog(`Greenhouse OTP: no code yet (attempt ${attempt}/${OTP_FETCH_MAX_ATTEMPTS}) — retrying`, false);
+          continue;
+        }
+
+        pushLog(`Greenhouse OTP: got code "${inbox.code}" from "${inbox.subject ?? "verification email"}"`, true);
+
+        if (autoAbortRef.current) {
+          pushLog("Greenhouse OTP: stopped before filling the code", false);
+          return { filled: false, clicked: false };
+        }
+        const fillRes = await emitActionAsync(
+          {
+            id: createActionId(),
+            tabId,
+            action: "fill_verification_code",
+            payload: { code: inbox.code, platform: "greenhouse" },
+          },
+          30_000,
+        );
+        const fillData = fillRes.data as { filled?: number; clicked?: boolean; mode?: string } | undefined;
+        if (!fillRes.success || !(fillData?.filled ?? 0)) {
+          pushLog(`Greenhouse OTP: could not fill code — ${fillRes.error ?? "inputs not found"}`, false);
+          return { filled: false, clicked: false };
+        }
+
+        pushLog(
+          `Greenhouse OTP: filled ${fillData?.filled} char(s) (${fillData?.mode ?? "unknown"})${
+            fillData?.clicked ? " and clicked submit" : ""
+          } — sent "${inbox.code}"`,
+          true,
+        );
+
+        await waitUnlessAborted(OTP_STEP_WAIT_MS, (secondsLeft) =>
+          setApplyPhase({
+            phase: "verify-wait",
+            message: `Waiting for OTP submit (${secondsLeft}s)…`,
+            secondsLeft,
+            at: Date.now(),
+          }),
+        );
+        return { filled: true, clicked: fillData?.clicked ?? false };
+      }
+
+      return { filled: false, clicked: false };
+    },
+    [applierName, emitActionAsync, pushLog, waitUnlessAborted],
+  );
+
+  /**
+   * Manual pipeline step 8 — classify post-submit outcome (success / failed / additional).
+   * Shared by the manual Verify button and auto-run orchestration.
+   */
+  const computeVerifyResult = useCallback(
+    async (tabId: number, job: QueuedJob | null): Promise<ManualVerifyResult> => {
+      const jobForVerify: QueuedJob =
+        job ?? { id: "", title: treePage?.title ?? "this application", company: "", url: treePage?.url ?? "", source: "" };
+      const { verdict, state } = await verifyAfterSubmit(tabId, jobForVerify, true, OTP_STEP_WAIT_MS);
+
+      if (verdict.status === "success") {
+        if (job) await markJobApplied(job);
+        return { kind: "success", reason: verdict.reason || "Application submitted." };
+      }
+
+      // Greenhouse OTP is detected from the DOM (the #email-verification fieldset /
+      // security-input boxes reported by read_page_state), NOT from the AI verdict —
+      // the model frequently mislabels the code page as "incomplete". Whenever those
+      // boxes are present we run the emailed-code flow and NEVER re-scan (which would
+      // wipe the already-filled form). The AI's needs_verification is kept as a
+      // secondary signal for safety.
+      const greenhouse = isGreenhouseJob(jobForVerify);
+      // DOM signal (rebuilt extension) OR the emailed-code prompt in the page text
+      // (works with the current extension) OR the AI's secondary guess.
+      const otpPageDetected =
+        (state.otpInputs ?? 0) > 0 ||
+        VERIFICATION_CUE.test(state.text) ||
+        verdict.status === "needs_verification";
+      if (greenhouse && otpPageDetected) {
+        pushLog(
+          `Greenhouse: verification code page detected (${state.otpInputs ?? 0} code box(es)) — fetching from Gmail…`,
+          true,
+        );
+        const otp = await handleGreenhouseOtpFlow(tabId, job);
+        if (autoAbortRef.current) {
+          return { kind: "failed", reason: "Stopped during Greenhouse OTP." };
+        }
+        if (otp.filled) {
+          pushLog("Greenhouse OTP submitted — re-running step 8 · Verify result…", true);
+          const { verdict: retryVerdict, state: retryState } = await verifyAfterSubmit(
+            tabId,
+            jobForVerify,
+            true,
+            OTP_STEP_WAIT_MS,
+          );
+          if (retryVerdict.status === "success") {
+            if (job) await markJobApplied(job);
+            return { kind: "success", reason: retryVerdict.reason || "Application submitted after OTP." };
+          }
+          // Still on the code page (wrong/expired code, or a fresh code was sent) →
+          // "additional" so the retry loop re-polls Gmail without re-scanning.
+          const stillOtp = (retryState.otpInputs ?? 0) > 0 || retryVerdict.status === "needs_verification";
+          return {
+            kind: stillOtp ? "additional" : "failed",
+            reason: retryVerdict.reason || "OTP submitted but application not confirmed.",
+            detail: stillOtp ? "OTP may be wrong or expired — will retry." : "Check the page or re-run verify.",
+          };
+        }
+        // Code not available yet (email in flight) → "additional" so the retry loop
+        // waits and polls again instead of re-scanning the form.
+        return {
+          kind: "additional",
+          reason: verdict.reason || "Verification code required.",
+          detail: "Waiting for the Greenhouse verification email — will retry.",
+        };
+      }
+
+      if (verdict.status === "needs_verification") {
+        // Non-Greenhouse: enter the code manually, then click Verify again.
+        return {
+          kind: "additional",
+          reason: verdict.reason || "Verification required.",
+          detail: "Enter the emailed verification code/link on the page, then click Verify again.",
+        };
+      }
+
+      return {
+        kind: "failed",
+        reason: verdict.reason || "Could not confirm the application.",
+        detail: "Re-run 5 · Scan DOM → 6 · Analyze → 7 · Apply, then 8 · Verify again.",
+      };
+    },
+    [handleGreenhouseOtpFlow, markJobApplied, pushLog, treePage?.title, treePage?.url, verifyAfterSubmit],
+  );
+
+  /**
+   * Re-run pipeline steps 5 · Scan → 6 · Analyze → 7 · Apply on the current tab,
+   * in-place (same primitives the auto-run uses). Returns true only if all three
+   * completed and the fill plan was applied/submitted. Used by the verify retry
+   * loop to advance multi-step application forms.
+   */
+  const rescanAnalyzeApply = useCallback(
+    async (tabId: number, job: QueuedJob | null): Promise<boolean> => {
+      // Step 5 — Scan DOM (with dropdown probe, same as the manual button).
+      const treeRes = await emitActionAsync(
+        { id: createActionId(), tabId, action: "fetch_actionable_tree", payload: { probeComboboxes } },
+        120000,
+      );
+      if (!treeRes.success) {
+        pushLog(treeRes.error || "Scan failed", false);
+        return false;
+      }
+      const scanData = treeRes.data as { tree?: ActionableTree; page?: ActionablePageContext };
+      const tree = scanData.tree ?? null;
+      if (!tree?.length) {
+        pushLog("Scan returned no fillable fields", false);
+        return false;
+      }
+      const pageCtx: ActionablePageContext = scanData.page ?? { tabId, url: job?.url ?? "" };
+      setActionableTree(tree);
+      setTreePage(pageCtx);
+      setFormAnalysis(null);
+      setInjectionPlan(null);
+      setGeneratedScript("");
+      setFieldScriptsById({});
+      setSelectedTreeFieldId(null);
+      if (job) markPipeline(job.id, { scanned: true, analyzed: false, applied: false, verified: false });
+      pushLog(`Scanned ${tree.length} section(s)`, true);
+
+      // Step 6 — Analyze form + build the fill plan.
+      let plan: InjectionPlan;
+      setAnalyzing(true);
+      try {
+        const result = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined });
+        setFormAnalysis(result);
+        recordUsage("Analyze form", result.usage);
+        const built = buildFormInjectionPlan({ tree, fields: result.fields });
+        plan = built.plan;
+        if (!plan.steps.length) {
+          pushLog("Analyze produced empty fill plan", false);
+          return false;
+        }
+        setInjectionPlan(plan);
+        setGeneratedScript(built.preview);
+        setFieldScriptsById(Object.fromEntries(built.fieldPreviews.map((entry) => [entry.id, entry.preview])));
+        if (job) markPipeline(job.id, { analyzed: true });
+        pushLog(`Action plan: ${result.fields.length} field(s)`, true);
+      } catch (error) {
+        pushLog(error instanceof Error ? error.message : "Analysis failed", false);
+        return false;
+      } finally {
+        setAnalyzing(false);
+      }
+
+      // Step 7 — Apply the fill plan (auto-submit).
+      const resumeFile = job ? getResumeForJob(job) : null;
+      if (!resumeFile?.base64) {
+        pushLog("Tailored résumé required to re-apply — generate it first (step 4)", false);
+        return false;
+      }
+      try {
+        await runApplyWithPlan(plan, pageCtx, resumeFile);
+        setApplyDone(true);
+        if (job) markPipeline(job.id, { applied: true });
+      } catch (error) {
+        pushLog(error instanceof Error ? error.message : "Apply failed", false);
+        return false;
+      }
+      return true;
+    },
+    [
+      applicantContext,
+      emitActionAsync,
+      getResumeForJob,
+      markPipeline,
+      probeComboboxes,
+      pushLog,
+      recordUsage,
+      runApplyWithPlan,
+    ],
+  );
+
+  /**
+   * Manual pipeline step 6 — "Verify result". Reads the current page and classifies
+   * the outcome into one of three results the user asked for: success / failed
+   * (with reason) / additional process required (OTP, email verification code/link).
+   *
+   * On a non-success outcome we retry by cause (bounded to MAX_VERIFY_RETRIES):
+   *  - "additional" (a security/verification code page) → re-run the OTP flow.
+   *  - "failed" (e.g. a missing/next form) → re-run 5 · Scan → 6 · Analyze → 7 · Apply.
+   */
+  const verifyActiveResult = useCallback(async () => {
+    const job = getActiveQueuedJob();
+    const tabId = treePage?.tabId ?? (typeof selectedTabId === "number" ? selectedTabId : undefined);
+    if (!tabId) {
+      pushLog("No tab to verify — open the job and scan the form first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot verify — extension not connected", false);
+      return;
+    }
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      await waitBeforeVerify();
+      let result = await computeVerifyResult(tabId, job);
+      setVerifyResult(result);
+      pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
+
+      // Recovery depends on WHY it wasn't success:
+      //  - "additional" → a security/verification code page appeared. Re-run the OTP
+      //    flow (computeVerifyResult re-detects the page, re-polls Gmail, fills, re-submits).
+      //    NEVER re-scan here — that would wipe the code boxes.
+      //  - "failed" → not a code page (e.g. a missing/next form). Re-run
+      //    5 · Scan → 6 · Analyze → 7 · Apply.
+      let attempt = 0;
+      while (result.kind !== "success" && attempt < MAX_VERIFY_RETRIES) {
+        attempt += 1;
+        if (result.kind === "additional") {
+          pushLog(
+            `Verify not success (verification code page) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-fetch OTP → step 8 (no re-scan)`,
+            false,
+          );
+          await waitBeforeVerify();
+          result = await computeVerifyResult(tabId, job);
+          setVerifyResult(result);
+          pushLog(
+            `Verify result (OTP retry ${attempt}/${MAX_VERIFY_RETRIES}): ${result.kind} — ${result.reason}`,
+            result.kind === "success",
+          );
+          continue;
+        }
+        pushLog(
+          `Verify not success (${result.kind}) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-running 5 · Scan → 6 · Analyze → 7 · Apply`,
+          false,
+        );
+        const advanced = await rescanAnalyzeApply(tabId, job);
+        if (!advanced) {
+          pushLog(`Retry ${attempt}/${MAX_VERIFY_RETRIES} could not complete Scan/Analyze/Apply — stopping retries`, false);
+          break;
+        }
+        await waitBeforeVerify();
+        result = await computeVerifyResult(tabId, job);
+        setVerifyResult(result);
+        pushLog(
+          `Verify result (retry ${attempt}/${MAX_VERIFY_RETRIES}): ${result.kind} — ${result.reason}`,
+          result.kind === "success",
+        );
+      }
+
+      if (result.kind === "success") {
+        if (job) markPipeline(job.id, { verified: true });
+        await closeTab(tabId); // application done → close the job tab
+      } else if (attempt >= MAX_VERIFY_RETRIES) {
+        pushLog(`Still not confirmed after ${MAX_VERIFY_RETRIES} retries — leaving for manual review`, false);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Verify failed";
+      setVerifyResult({ kind: "failed", reason: msg });
+      pushLog(msg, false);
+    } finally {
+      setApplyPhase((prev) => (prev?.phase === "verify-wait" ? null : prev));
+      setVerifying(false);
+    }
+  }, [
+    canExecute,
+    closeTab,
+    computeVerifyResult,
+    executeDisabledReason,
+    getActiveQueuedJob,
+    markPipeline,
+    pushLog,
+    rescanAnalyzeApply,
+    selectedTabId,
+    treePage,
+    waitBeforeVerify,
+  ]);
+
+  /** Explicitly mark the active queued job Applied to MongoDB with the current profile. */
+  const markActiveJobApplied = useCallback(async () => {
+    const job = getActiveQueuedJob();
+    if (!job) {
+      pushLog("Select a queued job to mark applied", false);
+      return;
+    }
+    if (isManualJob(job) || !applierName) {
+      pushLog("Manual/link-only jobs can't be marked applied in the pipeline", false);
+      return;
+    }
+    await markJobApplied(job);
+    // Marking applied is an explicit "done" — interrupt any running pipeline first.
+    autoAbortRef.current = true;
+    autoPauseRef.current = false;
+    await markJobApplied(job);
+    pushLog(`Marked "${job.title}" as Applied for ${applierName}`, true);
+    // Also tell the extension to close the job tab (the application is done).
+    const tabId = treePage?.tabId ?? (typeof selectedTabId === "number" ? selectedTabId : undefined);
+    if (tabId) {
+      await closeTab(tabId);
+      pushLog("Closed the job tab", true);
+    }
+  }, [applierName, closeTab, getActiveQueuedJob, markJobApplied, pushLog, selectedTabId, treePage]);
+
+  /** Pause the running auto-run/queue between steps. */
+  const pauseAutoRun = useCallback(() => {
+    if (!autoRunningRef.current) return;
+    autoPauseRef.current = true;
+    setAutoRunState("paused");
+    pushLog("Auto-run paused", true);
+  }, [pushLog]);
+
+  /** Resume a paused auto-run/queue. */
+  const resumeAutoRun = useCallback(() => {
+    if (!autoRunningRef.current) return;
+    autoPauseRef.current = false;
+    setAutoRunState("running");
+    pushLog("Auto-run resumed", true);
+  }, [pushLog]);
+
+  /** Stop the running auto-run/queue at the next step boundary. */
+  const stopAutoRun = useCallback(() => {
+    autoAbortRef.current = true;
+    autoPauseRef.current = false;
+    queueAbortRef.current = true;
+    pushLog("Stopping auto-run…", false);
+  }, [pushLog]);
+
+  /**
+   * Auto-run pipeline steps 2–7 in order (open → verify tab → résumé → scan →
+   * analyze → apply), then stop. Step 8 (Verify result) and Mark as Applied are
+   * deliberately manual: the human clicks Verify to check the outcome and, on
+   * failure, re-runs steps 5 · Scan → 6 · Analyze → 7 · Apply by hand. This keeps
+   * a person in the loop at the submit/verification boundary rather than looping
+   * automatically.
+   */
+  const runPipelineAuto = useCallback(async (jobOverride?: QueuedJob) => {
+    if (autoRunningRef.current || applyingRef.current) return;
+    const job = jobOverride ?? getActiveQueuedJob();
+    if (!job) {
+      pushLog("Select a queued job first", false);
+      return;
+    }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot auto-run — extension not connected", false);
+      return;
+    }
+    if (isManualJob(job)) {
+      pushLog(`"${job.title}" is manual — auto-run needs a MongoDB job with tailored résumé`, false);
+      return;
+    }
+
+    autoRunningRef.current = true;
+    autoAbortRef.current = false;
+    autoPauseRef.current = false;
+    setAutoRunning(true);
+    setAutoRunState("running");
+
+    const startStep = 2;
+    let cycle = 0;
+    let tabId: number | undefined;
+    let pageCtx: ActionablePageContext | null = null;
+    let tree: ActionableTree | null = null;
+    let plan: InjectionPlan | null = null;
+    let resumeFile: AttachedFile | null = null;
+
+    const abort = (message: string) => {
+      pushLog(message, false);
+    };
+
+    // Between-step interrupt gate: blocks while paused, returns false if stopped.
+    const gate = async (): Promise<boolean> => {
+      while (autoPauseRef.current && !autoAbortRef.current) {
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      if (autoAbortRef.current) {
+        pushLog("Auto-run stopped", false);
+        return false;
+      }
+      return true;
+    };
+
+    try {
+      while (cycle < PIPELINE_AUTO_MAX_CYCLES) {
+        cycle += 1;
+        if (!(await gate())) return;
+        pushLog(
+          "Auto-run: steps 2–8 (open → verify tab → résumé → scan → analyze → apply → verify)…",
+          true,
+        );
+
+        if (!(await gate())) return;
+        if (startStep <= 2) {
+          setTabValidity(null);
+          setVerifyResult(null);
+          setApplyDone(false);
+          resetJobUsage();
+          tree = null;
+          plan = null;
+          resumeFile = null;
+          const opened = await emitActionAsync({
+            id: createActionId(),
+            action: "open_tab",
+            payload: { url: job.url },
+          });
+          if (!opened.success) {
+            abort(opened.error || "Failed to open tab");
+            return;
+          }
+          const openedData = opened.data as { tabId?: number; page?: ActionablePageContext };
+          tabId = openedData.tabId;
+          if (!tabId) {
+            abort("Open tab returned no tab id");
+            return;
+          }
+          pageCtx = openedData.page ?? null;
+          setSelectedTabId(tabId);
+          setTreePage(pageCtx);
+          setActionableTree(null);
+          setFormAnalysis(null);
+          setInjectionPlan(null);
+          setGeneratedScript("");
+          setFieldScriptsById({});
+          setSelectedTreeFieldId(null);
+          markPipeline(job.id, {
+            opened: true,
+            validated: false,
+            scanned: false,
+            analyzed: false,
+            applied: false,
+            verified: false,
+          });
+          pushLog(`Opened "${job.title}"`, true);
+        }
+
+        if (!(await gate())) return;
+        if (startStep <= 3) {
+          if (!tabId) {
+            abort("No tab for validation");
+            return;
+          }
+          setValidatingTab(true);
+          setTabValidity(null);
+          try {
+            const { validity } = await validateOpenedTab(tabId, job);
+            setTabValidity(validity);
+            if (!validity.valid) {
+              pushLog(`Not a usable form (${validity.kind}) — ${validity.reason}; closing tab`, false);
+              await closeTab(tabId);
+              setAppliedJobIds((prev) => new Set(prev).add(job.id));
+              if (applierName) {
+                try {
+                  await applyToJob(job.id, applierName);
+                } catch {
+                  /* non-fatal */
+                }
+              }
+              return;
+            }
+            markPipeline(job.id, { validated: true });
+            pushLog(`Valid application form — ${validity.reason}`, true);
+          } finally {
+            setValidatingTab(false);
+          }
+        }
+
+        if (!(await gate())) return;
+        if (startStep <= 4) {
+          try {
+            resumeFile = await startResumeForJob(job);
+            if (!resumeFile?.base64) {
+              abort("Résumé generation failed — missing PDF");
+              return;
+            }
+          } catch {
+            return;
+          }
+        }
+
+        if (!(await gate())) return;
+        if (startStep <= 5) {
+          if (!tabId) {
+            abort("No tab for scan");
+            return;
+          }
+          tree = null;
+          plan = null;
+          const treeRes = await emitActionAsync(
+            {
+              id: createActionId(),
+              tabId,
+              action: "fetch_actionable_tree",
+              payload: { probeComboboxes },
+            },
+            120000,
+          );
+          if (!treeRes.success) {
+            abort(treeRes.error || "Scan failed");
+            return;
+          }
+          const scanData = treeRes.data as { tree?: ActionableTree; page?: ActionablePageContext };
+          tree = scanData.tree ?? null;
+          if (!tree?.length) {
+            abort("Scan returned no fillable fields");
+            return;
+          }
+          pageCtx = scanData.page ?? pageCtx;
+          setActionableTree(tree);
+          setTreePage(pageCtx);
+          setFormAnalysis(null);
+          setInjectionPlan(null);
+          setGeneratedScript("");
+          setFieldScriptsById({});
+          setSelectedTreeFieldId(null);
+          markPipeline(job.id, { scanned: true, analyzed: false, applied: false, verified: false });
+          pushLog(`Scanned ${tree.length} section(s)`, true);
+        }
+
+        if (!(await gate())) return;
+        if (startStep <= 6) {
+          if (!tree?.length) {
+            abort("Missing form tree — scan first");
+            return;
+          }
+          plan = null;
+          setAnalyzing(true);
+          try {
+            const result = await analyzeFormFields({
+              tree,
+              applicantContext: applicantContext || undefined,
+            });
+            setFormAnalysis(result);
+            recordUsage("Analyze form", result.usage);
+            const built = buildFormInjectionPlan({ tree, fields: result.fields });
+            plan = built.plan;
+            if (!plan.steps.length) {
+              abort("Analyze produced empty fill plan");
+              return;
+            }
+            setInjectionPlan(plan);
+            setGeneratedScript(built.preview);
+            setFieldScriptsById(Object.fromEntries(built.fieldPreviews.map((entry) => [entry.id, entry.preview])));
+            markPipeline(job.id, { analyzed: true });
+            pushLog(`Action plan: ${result.fields.length} field(s)`, true);
+          } catch (error) {
+            abort(error instanceof Error ? error.message : "Analysis failed");
+            return;
+          } finally {
+            setAnalyzing(false);
+          }
+        }
+
+        if (!(await gate())) return;
+        if (startStep <= 7) {
+          if (!pageCtx?.tabId) {
+            abort("No page context for apply");
+            return;
+          }
+          if (!plan?.steps.length) {
+            abort("No fill plan to apply");
+            return;
+          }
+          if (!resumeFile?.base64) {
+            resumeFile = getResumeForJob(job);
+          }
+          if (!resumeFile?.base64) {
+            abort("Generate tailored résumé first");
+            return;
+          }
+          try {
+            await runApplyWithPlan(plan, pageCtx, resumeFile);
+            setApplyDone(true);
+            markPipeline(job.id, { applied: true });
+          } catch (error) {
+            abort(error instanceof Error ? error.message : "Apply failed");
+            return;
+          }
+        }
+
+        // Step 8 · Verify result. On any non-success outcome the page is usually
+        // the next screen of a multi-step form, so loop back to 5 · Scan →
+        // 6 · Analyze → 7 · Apply → 8 · Verify, up to MAX_VERIFY_RETRIES times.
+        if (!(await gate())) return;
+        if (!tabId) {
+          abort("No tab to verify");
+          return;
+        }
+        setVerifying(true);
+        setVerifyResult(null);
+        try {
+          await waitBeforeVerify();
+          let verify = await computeVerifyResult(tabId, job);
+          setVerifyResult(verify);
+          pushLog(`Verify result: ${verify.kind} — ${verify.reason}`, verify.kind === "success");
+
+          let attempt = 0;
+          while (verify.kind !== "success" && attempt < MAX_VERIFY_RETRIES) {
+            if (!(await gate())) return;
+            attempt += 1;
+            // "additional" = a security/verification code page appeared → re-run the
+            // OTP flow (re-detect page, re-poll Gmail, fill, re-submit). NEVER re-scan
+            // here — that would wipe the emailed-code boxes.
+            if (verify.kind === "additional") {
+              pushLog(
+                `Verify not success (verification code page) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-fetch OTP → step 8 (no re-scan)`,
+                false,
+              );
+              await waitBeforeVerify();
+              verify = await computeVerifyResult(tabId, job);
+              setVerifyResult(verify);
+              pushLog(
+                `Verify result (OTP retry ${attempt}/${MAX_VERIFY_RETRIES}): ${verify.kind} — ${verify.reason}`,
+                verify.kind === "success",
+              );
+              continue;
+            }
+            // "failed" = not a code page (e.g. a missing/next form) → re-run 5→6→7.
+            pushLog(
+              `Verify not success (${verify.kind}) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-running 5 · Scan → 6 · Analyze → 7 · Apply`,
+              false,
+            );
+            const advanced = await rescanAnalyzeApply(tabId, job);
+            if (!advanced) {
+              pushLog(
+                `Retry ${attempt}/${MAX_VERIFY_RETRIES} could not complete Scan/Analyze/Apply — stopping retries`,
+                false,
+              );
+              break;
+            }
+            if (!(await gate())) return;
+            await waitBeforeVerify();
+            verify = await computeVerifyResult(tabId, job);
+            setVerifyResult(verify);
+            pushLog(
+              `Verify result (retry ${attempt}/${MAX_VERIFY_RETRIES}): ${verify.kind} — ${verify.reason}`,
+              verify.kind === "success",
+            );
+          }
+
+          if (verify.kind === "success") {
+            markPipeline(job.id, { verified: true });
+            await closeTab(tabId); // application done → close the job tab
+            pushLog(`Auto-run complete — "${job.title}" submitted and verified.`, true);
+          } else {
+            pushLog(
+              `Auto-run finished — "${job.title}" not confirmed after ${MAX_VERIFY_RETRIES} retries; left for manual review.`,
+              false,
+            );
+          }
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "Verify failed";
+          setVerifyResult({ kind: "failed", reason: msg });
+          pushLog(msg, false);
+        } finally {
+          setApplyPhase((prev) => (prev?.phase === "verify-wait" ? null : prev));
+          setVerifying(false);
+        }
+        return;
+      }
+    } finally {
+      autoRunningRef.current = false;
+      autoAbortRef.current = false;
+      autoPauseRef.current = false;
+      setAutoRunning(false);
+      setAutoRunState("idle");
+    }
+  }, [
+    applicantContext,
+    applierName,
+    canExecute,
+    closeTab,
+    computeVerifyResult,
+    emitActionAsync,
+    executeDisabledReason,
+    getActiveQueuedJob,
+    getResumeForJob,
+    markPipeline,
+    probeComboboxes,
+    pushLog,
+    recordUsage,
+    resetJobUsage,
+    rescanAnalyzeApply,
+    runApplyWithPlan,
+    startResumeForJob,
+    validateOpenedTab,
+    waitBeforeVerify,
+  ]);
+
+  /**
+   * Re-scan the page's actionable tree for the recovery loop. Dropdown/combobox
+   * option probing is intentionally OFF here — recovery only needs the field
+   * structure + labels, and probing adds latency the retry loop can't afford.
+   */
   const rescanTree = useCallback(
     async (tabId: number): Promise<ActionableTree | null> => {
       try {
@@ -536,7 +2112,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             id: createActionId(),
             tabId,
             action: "fetch_actionable_tree",
-            payload: { probeComboboxes },
+            payload: { probeComboboxes: false },
           },
           60000,
         );
@@ -546,7 +2122,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         return null;
       }
     },
-    [emitActionAsync, probeComboboxes],
+    [emitActionAsync],
   );
 
   /**
@@ -563,11 +2139,59 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       firstState: ApplyPageState;
       firstReason: string;
       firstResults?: StepRunResult[];
+      resumeFile?: AttachedFile;
+      pageCtx?: ActionablePageContext;
     }): Promise<boolean> => {
-      const { tabId, job, planSteps } = params;
+      const { tabId, job, planSteps, resumeFile, pageCtx } = params;
       let state = params.firstState;
       let reason = params.firstReason;
       let lastResults: StepRunResult[] = params.firstResults ?? [];
+
+      // The AI recovery script runs in the isolated world and CANNOT set
+      // input.files. So on the first recovery pass, re-run the résumé attach via
+      // the executor's MAIN-world path — this fixes a genuine upload miss (which
+      // recovery could otherwise never repair).
+      const fileSteps = planSteps.filter((s) => s.op === "attachFile");
+      if (fileSteps.length > 0 && resumeFile) {
+        try {
+          pushLog(`Recovery: re-attaching résumé via MAIN world…`, true);
+          await emitActionAsync(
+            {
+              id: createActionId(),
+              tabId,
+              action: "apply_injection_plan",
+              payload: buildApplyInjectionPlanPayload({ steps: fileSteps }, pageCtx ?? { tabId, url: job.url }, {
+                autoSubmit: false,
+                resumeFile,
+              }) as unknown as Record<string, unknown>,
+            },
+            60000,
+          );
+        } catch (error) {
+          pushLog(`Recovery: résumé re-attach failed — ${error instanceof Error ? error.message : error}`, false);
+        }
+      }
+
+      // Greenhouse OTP: do not re-scan from step 5 — fetch the emailed code and re-verify.
+      const looksLikeOtpPage =
+        (state.otpInputs ?? 0) > 0 ||
+        VERIFICATION_CUE.test(state.text) ||
+        /security-input-|email-verification/i.test(state.text) ||
+        /needs_verification|verification/i.test(reason);
+      if (isGreenhouseJob(job) && looksLikeOtpPage) {
+        pushLog("Recovery: Greenhouse OTP page — fetching code from Gmail (no re-scan)", true);
+        const otp = await handleGreenhouseOtpFlow(tabId, job);
+        if (otp.filled) {
+          const { verdict } = await verifyAfterSubmit(tabId, job, true, OTP_STEP_WAIT_MS);
+          if (verdict.status === "success") {
+            await markJobApplied(job);
+            pushLog(`"${job.title}" applied after Greenhouse OTP — ${verdict.reason}`, true);
+            return true;
+          }
+          pushLog(`Greenhouse OTP submitted but not confirmed — ${verdict.reason}`, false);
+        }
+        return false;
+      }
 
       for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {
         setApplyPhase({
@@ -582,16 +2206,25 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           break;
         }
 
-        // Phase D — if the page is asking for an emailed code, pull the latest
-        // one from the applier's inbox (IMAP) so the recovery script can fill it.
-        let otpCode: string | null = null;
-        if (applierName && VERIFICATION_CUE.test(state.text)) {
-          pushLog(`Recovery ${attempt}: verification code requested — checking email…`, true);
-          const otp = await requestVerificationCode(applierName);
-          otpCode = otp.code;
+        // Phase D — automated inbox reading (Gmail IMAP) has been removed. If the
+        // page is asking for an emailed code, flag it so the user can enter it
+        // manually; recovery still proceeds without an auto-fetched code.
+        const otpCode: string | null = null;
+        const treeHasVerificationInputs = tree.some((g) =>
+          g.children.some(
+            (c) =>
+              /\b(security code|verification code|enter the code|one[- ]?time code|otp|passcode)\b/i.test(
+                c.target,
+              ) ||
+              (c.controlType === 'text' &&
+                c.target.includes('code') &&
+                g.children.filter((cc) => cc.controlType === 'text').length >= 4),
+          ),
+        );
+        if (VERIFICATION_CUE.test(state.text) || treeHasVerificationInputs) {
           pushLog(
-            otpCode ? `Recovery ${attempt}: got code from email` : `Recovery ${attempt}: no code found in email yet`,
-            Boolean(otpCode),
+            `Recovery ${attempt}: verification code required — enter it manually on the page (auto email read disabled)`,
+            false,
           );
         }
 
@@ -610,6 +2243,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             applicantContext: applicantContext || undefined,
             otpCode,
           });
+          recordUsage(`Recovery ${attempt} (AI)`, recovery.usage);
         } catch (error) {
           pushLog(`Recovery ${attempt}: AI failed — ${error instanceof Error ? error.message : error}`, false);
           continue;
@@ -617,6 +2251,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
 
         if (recovery.reasoning) pushLog(`Recovery ${attempt}: ${recovery.reasoning}`, true);
 
+        let scriptError: string | null = null;
         try {
           const scriptRes = await emitActionAsync(
             {
@@ -628,75 +2263,44 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             60000,
           );
           if (!scriptRes.success) {
+            scriptError = scriptRes.error ?? "unknown";
             pushLog(`Recovery ${attempt}: script error — ${scriptRes.error}`, false);
           }
         } catch (error) {
-          pushLog(`Recovery ${attempt}: script threw — ${error instanceof Error ? error.message : error}`, false);
+          scriptError = error instanceof Error ? error.message : String(error);
+          pushLog(`Recovery ${attempt}: script threw — ${scriptError}`, false);
         }
+        logRunData("recovery", {
+          attempt,
+          reason,
+          otpCode: otpCode ? "(fetched)" : null,
+          reasoning: recovery.reasoning,
+          script: recovery.script,
+          scriptError,
+          pageTextBefore: state.text,
+        });
 
-        // Give the page a moment to react/navigate, then re-read + re-classify.
-        await emitActionAsync({ id: createActionId(), tabId, action: "wait", payload: { ms: 1500 } }).catch(() => {});
-        state = await readApplyPageState(tabId, true);
+        // Re-verify with the AI (settles the page, reads innerText, classifies).
         lastResults = [];
-        const outcome = classifyApplyOutcome(state);
-        if (outcome.applied) {
-          pushLog(`"${job.title}" recovered on attempt ${attempt} — ${outcome.reason}`, true);
+        const { verdict, state: newState } = await verifyAfterSubmit(tabId, job, true, 3000);
+        state = newState;
+        logRunData("recovery-verify", { attempt, status: verdict.status, reason: verdict.reason, pageText: newState.text });
+        if (verdict.status === "success") {
+          pushLog(`"${job.title}" recovered on attempt ${attempt} — ${verdict.reason}`, true);
           await markJobApplied(job);
           return true;
         }
-        reason = outcome.reason;
+        reason = verdict.reason || verdict.status;
       }
 
       pushLog(`"${job.title}" still unconfirmed after ${MAX_RECOVERY_ATTEMPTS} recovery attempts`, false);
       return false;
     },
-    [applicantContext, applierName, emitActionAsync, markJobApplied, pushLog, readApplyPageState, rescanTree],
+    [applicantContext, applierName, emitActionAsync, handleGreenhouseOtpFlow, markJobApplied, pushLog, rescanTree, verifyAfterSubmit, logRunData],
   );
 
   /**
-   * Generate (or reuse) a per-job résumé tailored to the JD and cache it for
-   * attach + preview. Returns null for manual/link-only jobs or on any failure —
-   * the executor then falls back to the bundled default résumé.
-   */
-  const ensureJobResume = useCallback(
-    async (job: QueuedJob): Promise<AttachedFile | null> => {
-      if (!applierName || isManualJob(job)) return null;
-      const cached = resumesByJobId[job.id];
-      if (cached) {
-        setResumeJobId(job.id);
-        return cached.file;
-      }
-      try {
-        const jd = await fetchJobDescription(job.id);
-        if (!jd) {
-          pushLog(`No job description for "${job.title}" — using default résumé`, false);
-          return null;
-        }
-        pushLog(`Generating tailored résumé for "${job.title}"…`, true);
-        const gen = await generateJobResume({ applierName, jobId: job.id, jobDescription: jd });
-        const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
-        setResumesByJobId((prev) => ({
-          ...prev,
-          [job.id]: { jobId: job.id, file, reused: gen.reused, generationId: gen.generationId },
-        }));
-        setResumeJobId(job.id);
-        pushLog(`Résumé ${gen.reused ? "reused" : "generated"} for "${job.title}"`, true);
-        return file;
-      } catch (error) {
-        pushLog(
-          `Résumé generation failed for "${job.title}" — using default résumé: ${error instanceof Error ? error.message : error}`,
-          false,
-        );
-        return null;
-      }
-    },
-    [applierName, pushLog, resumesByJobId],
-  );
-
-  /**
-   * Drive one job end-to-end: open a fresh tab, wait for load, scan the form,
-   * analyze with the AI, generate a tailored résumé, fill, auto-submit, then
-   * confirm + mark Applied.
+   * Drive one job end-to-end: draft résumé → open tab → scan → analyze → fill → submit.
    */
   const applyJob = useCallback(
     async (job: QueuedJob) => {
@@ -706,11 +2310,26 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       }
       setApplying(true);
       applyingRef.current = true;
-      // Start résumé generation immediately so the LLM round-trip overlaps the
-      // tab open + scan + analyze rather than blocking before submit.
-      const resumePromise = ensureJobResume(job);
+      setApplyDone(false);
+      resetJobUsage();
+      startRunLog(job, { url: job.url, company: job.company, source: job.source });
+      let finalStatus = "failed";
       try {
         pushLog(`Applying to "${job.title}"…`, true);
+        let resumeFile = getResumeForJob(job);
+        const preGenerated = Boolean(resumeFile);
+        if (!resumeFile) {
+          resumeFile = await startResumeForJob(job);
+        }
+        if (!resumeFile) throw new Error("Tailored résumé PDF is required but was not generated");
+        logRunData("resume", {
+          fileName: resumeFile.name,
+          mimeType: resumeFile.mimeType,
+          base64Bytes: resumeFile.base64?.length ?? 0,
+          preGenerated,
+          reused: resumesByJobId[job.id]?.reused ?? null,
+        });
+
         const opened = await emitActionAsync({
           id: createActionId(),
           action: "open_tab",
@@ -721,6 +2340,18 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         const tabId = openedData.tabId;
         if (!tabId) throw new Error("open_tab returned no tab id");
         setSelectedTabId(tabId);
+
+        // Validity gate — skip dead/expired/non-form links (close tab + mark handled).
+        const gate = await validateOpenedTab(tabId, job);
+        logRunData("validity", { kind: gate.validity.kind, valid: gate.validity.valid, reason: gate.validity.reason });
+        if (!gate.validity.valid) {
+          pushLog(`"${job.title}" skipped — ${gate.validity.kind}: ${gate.validity.reason}`, false);
+          setVerifyResult({ kind: "failed", reason: `Link not usable (${gate.validity.kind})`, detail: gate.validity.reason });
+          await closeTab(tabId);
+          await markJobApplied(job);
+          finalStatus = `skipped-${gate.validity.kind}`;
+          return;
+        }
 
         const treeRes = await emitActionAsync({
           id: createActionId(),
@@ -733,6 +2364,13 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         const tree = treeData.tree;
         const pageCtx = treeData.page ?? openedData.page;
         if (!tree?.length || !pageCtx) throw new Error("No fillable fields found on the page");
+        logRunData("scan", {
+          url: pageCtx.url,
+          groups: tree.length,
+          fields: tree.flatMap((g) =>
+            g.children.map((c) => ({ group: g.content?.slice(0, 40), target: c.target, controlType: c.controlType })),
+          ),
+        });
 
         setAnalyzing(true);
         const analysis = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined });
@@ -740,17 +2378,20 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         setActionableTree(tree);
         setTreePage(pageCtx);
         setFormAnalysis(analysis);
+        logRunData("analyze", {
+          fields: analysis.fields.map((f) => ({ id: f.id, action: f.action, shouldSkip: f.shouldSkip, value: f.value })),
+          usage: analysis.usage ?? null,
+        });
 
         const built = buildFormInjectionPlan({ tree, fields: analysis.fields });
         setInjectionPlan(built.plan);
         setGeneratedScript(built.preview);
         if (!built.plan.steps.length) throw new Error("Plan has no fillable steps");
+        logRunData("plan", {
+          steps: built.plan.steps.map((s) => ({ id: s.id, label: s.label, op: s.op, value: s.value })),
+          fileSteps: built.plan.steps.filter((s) => s.op === "attachFile").length,
+        });
 
-        // Wait for the tailored résumé (started in parallel above) so the file
-        // step uploads the AI-generated PDF; null falls back to the bundled one.
-        const resumeFile = (await resumePromise) ?? undefined;
-
-        // Fill everything, then auto-submit (5s countdown handled in the executor).
         const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, { autoSubmit: true, resumeFile });
         const applyRes = await emitActionAsync(
           {
@@ -765,61 +2406,139 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         const applyData = applyRes.data as
           | { submitted?: boolean; result?: StepRunResult[]; filesFound?: number; filesAttached?: number }
           | undefined;
+        setApplyDone(true);
         const submitted = Boolean(applyData?.submitted);
         const firstResults = Array.isArray(applyData?.result) ? applyData!.result : [];
 
-        // Make the résumé-upload outcome explicit — the #1 silent failure.
+        // Résumé-upload status — informational only. A 0/N reading is often a
+        // false negative (a dropzone briefly resets the input), so we NEVER abort
+        // on it; the AI verify below reads the real page and decides the outcome.
         const filesFound = applyData?.filesFound ?? 0;
         const filesAttached = applyData?.filesAttached ?? 0;
-        if (resumeFile) {
-          if (filesFound === 0) {
-            pushLog(`⚠ Résumé not uploaded — no file field found on "${job.title}"`, false);
-          } else {
-            pushLog(`Résumé uploaded to ${filesAttached}/${filesFound} field(s)`, filesAttached > 0);
-          }
+        logRunData("apply-result", { filesFound, filesAttached, submitted, results: firstResults });
+        if (filesFound === 0) {
+          pushLog(`Résumé: no file field detected on "${job.title}"`, false);
+        } else {
+          pushLog(`Résumé attach reported ${filesAttached}/${filesFound} — verifying on page…`, filesAttached > 0);
         }
 
-        // Read the post-submit page and decide success vs needs-retry.
-        const pageState = await readApplyPageState(tabId, submitted);
-        const outcome = classifyApplyOutcome(pageState);
-        if (outcome.applied) {
-          pushLog(`"${job.title}" applied — ${outcome.reason}`, true);
+        // AI verify: wait for the page to settle, read innerText, classify.
+        const { verdict, state: pageState } = await verifyAfterSubmit(tabId, job, submitted, OTP_STEP_WAIT_MS);
+        logRunData("verify", { status: verdict.status, reason: verdict.reason, pageText: pageState.text, controlCount: pageState.controlCount });
+        if (verdict.status === "success") {
+          pushLog(`"${job.title}" applied — ${verdict.reason}`, true);
           await markJobApplied(job);
+          finalStatus = "applied";
+        } else if (
+          isGreenhouseJob(job) &&
+          ((pageState.otpInputs ?? 0) > 0 ||
+            VERIFICATION_CUE.test(pageState.text) ||
+            verdict.status === "needs_verification")
+        ) {
+          pushLog(
+            `"${job.title}" needs Greenhouse OTP (${pageState.otpInputs ?? 0} code box(es)) — fetching from Gmail…`,
+            true,
+          );
+          const otp = await handleGreenhouseOtpFlow(tabId, job);
+          if (otp.filled) {
+            const { verdict: retryVerdict } = await verifyAfterSubmit(tabId, job, submitted, OTP_STEP_WAIT_MS);
+            logRunData("verify-after-otp", { status: retryVerdict.status, reason: retryVerdict.reason });
+            if (retryVerdict.status === "success") {
+              pushLog(`"${job.title}" applied after OTP — ${retryVerdict.reason}`, true);
+              await markJobApplied(job);
+              finalStatus = "applied";
+            } else {
+              pushLog(
+                `"${job.title}" OTP submitted but not confirmed (${retryVerdict.status}) — ${retryVerdict.reason}`,
+                false,
+              );
+              finalStatus = "unconfirmed";
+            }
+          } else {
+            pushLog(`"${job.title}" Greenhouse OTP not found in Gmail`, false);
+            finalStatus = "unconfirmed";
+          }
         } else {
-          // Phase C — hand off to the self-healing retry loop (up to 10×).
-          pushLog(`"${job.title}" not confirmed — ${outcome.reason}; starting self-healing`, false);
-          await runRecoveryLoop({
+          // needs_verification / error / incomplete → self-healing loop (OTP,
+          // missing fields, blocks). Re-scan uses probe-off; up to 10×.
+          pushLog(`"${job.title}" not confirmed (${verdict.status}) — ${verdict.reason}; starting self-healing`, false);
+          const recovered = await runRecoveryLoop({
             tabId,
             job,
             planSteps: built.plan.steps,
             firstState: pageState,
-            firstReason: outcome.reason,
+            firstReason: verdict.reason || verdict.status,
             firstResults,
+            resumeFile,
+            pageCtx,
           });
+          finalStatus = recovered ? "applied-recovered" : "unconfirmed";
         }
       } catch (error) {
-        pushLog(error instanceof Error ? error.message : "Apply failed", false);
+        const msg = error instanceof Error ? error.message : "Apply failed";
+        pushLog(msg, false);
+        logRunData("error", { message: msg, stack: error instanceof Error ? error.stack : null });
+        finalStatus = "error";
       } finally {
         setAnalyzing(false);
         setApplying(false);
         applyingRef.current = false;
+        endRunLog(finalStatus);
       }
     },
-    [applicantContext, canExecute, emitActionAsync, ensureJobResume, executeDisabledReason, markJobApplied, probeComboboxes, pushLog, readApplyPageState, runRecoveryLoop],
+    [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, runRecoveryLoop, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
   );
 
-  /** Apply every queued job in sequence — each opens its own tab and auto-submits. */
+  /**
+   * "Apply all" — run each queued job's auto-submit pipeline one by one (the same
+   * full Auto-run as the per-job button), skipping ones already applied.
+   */
   const applyQueue = useCallback(async () => {
     if (!jobQueue.length) {
       pushLog("Queue is empty — add jobs first", false);
       return;
     }
+    queueAbortRef.current = false;
     for (let i = 0; i < jobQueue.length; i += 1) {
+      if (queueAbortRef.current) {
+        pushLog("Apply all stopped", false);
+        break;
+      }
+      const job = jobQueue[i];
+      if (appliedJobIds.has(job.id)) continue;
       setActiveJobIndex(i);
-      await applyJob(jobQueue[i]);
+      await runPipelineAuto(job);
     }
     pushLog(`Queue complete · ${jobQueue.length} job(s) processed`, true);
-  }, [applyJob, jobQueue, pushLog]);
+  }, [appliedJobIds, jobQueue, pushLog, runPipelineAuto]);
+
+  const selectActiveJob = useCallback(
+    (index: number) => {
+      const job = jobQueue[index];
+      resetJobWorkspace();
+      setActiveJobIndex(index);
+      if (job) {
+        setResumeJobId(job.id);
+        if (resumesByJobId[job.id]?.file?.base64) {
+          markPipeline(job.id, { resumeReady: true });
+        }
+      }
+    },
+    [jobQueue, markPipeline, resetJobWorkspace, resumesByJobId],
+  );
+
+  const activePipeline = useMemo((): JobPipelineState => {
+    const job = jobQueue[activeJobIndex];
+    if (!job) return EMPTY_PIPELINE;
+    const stored = pipelineByJobId[job.id] ?? EMPTY_PIPELINE;
+    return {
+      ...stored,
+      resumeReady: stored.resumeReady || Boolean(resumesByJobId[job.id]?.file?.base64),
+    };
+  }, [activeJobIndex, jobQueue, pipelineByJobId, resumesByJobId]);
+
+  const isGeneratingActiveResume =
+    generatingResume && generatingResumeJobId === jobQueue[activeJobIndex]?.id;
 
   return {
     serverUrl,
@@ -844,23 +2563,44 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     setSelectedTreeFieldId,
     analyzing,
     applying,
+    autoRunning,
     canExecute,
     executeDisabledReason,
     actionPlanByFieldId,
     jobQueue,
     activeJobIndex,
-    setActiveJobIndex,
+    selectActiveJob,
+    activePipeline,
     appliedJobIds,
     resumesByJobId,
     activeResume: resumeJobId ? resumesByJobId[resumeJobId] ?? null : null,
+    generatingResume: isGeneratingActiveResume,
+    resumeGenerateStep,
+    resumeGeneratedSections,
+    resumeError,
     applyPhase,
-    monitorMode,
-    setMonitorMode,
+    verifyResult,
+    verifying,
+    verifyActiveResult,
+    setVerifyResult,
+    tabValidity,
+    validatingTab,
+    validateActiveTab,
+    applyDone,
+    jobUsage,
+    markActiveJobApplied,
     socketRef,
     connect,
     fetchActionableTree,
     analyzeTree,
     generatePlan,
+    generateActiveJobResume,
+    openActiveJob,
+    runPipelineAuto,
+    autoRunState,
+    pauseAutoRun,
+    resumeAutoRun,
+    stopAutoRun,
     applyActionPlan,
     selectTreeTarget,
     requestTabs,

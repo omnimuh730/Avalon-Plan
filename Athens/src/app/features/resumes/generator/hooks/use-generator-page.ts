@@ -9,8 +9,9 @@ import { templateById } from "../constants/templates";
 import {
   defaultConfig,
   defaultPromptFor,
-  ensurePurposes,
   FALLBACK_MODELS,
+  mergeStoredConfig,
+  resolveModelForProvider,
   uid,
   fontStack,
 } from "../constants/defaults";
@@ -66,6 +67,8 @@ export function useGeneratorPage() {
   // would overwrite the just-loaded run. Reset on a genuine applier change so
   // normal config restore still works after switching accounts.
   const externalLoadRef = useRef(false);
+  // Don't write to MongoDB until localStorage + DB restore have finished.
+  const [configHydrated, setConfigHydrated] = useState(false);
 
   // Reference tokens a prompt can use, resolved from the JD + profile careers.
   // Mirrors the backend substitution in resumeGenController so the chip previews
@@ -170,71 +173,50 @@ export function useGeneratorPage() {
       };
     });
 
-  // Restore saved config for this applier.
+  // Restore saved config: localStorage first, then MongoDB (authoritative).
   useEffect(() => {
-    // A new applier means we're no longer pinned to a previously-loaded run.
     externalLoadRef.current = false;
+    setConfigHydrated(false);
+
+    let cancelled = false;
+    let next = defaultConfig();
     try {
       const raw = localStorage.getItem(storageKey(applier?.name));
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<GeneratorConfig>;
-        const base = defaultConfig();
-        setConfig(
-          ensurePurposes({
-            provider: parsed.provider === "deepseek" ? "deepseek" : "openai",
-            model: parsed.model ?? base.model,
-            reasoningEffort: parsed.reasoningEffort ?? base.reasoningEffort,
-            templateId: parsed.templateId ?? base.templateId,
-            theme: { ...base.theme, ...(parsed.theme ?? {}) },
-            layout: Array.isArray(parsed.layout) && parsed.layout.length ? (parsed.layout as LayoutSection[]) : base.layout,
-            systemInstruction: parsed.systemInstruction ?? base.systemInstruction,
-            jobDescription: parsed.jobDescription ?? base.jobDescription,
-            steps: Array.isArray(parsed.steps) && parsed.steps.length ? (parsed.steps as GenStep[]) : base.steps,
-          }),
-        );
-      } else {
-        setConfig(defaultConfig());
-      }
+      if (raw) next = mergeStoredConfig(JSON.parse(raw) as Partial<GeneratorConfig>);
     } catch {
-      setConfig(defaultConfig());
+      next = defaultConfig();
     }
-  }, [applier?.name]);
+    if (!cancelled) setConfig(next);
 
-  // Prefer the config saved in the DB for this applier (falls back to the
-  // localStorage value loaded above). Runs after the applier changes.
-  useEffect(() => {
     const applierName = applier?.name;
-    if (!applierName) return;
-    let cancelled = false;
-    get(`/personal/resume-generator/config?applierName=${encodeURIComponent(applierName)}`)
+    const finishHydration = () => {
+      if (!cancelled) setConfigHydrated(true);
+    };
+
+    if (!applierName) {
+      finishHydration();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void get(`/personal/resume-generator/config?applierName=${encodeURIComponent(applierName)}`)
       .then((raw) => {
         const dbConfig = (raw as { success?: boolean; config?: Partial<GeneratorConfig> | null })?.config;
-        // Don't clobber a history run the user just loaded into the editor.
         if (cancelled || externalLoadRef.current || !dbConfig || typeof dbConfig !== "object") return;
-        const base = defaultConfig();
-        setConfig(
-          ensurePurposes({
-            provider: dbConfig.provider === "deepseek" ? "deepseek" : "openai",
-            model: dbConfig.model ?? base.model,
-            reasoningEffort: dbConfig.reasoningEffort ?? base.reasoningEffort,
-            templateId: dbConfig.templateId ?? base.templateId,
-            theme: { ...base.theme, ...(dbConfig.theme ?? {}) },
-            layout: Array.isArray(dbConfig.layout) && dbConfig.layout.length ? (dbConfig.layout as LayoutSection[]) : base.layout,
-            systemInstruction: dbConfig.systemInstruction ?? base.systemInstruction,
-            jobDescription: dbConfig.jobDescription ?? base.jobDescription,
-            steps: Array.isArray(dbConfig.steps) && dbConfig.steps.length ? (dbConfig.steps as GenStep[]) : base.steps,
-          }),
-        );
+        setConfig(mergeStoredConfig(dbConfig));
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(finishHydration);
+
     return () => {
       cancelled = true;
     };
   }, [applier?.name, get]);
 
-  // Persist config: localStorage immediately + the DB (debounced) so all
-  // generator settings survive across devices/sessions.
+  // Persist config: localStorage immediately + MongoDB (debounced) after hydration.
   useEffect(() => {
+    if (!configHydrated) return;
     try {
       localStorage.setItem(storageKey(applier?.name), JSON.stringify(config));
     } catch {
@@ -246,7 +228,7 @@ export function useGeneratorPage() {
       void put("/personal/resume-generator/config", { applierName, config }).catch(() => undefined);
     }, 800);
     return () => clearTimeout(t);
-  }, [config, applier?.name, put]);
+  }, [config, applier?.name, put, configHydrated]);
 
   const loadIdentity = useCallback(async () => {
     const applierName = applier?.name;
@@ -298,12 +280,18 @@ export function useGeneratorPage() {
           const list = res.models;
           setModels(list);
           setModelsNote(null);
-          // Self-heal: if the saved model isn't a real model for this provider
-          // (e.g. a typo like "gpt-5.4-nano"), switch to the first valid one.
-          setConfig((c) => (list.includes(c.model) ? c : { ...c, model: list[0] }));
+          // Self-heal: if the saved model isn't valid for this provider, pick one.
+          setConfig((c) => {
+            const model = list.includes(c.model) ? c.model : resolveModelForProvider(c.provider, list[0]);
+            return c.model === model ? c : { ...c, model };
+          });
         } else {
           setModels([]);
           setModelsNote(res?.error || "No models returned — using defaults.");
+          setConfig((c) => {
+            const model = resolveModelForProvider(c.provider, c.model);
+            return c.model === model ? c : { ...c, model };
+          });
         }
       } catch {
         setModels([]);

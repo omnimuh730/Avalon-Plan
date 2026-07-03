@@ -5,12 +5,12 @@ import { Pill } from "../../components/ui";
 import { TabTransition } from "../../components/overlays";
 import { DEFAULT_TABS, normalizeTab, PATHS, type SettingsTab } from "../../config/routes";
 import { ProfileTab } from "./components/ProfileTab";
+import { SkillsTab } from "./components/SkillsTab";
 import { NotificationsTab } from "./components/NotificationsTab";
 import { SecurityTab } from "./components/SecurityTab";
 import { IntegrationsTab } from "./components/IntegrationsTab";
-import { KnowledgeGraphSettingsTab } from "./components/KnowledgeGraphSettingsTab";
 
-const TABS = ["profile", "notifications", "integrations", "security", "knowledge-graph"] as const satisfies readonly SettingsTab[];
+const TABS = ["profile", "skills", "notifications", "integrations", "security"] as const satisfies readonly SettingsTab[];
 
 export function SettingsPage() {
   const { tab: tabParam } = useParams<{ tab?: string }>();
@@ -26,16 +26,16 @@ export function SettingsPage() {
             active={tab === t}
             onClick={() => navigate(`${PATHS.settings}/${t}`)}
           >
-            {t === "knowledge-graph" ? "Knowledge Graph" : t}
+            {t}
           </Pill>
         ))}
       </div>
       <TabTransition tabKey={tab}>
         {tab === "profile" && <ProfileTab />}
+        {tab === "skills" && <SkillsTab />}
         {tab === "notifications" && <NotificationsTab />}
         {tab === "integrations" && <IntegrationsTab />}
         {tab === "security" && <SecurityTab />}
-        {tab === "knowledge-graph" && <KnowledgeGraphSettingsTab />}
       </TabTransition>
     </PageShell>
   );

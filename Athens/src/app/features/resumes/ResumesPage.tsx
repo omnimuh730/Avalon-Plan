@@ -8,7 +8,6 @@ import { DEFAULT_TABS, normalizeTab, PATHS, type ResumesTab } from "../../config
 import { useResumeNavigationOptional } from "../../context/ResumeNavigationContext";
 import { initResumeStorage } from "../../services/resumeStorage";
 import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
-import { ResumeAnalysisTab } from "./components/ResumeAnalysisTab";
 import { ResumeGeneratorPanel } from "./generator/ResumeGeneratorPanel";
 import type { FullRun } from "./generator/history/history-types";
 
@@ -93,7 +92,6 @@ export function ResumesPage() {
               onLoadIntoEditor={handleLoadFromHistory}
             />
           )}
-          {tab === "analysis" && <ResumeAnalysisTab onGoToLibrary={() => setTab("library")} />}
           {tab === "history" && (
             <ResumeGeneratorPanel
               key={historyKey}

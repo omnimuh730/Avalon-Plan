@@ -28,6 +28,30 @@ export function getProvider(id) {
   return PROVIDERS[id] || PROVIDERS.openai;
 }
 
+/**
+ * Single source of truth for "which model do we call?" — resolves the profile's
+ * saved default (defaultProvider + defaultModel), set via Settings → Profile.
+ * Falls back to whichever provider has a key, then that provider's default
+ * model, so it works before a default is explicitly chosen. Every feature
+ * (resume generation, agent work, job skill extraction, resume analysis, mail
+ * verification) goes through this — no hardcoded provider/model anywhere else.
+ *
+ * @returns {{ provider: 'openai'|'deepseek', apiKey: string, model: string }}
+ */
+export function resolveDefaultModel(profile) {
+  const p = profile || {};
+  let provider = p.defaultProvider;
+  if (provider !== 'openai' && provider !== 'deepseek') {
+    provider = p.deepseekApiKey ? 'deepseek' : p.openaiApiKey ? 'openai' : 'deepseek';
+  }
+  const apiKey = String((provider === 'openai' ? p.openaiApiKey : p.deepseekApiKey) || '').trim();
+  const fallbackModel = provider === 'openai'
+    ? (String(p.openaiModel || '').trim() || 'gpt-4o-mini')
+    : (DEEPSEEK_MODELS[0] || 'deepseek-v4-flash');
+  const model = String(p.defaultModel || '').trim() || fallbackModel;
+  return { provider, apiKey, model };
+}
+
 export function getPricing(model) {
   const row = findPricing(model);
   if (!row) return null;
@@ -93,12 +117,22 @@ export function formatUsageSummary(usage) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function fetchRetry(url, init, { timeoutMs = 120000, retries = 4, baseDelayMs = 1000 } = {}) {
+function combinedSignal(externalSignal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!externalSignal) return timeout;
+  // Node 20+: abort as soon as either the caller aborts or the timeout fires.
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([externalSignal, timeout]);
+  return externalSignal.aborted ? externalSignal : timeout;
+}
+
+async function fetchRetry(url, init, { timeoutMs = 120000, retries = 4, baseDelayMs = 1000, signal } = {}) {
   for (let attempt = 0; ; attempt += 1) {
     let response;
     try {
-      response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      response = await fetch(url, { ...init, signal: combinedSignal(signal, timeoutMs) });
     } catch (err) {
+      // A caller-requested abort is terminal — never retry through a Stop.
+      if (signal?.aborted) throw err;
       if (attempt >= retries) throw err;
       await sleep(baseDelayMs * 2 ** attempt);
       continue;
@@ -125,6 +159,7 @@ export async function chatCompletion({
   timeoutMs = 120000,
   runId,
   feature = 'resume-analysis',
+  signal,
 }) {
   const p = getProvider(provider);
   if (!apiKey) {
@@ -152,7 +187,7 @@ export async function chatCompletion({
       },
       body: JSON.stringify(body),
     },
-    { timeoutMs },
+    { timeoutMs, signal },
   );
 
   const data = await response.json().catch(() => ({}));
@@ -164,7 +199,16 @@ export async function chatCompletion({
   }
   const content = data?.choices?.[0]?.message?.content;
   if (content == null) throw new Error(`${p.label} returned an empty response.`);
-  return { content, usage: summarizeUsage(data?.usage, model) };
+  const usage = summarizeUsage(data?.usage, model);
+  if (process.env.LLM_LOG !== 'off') {
+    const cost = usage.cost != null ? formatCostUsd(usage.cost) : 'n/a';
+    const cached = usage.cachedTokens ? ` (+${usage.cachedTokens} cached)` : '';
+    // one line per call: purpose · provider/model · tokens · cost
+    console.log(
+      `[llm] ${feature} · ${p.id}/${model} — in ${usage.inputTokens}${cached} out ${usage.outputTokens} · ${cost}`,
+    );
+  }
+  return { content, usage };
 }
 
 const modelCache = new Map();

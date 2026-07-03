@@ -14,7 +14,6 @@ export const PATHS = {
   mail: "/mail",
   calendar: "/calendar",
   interviews: "/interviews",
-  knowledgeGraph: "/knowledge-graph",
   reports: "/reports",
   settings: "/settings",
   signin: "/signin",
@@ -32,7 +31,7 @@ export const DEFAULT_TABS = {
 export type ResumesTab = "library" | "editor" | "history" | "analysis";
 export type CalendarTab = "month" | "week" | "pipeline";
 export type ReportsTab = "overview" | "sources" | "funnel" | "velocity" | "insights";
-export type SettingsTab = "profile" | "notifications" | "integrations" | "security" | "knowledge-graph";
+export type SettingsTab = "profile" | "skills" | "notifications" | "integrations" | "security";
 
 const VIEW_TO_BASE: Record<View, string> = {
   dashboard: PATHS.dashboard,
@@ -44,7 +43,6 @@ const VIEW_TO_BASE: Record<View, string> = {
   mail: PATHS.mail,
   calendar: PATHS.calendar,
   interviews: PATHS.interviews,
-  "knowledge-graph": PATHS.knowledgeGraph,
   reports: PATHS.reports,
   settings: PATHS.settings,
 };
@@ -88,7 +86,6 @@ export function viewFromPathname(pathname: string): View {
   if (p.startsWith(PATHS.mail)) return "mail";
   if (p.startsWith(PATHS.calendar)) return "calendar";
   if (p.startsWith(PATHS.interviews)) return "interviews";
-  if (p.startsWith(PATHS.knowledgeGraph)) return "knowledge-graph";
   if (p.startsWith(PATHS.reports)) return "reports";
   if (p.startsWith(PATHS.settings)) return "settings";
   return "dashboard";

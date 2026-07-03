@@ -1,7 +1,6 @@
 import { ObjectId } from 'mongodb';
 import { jobsCollection } from '../../db/mongo.js';
 import { isRedisReady } from '../../db/redis.js';
-import { getHybridMatchWeights, getCandidatePoolSize } from '../../config/graphAndVectorConfig.js';
 import { JOB_LIST_PROJECTION } from '../jobListQuery.js';
 import { loadProfileMatchContext, invalidateProfileSkillCache } from './profileSkills.js';
 import {
@@ -13,39 +12,15 @@ import {
   computeCoverageScore,
   composeJobScores,
   applyScoreFilters,
-  computeHybridScore,
 } from './coverageScore.js';
 import { normalizeSkillSet } from '@nextoffer/shared/skill-normalize';
-import { getProfileVector, isQdrantReady, searchJobVectors } from '../vectorStore/qdrantClient.js';
-import { cosineToScore } from '../embeddings/embeddingService.js';
 
 const MAX_CANDIDATES = 50000;
 
-function vectorScoreFromHit(hit) {
-  const raw = Number(hit?.score ?? 0);
-  if (!Number.isFinite(raw)) return 0;
-  return cosineToScore(raw);
-}
-
-async function loadVectorScoreMap(applierName) {
-  if (!isQdrantReady()) return new Map();
-
-  const profile = await getProfileVector(applierName);
-  if (!profile?.vector?.length) return new Map();
-
-  const hits = await searchJobVectors(profile.vector, {
-    limit: getCandidatePoolSize(),
-  });
-
-  const map = new Map();
-  for (const hit of hits) {
-    if (hit?.jobId) map.set(String(hit.jobId), vectorScoreFromHit(hit));
-  }
-  return map;
-}
-
 /**
- * Score and rank jobs for an applier: skill containment + optional profile vector similarity.
+ * Score and rank jobs for an applier by skill coverage (no embeddings). This is
+ * the legacy/warming fallback; the primary path is the materialized
+ * job_match_scores collection.
  */
 export async function matchJobsForApplier({
   applierName,
@@ -60,17 +35,13 @@ export async function matchJobsForApplier({
   }
 
   const profileCtx = await loadProfileMatchContext(name);
-  if (!profileCtx.profileCompacts?.length && !profileCtx.boostCompacts?.length && !profileCtx.exactSet?.size) {
-    return { docs: [], total: 0, recommendationFallback: true, reason: 'no_analyzed_resumes' };
+  if (!profileCtx.profileTokens?.length && !profileCtx.profileCompacts?.length && !profileCtx.exactSet?.size) {
+    return { docs: [], total: 0, recommendationFallback: true, reason: 'no_profile_skills' };
   }
 
   if (!jobsCollection) {
     return { docs: [], total: 0, recommendationFallback: true, reason: 'db_not_ready' };
   }
-
-  const hybridWeights = getHybridMatchWeights();
-  const vectorScores = await loadVectorScoreMap(name);
-  const useHybrid = vectorScores.size > 0;
 
   const catalogTotal = await jobsCollection.countDocuments(mongoQuery || {});
   const hasScoreFilter = !!(scoreFilters && Object.keys(scoreFilters).length);
@@ -83,10 +54,6 @@ export async function matchJobsForApplier({
     if (redisIds?.size) {
       for (const id of redisIds) candidateIds.add(String(id));
     }
-  }
-
-  if (useHybrid) {
-    for (const id of vectorScores.keys()) candidateIds.add(id);
   }
 
   if (candidateIds.size) {
@@ -102,21 +69,16 @@ export async function matchJobsForApplier({
 
     for (const job of jobs) {
       const enriched = enrichJobSkillsFromTitle(job);
-      const coverage = computeCoverageScore(enriched.skills, profileCtx);
+      const jobSkills = Array.isArray(job.aiSkills) && job.aiSkills.length ? job.aiSkills : enriched.skills;
+      const coverage = computeCoverageScore(jobSkills, profileCtx);
       if (coverage.required === 0) continue;
-
-      const skillScore = coverage.matchScore;
-      const vectorScore = vectorScores.get(String(job._id)) ?? 0;
-      const finalScore = useHybrid
-        ? computeHybridScore(skillScore, vectorScore, hybridWeights)
-        : skillScore;
 
       scoredRows.push({
         job,
         enriched,
-        coverage: { ...coverage, finalScore },
-        matchScore: finalScore,
-        vectorScore: useHybrid ? vectorScore : null,
+        coverage: { ...coverage, finalScore: coverage.matchScore },
+        matchScore: coverage.matchScore,
+        vectorScore: null,
       });
     }
   } else if (!isRedisReady()) {
@@ -124,9 +86,6 @@ export async function matchJobsForApplier({
       mongoQuery: mongoQuery || {},
       profileCtx,
       maxScan: MAX_CANDIDATES,
-      vectorScores,
-      hybridWeights,
-      useHybrid,
     });
   }
 
@@ -191,18 +150,11 @@ export async function matchJobsForApplier({
     total: catalogTotal,
     catalogTotal,
     recommendationFallback: false,
-    recommendationHybrid: useHybrid,
+    recommendationHybrid: false,
   };
 }
 
-async function scoreViaMongoScan({
-  mongoQuery,
-  profileCtx,
-  maxScan,
-  vectorScores,
-  hybridWeights,
-  useHybrid,
-}) {
+async function scoreViaMongoScan({ mongoQuery, profileCtx, maxScan }) {
   const rows = [];
   const profileSkills = profileCtx.exactSet;
   const cursor = jobsCollection
@@ -223,21 +175,16 @@ async function scoreViaMongoScan({
 
   for await (const job of cursor) {
     const enriched = enrichJobSkillsFromTitle(job);
-    const coverage = computeCoverageScore(enriched.skills, profileCtx);
+    const jobSkills = Array.isArray(job.aiSkills) && job.aiSkills.length ? job.aiSkills : enriched.skills;
+    const coverage = computeCoverageScore(jobSkills, profileCtx);
     if (coverage.required === 0 || coverage.matchScore === 0) continue;
-
-    const skillScore = coverage.matchScore;
-    const vectorScore = vectorScores.get(String(job._id)) ?? 0;
-    const finalScore = useHybrid
-      ? computeHybridScore(skillScore, vectorScore, hybridWeights)
-      : skillScore;
 
     rows.push({
       job,
       enriched,
-      coverage: { ...coverage, finalScore },
-      matchScore: finalScore,
-      vectorScore: useHybrid ? vectorScore : null,
+      coverage: { ...coverage, finalScore: coverage.matchScore },
+      matchScore: coverage.matchScore,
+      vectorScore: null,
     });
   }
   return rows;

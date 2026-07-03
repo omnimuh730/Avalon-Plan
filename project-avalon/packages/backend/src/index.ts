@@ -7,7 +7,6 @@ import {
   SOCKET_EVENTS,
   type ActionResult,
   type ApplyProgress,
-  type WebRtcSignal,
   type RegisterPayload,
   type RegisteredPayload,
   type RemoteAction,
@@ -15,6 +14,7 @@ import {
 } from '@avalon/shared';
 
 const PORT = Number(process.env.PORT ?? 3847);
+const HOST = process.env.HOST !== undefined && process.env.HOST !== '' ? process.env.HOST : '0.0.0.0';
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? '*';
 
 interface Session {
@@ -91,6 +91,21 @@ io.on('connection', (socket) => {
 
   socket.on(SOCKET_EVENTS.REGISTER, (payload: RegisterPayload, ack?: (data: RegisteredPayload) => void) => {
     const session = getOrCreateSession(payload.sessionId);
+
+    // Re-registering under a different session must fully detach this socket
+    // from the old one — a stale extension/controller slot there would keep
+    // routing that session's commands to this client.
+    if (boundSession && boundSession !== session) {
+      const prev = boundSession;
+      if (prev.extension?.id === socket.id) prev.extension = undefined;
+      if (prev.controller?.id === socket.id) prev.controller = undefined;
+      prev.observers.delete(socket);
+      emitPeerStatus(prev);
+      if (!prev.extension && !prev.controller && prev.observers.size === 0) {
+        sessions.delete(prev.id);
+      }
+    }
+
     boundSession = session;
 
     if (payload.role === 'extension') {
@@ -140,14 +155,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // WebRTC signaling for the live tab view — relay to every other peer in the session.
-  socket.on(SOCKET_EVENTS.WEBRTC_SIGNAL, (signal: WebRtcSignal) => {
-    if (!boundSession) return;
-    for (const peer of [boundSession.extension, boundSession.controller, ...boundSession.observers]) {
-      if (peer && peer.id !== socket.id) peer.emit(SOCKET_EVENTS.WEBRTC_SIGNAL, signal);
-    }
-  });
-
   socket.on(SOCKET_EVENTS.TABS_UPDATE, (tabs: TabInfo[]) => {
     boundSession?.controller?.emit(SOCKET_EVENTS.TABS_UPDATE, tabs);
   });
@@ -176,6 +183,7 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Avalon relay listening on http://localhost:${PORT}`);
+httpServer.listen(PORT, HOST, () => {
+  const label = HOST === '0.0.0.0' ? 'localhost' : HOST;
+  console.log(`Avalon relay listening on http://${label}:${PORT}`);
 });

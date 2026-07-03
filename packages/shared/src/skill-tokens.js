@@ -15,6 +15,14 @@ const MIN_TOKEN_LEN = 2;
 const MAX_PROFILE_TOKENS = 600;
 
 /**
+ * Single-letter tokens are normally noise ("Plan B" → "b"), but a few are real
+ * languages that must survive as word tokens so `C` ↔ `C Programming` matches
+ * while `Calculation` never does (word match, not substring — the ≥5 compact
+ * shim can't fire for 1-char skills either).
+ */
+const SINGLE_CHAR_SKILLS = new Set(['c', 'r']);
+
+/**
  * Role-agnostic filler words that modify a real skill noun but carry no
  * discriminating signal on their own (e.g. "Backend Development" should not
  * match "Business Development" just because both say "development"). These are
@@ -52,7 +60,7 @@ export function skillTokens(skill) {
   const seen = new Set();
   for (let part of lower.split(/[^a-z0-9+#.]+/)) {
     part = part.replace(/^\.+|\.+$/g, ''); // trim stray leading/trailing dots (".net" → "net")
-    if (part.length < MIN_TOKEN_LEN) continue;
+    if (part.length < MIN_TOKEN_LEN && !SINGLE_CHAR_SKILLS.has(part)) continue;
     if (!/[a-z0-9]/.test(part)) continue; // must contain a letter/digit (drops "++", "##")
     if (STOP_TOKENS.has(part)) continue;
     if (seen.has(part)) continue;
@@ -80,4 +88,4 @@ export function buildProfileTokens(skills = [], { max = MAX_PROFILE_TOKENS } = {
   return [...seen];
 }
 
-export { MIN_TOKEN_LEN, MAX_PROFILE_TOKENS, STOP_TOKENS };
+export { MIN_TOKEN_LEN, MAX_PROFILE_TOKENS, STOP_TOKENS, SINGLE_CHAR_SKILLS };

@@ -2,7 +2,6 @@ import type { ActionableTree } from "@avalon/shared";
 import { chatCompletion } from "./client";
 import type { JsonSchemaDefinition } from "./chat-types";
 import { flattenActionableTree } from "./prompt";
-import { INJECTION_MAX_TOKENS } from "./config";
 
 /**
  * Self-healing recovery for a failed apply. The declarative first-pass fill stays
@@ -29,9 +28,20 @@ const RECOVERY_SYSTEM_PROMPT = [
   "  the DOM you are given so the same code works on any site.",
   "- Fill any still-empty REQUIRED field with a real value from the applicant profile, fix any",
   "  field flagged invalid, dismiss non-blocking overlays, and answer required single-select/",
-  "  checkbox questions. Fire `input` and `change` events after setting values so frameworks react.",
-  "- If a verification/one-time code is required and a code is provided to you below, type it into",
-  "  the code input(s).",
+  "  checkbox questions.",
+  "- React/controlled inputs ignore a plain `el.value = x`. Set the value through the native",
+  "  setter so the framework registers it, then dispatch input + change, e.g.:",
+  "    const set=(el,v)=>{const p=el instanceof HTMLTextAreaElement?HTMLTextAreaElement:HTMLInputElement;",
+  "    Object.getOwnPropertyDescriptor(p.prototype,'value').set.call(el,v);",
+  "    el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};",
+  "  Locate a field's input structurally (its label/container text → the nearby input/textarea), since",
+  "  some inputs have no <label> — their label may be sibling/container text or a placeholder.",
+  "- If you just uploaded or an async parse is in flight, await a brief settle before filling so a",
+  "  re-render does not wipe your values.",
+  "- If a verification/one-time code is required and a code is provided to you below, enter it. When",
+  "  the code is split across several single-character inputs, set ONE character per input in order",
+  "  (native value setter + input/change on each); otherwise put the whole code in the single field.",
+  "  Then click the submit/verify control.",
   "- After fixing the remaining issues, click the page's Submit / Apply / Continue / Next control",
   "  (find it by role/type/label from the live DOM) UNLESS you set done=false because more info is",
   "  needed (e.g. an unfulfilled verification).",
@@ -153,7 +163,6 @@ export async function generateRecoveryScript(ctx: RecoveryContext): Promise<Reco
     system: RECOVERY_SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildRecoveryUserMessage(ctx) }],
     responseSchema: RECOVERY_SCRIPT_SCHEMA,
-    maxTokens: INJECTION_MAX_TOKENS,
   });
 
   const structured = response.structured as

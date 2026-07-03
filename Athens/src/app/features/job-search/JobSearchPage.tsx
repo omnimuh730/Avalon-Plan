@@ -15,8 +15,8 @@ import { JobBulkActionsBar } from "./components/JobBulkActionsBar";
 import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { useJobSelection } from "./hooks/useJobSelection";
-import { useJobEmbeddings } from "./hooks/useJobEmbeddings";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
+import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { cn } from "../../lib/utils";
 
@@ -35,18 +35,12 @@ export function JobSearchPage() {
 
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
-  const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, patchJob, refreshStatusCounts } =
+  const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts } =
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
   const { applyToJob, updateJobStatus, cancelJobStatus, isPending } = useJobApplicationActions(patchJob, refreshStatusCounts);
-  const {
-    session: embeddingSession,
-    missing: missingEmbeddings,
-    loading: embeddingLoading,
-    isRunning: embeddingRunning,
-    start: startEmbedding,
-    stop: stopEmbedding,
-  } = useJobEmbeddings();
+  const { resumeStates, generateForJob, generateBulk, cancelBulk, bulkRunning, bulkProgress } =
+    useJobResumeGeneration(jobs);
 
   useEffect(() => {
     const pending = jobNav?.pendingFilters;
@@ -126,13 +120,15 @@ export function JobSearchPage() {
 
       {recommendationFallback && filters.sort === "matchScore" && (
         <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-900 dark:text-amber-100">
-          {recommendationFallbackMessage(recommendationReason, missingEmbeddings > 0)}
+          {recommendationFallbackMessage(recommendationReason)}
         </div>
       )}
 
       {!recommendationFallback && filters.sort === "matchScore" ? (
         <div className="mb-3 rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground">
-          Best match ranks the most relevant jobs first; remaining jobs follow sorted by date.
+          {recommendationWarming
+            ? "Match scores are being recalculated for your profile — ranking will sharpen shortly."
+            : "Best match ranks the most relevant jobs first; remaining jobs follow sorted by date."}
         </div>
       ) : null}
 
@@ -145,20 +141,10 @@ export function JobSearchPage() {
         onApplyAll={handleApplyAll}
         onDownload={handleDownload}
         onRemove={handleRemove}
-        missingEmbeddings={missingEmbeddings}
-        embeddingRunning={embeddingRunning}
-        embeddingLoading={embeddingLoading}
-        embeddingProgress={
-          embeddingRunning && embeddingSession.total
-            ? {
-                embedded: embeddingSession.embedded ?? 0,
-                processed: embeddingSession.processed ?? 0,
-                total: embeddingSession.total,
-              }
-            : undefined
-        }
-        onStartEmbedding={() => void startEmbedding()}
-        onStopEmbedding={() => void stopEmbedding()}
+        onGenerateResumes={() => void generateBulk(selectedJobs)}
+        onStopGenerateResumes={cancelBulk}
+        resumeGenerating={bulkRunning}
+        resumeProgress={bulkProgress ?? undefined}
         className="mb-3"
       />
 
@@ -169,7 +155,7 @@ export function JobSearchPage() {
           total={total}
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
-          pageSizeOptions={[10, 25, 50, 100]}
+          pageSizeOptions={[10, 25, 50, 100, 250, 500]}
           detailed
         />
         <button
@@ -212,6 +198,8 @@ export function JobSearchPage() {
               onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
               onCancel={(job) => void cancelJobStatus(job)}
               onJobScoresUpdated={patchJob}
+              resumeStates={resumeStates}
+              onGenerateResume={(job) => void generateForJob(job)}
             />
           </TabTransition>
         </div>

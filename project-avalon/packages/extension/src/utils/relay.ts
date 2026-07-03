@@ -8,11 +8,12 @@ import {
   type RemoteAction,
   type RegisteredPayload,
   type TabInfo,
-  type WebRtcSignal,
 } from '@avalon/shared';
 import { io, type Socket } from 'socket.io-client';
 import { executeInjectionPlan } from './injection-plan-executor';
 import {
+  AVALON_RELAY_CONNECTED_KEY,
+  AVALON_RELAY_ERROR_KEY,
   AVALON_SERVER_KEY,
   AVALON_SESSION_KEY,
   DEFAULT_SERVER_URL,
@@ -22,8 +23,50 @@ import { ensureContentScript, runActionInTab } from './tab-messages';
 
 let socket: Socket | null = null;
 let tabListenersBound = false;
-let webrtcBridgeBound = false;
 let currentSessionId: string = DEFAULT_SESSION_ID;
+let lastConnectionError: string | null = null;
+
+async function persistRelayError(message: string | null) {
+  lastConnectionError = message;
+  if (message) {
+    await browser.storage.local.set({ [AVALON_RELAY_ERROR_KEY]: message });
+  } else {
+    await browser.storage.local.remove(AVALON_RELAY_ERROR_KEY);
+  }
+}
+
+async function persistRelayConnected(connected: boolean) {
+  await browser.storage.local.set({ [AVALON_RELAY_CONNECTED_KEY]: connected });
+}
+
+async function probeRelayHealth(serverUrl: string): Promise<boolean> {
+  try {
+    const base = serverUrl.replace(/\/$/, '');
+    const res = await fetch(`${base}/health`, { cache: 'no-store' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function probeRelayHealthWithRetry(
+  serverUrl: string,
+  attempts = 20,
+  intervalMs = 500,
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i += 1) {
+    if (await probeRelayHealth(serverUrl)) return true;
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  return false;
+}
+
+function isSocketReconnecting(sock: Socket): boolean {
+  const mgr = sock.io as Socket['io'] & { reconnecting?: boolean };
+  return Boolean(mgr.reconnecting);
+}
 
 function emitApplyProgress(progress: Omit<ApplyProgress, 'at' | 'sessionId'>) {
   if (!socket?.connected) return;
@@ -34,86 +77,6 @@ function emitApplyProgress(progress: Omit<ApplyProgress, 'at' | 'sessionId'>) {
   } satisfies ApplyProgress);
 }
 
-// --- WebRTC live tab view bridge (relay ↔ offscreen capturer) -----------------
-
-const OFFSCREEN_PATH = 'offscreen.html';
-
-async function ensureOffscreenDocument(): Promise<void> {
-  // chrome.offscreen is only present in MV3 Chromium.
-  const offscreen = (chrome as unknown as { offscreen?: typeof chrome.offscreen }).offscreen;
-  if (!offscreen) throw new Error('offscreen API unavailable');
-  const has = await offscreen.hasDocument?.();
-  if (has) return;
-  await offscreen.createDocument({
-    url: OFFSCREEN_PATH,
-    reasons: ['USER_MEDIA' as chrome.offscreen.Reason],
-    justification: 'Stream the active tab to the Avalon controller (live view).',
-  });
-}
-
-/** Handle a signaling message arriving from the viewer (controller) over the socket. */
-async function handleWebRtcSignalFromViewer(signal: WebRtcSignal): Promise<void> {
-  try {
-    if (signal.kind === 'request') {
-      await ensureOffscreenDocument();
-      const tabId =
-        typeof signal.tabId === 'number'
-          ? signal.tabId
-          : (await browser.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
-      if (!tabId) throw new Error('No tab to capture');
-      // tabCapture requires the target tab to be active in its window.
-      await focusTab(tabId);
-      const tabCapture = (chrome as unknown as { tabCapture?: typeof chrome.tabCapture }).tabCapture;
-      if (!tabCapture?.getMediaStreamId) throw new Error('tabCapture unavailable');
-      const streamId = await new Promise<string>((resolve, reject) => {
-        tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) =>
-          chrome.runtime.lastError || !id
-            ? reject(new Error(chrome.runtime.lastError?.message ?? 'Could not get tab stream'))
-            : resolve(id),
-        );
-      });
-      await chrome.runtime.sendMessage({ type: EXTENSION_MESSAGES.WEBRTC_START, streamId });
-      return;
-    }
-    if (signal.kind === 'stop') {
-      await chrome.runtime.sendMessage({ type: EXTENSION_MESSAGES.WEBRTC_STOP }).catch(() => {});
-      return;
-    }
-    // answer / ice from the viewer → forward into the offscreen peer.
-    await chrome.runtime
-      .sendMessage({
-        type: EXTENSION_MESSAGES.WEBRTC_TO_OFFSCREEN,
-        payload: { kind: signal.kind, data: signal.data },
-      })
-      .catch(() => {});
-  } catch (error) {
-    console.error('[Avalon] webrtc signal failed', error);
-    // Tell the viewer instead of leaving it stuck on "connecting".
-    socket?.emit(SOCKET_EVENTS.WEBRTC_SIGNAL, {
-      sessionId: currentSessionId,
-      kind: 'error',
-      message: error instanceof Error ? error.message : String(error),
-    } satisfies WebRtcSignal);
-  }
-}
-
-/** Bind the offscreen→background message bridge once: forward offer/ice to the viewer. */
-function bindWebRtcBridge(): void {
-  if (webrtcBridgeBound) return;
-  webrtcBridgeBound = true;
-  chrome.runtime.onMessage.addListener(
-    (message: { type?: string; payload?: { kind: WebRtcSignal['kind']; data?: unknown; message?: string } }) => {
-      if (message?.type !== EXTENSION_MESSAGES.WEBRTC_FROM_OFFSCREEN || !message.payload) return;
-      if (!socket?.connected) return;
-      socket.emit(SOCKET_EVENTS.WEBRTC_SIGNAL, {
-        sessionId: currentSessionId,
-        kind: message.payload.kind,
-        data: message.payload.data,
-        message: message.payload.message,
-      } satisfies WebRtcSignal);
-    },
-  );
-}
 
 function bindTabListeners() {
   if (tabListenersBound) return;
@@ -232,10 +195,254 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
     return { actionId: action.id, success: true, data: { reloaded: true } };
   }
 
+  if (action.action === 'close_tab') {
+    try {
+      await browser.tabs.remove(tabId);
+    } catch {
+      /* tab may already be gone */
+    }
+    return { actionId: action.id, success: true, data: { closed: true } };
+  }
+
   if (action.action === 'screenshot') {
     await focusTab(tabId);
     const dataUrl = await browser.tabs.captureVisibleTab(undefined, { format: 'png' });
     return { actionId: action.id, success: true, data: { dataUrl } };
+  }
+
+  // execute_script handled here (not via content script) to bypass page CSP.
+  // new Function() in the service worker is not subject to the page's CSP;
+  // chrome.scripting.executeScript injects the serialized function at the
+  // browser level, which also bypasses the page's CSP 'unsafe-eval' restriction.
+  if (action.action === 'execute_script') {
+    await focusTab(tabId);
+    const source = String(action.payload?.source ?? 'true');
+    let fn: Function;
+    try {
+      fn = new Function(source);
+    } catch (error) {
+      return {
+        actionId: action.id,
+        success: false,
+        error: `Script compilation failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: fn as () => unknown,
+      });
+      return {
+        actionId: action.id,
+        success: true,
+        data: { result: results[0]?.result },
+      };
+    } catch (error) {
+      return {
+        actionId: action.id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  // read_page_state is a CSP-safe replacement for reading page text via
+  // execute_script. It uses a hardcoded function (no eval needed) injected
+  // via chrome.scripting.executeScript, so it works on pages that block
+  // 'unsafe-eval' in their CSP (e.g. Greenhouse).
+  if (action.action === 'read_page_state') {
+    await focusTab(tabId);
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const controls = document.querySelectorAll(
+            'input:not([type=hidden]):not([disabled]),textarea,select,[contenteditable="true"]',
+          );
+          const full = document.body?.innerText ?? '';
+          // Capture head AND tail: on long pages (e.g. a job description above the
+          // form) the decisive text — a confirmation, error, or "enter the code"
+          // prompt — is often at the BOTTOM, past a simple head-only slice.
+          const LIMIT = 8000;
+          const text =
+            full.length <= LIMIT * 2
+              ? full
+              : `${full.slice(0, LIMIT)}\n…\n${full.slice(-LIMIT)}`;
+          // Greenhouse-only hardcode: the emailed-code step renders an
+          // #email-verification fieldset with single-char security-input-{n} boxes.
+          // Detect it deterministically here so step 8 never depends on the AI
+          // guessing "needs_verification" (it often mislabels it "incomplete").
+          const otpInputs = document.querySelectorAll(
+            '[id^="security-input-"]',
+          ).length;
+          const hasVerificationSection = Boolean(
+            document.querySelector('#email-verification, fieldset#email-verification'),
+          );
+          return { text, controlCount: controls.length, otpInputs, hasVerificationSection };
+        },
+      });
+      return {
+        actionId: action.id,
+        success: true,
+        data: results[0]?.result ?? { text: '', controlCount: 0, otpInputs: 0, hasVerificationSection: false },
+      };
+    } catch (error) {
+      return {
+        actionId: action.id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  // fill_verification_code is CSP-safe (hardcoded func, no eval). It distributes an
+  // emailed one-time code across the page's code inputs — a group of single-char
+  // boxes, or a single code field — using the React-safe native setter, then clicks
+  // the submit/verify control. Generic DOM heuristics only (no vendor strings).
+  if (action.action === 'fill_verification_code') {
+    await focusTab(tabId);
+    const code = String(action.payload?.code ?? '').trim();
+    const platform = String(action.payload?.platform ?? '').toLowerCase();
+    if (!code) return { actionId: action.id, success: false, error: 'code is required' };
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async (codeStr: string, platformHint: string) => {
+          const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+          const nativeSet = (el: HTMLInputElement, v: string) => {
+            const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+            if (desc?.set) desc.set.call(el, v);
+            else el.value = v;
+          };
+          // Fire a full key sequence so controlled/React OTP inputs register the
+          // character (and auto-advance focus): keydown → beforeinput → input → keyup → change.
+          const typeChar = (el: HTMLInputElement, ch: string) => {
+            el.focus();
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+            try {
+              el.dispatchEvent(new InputEvent('beforeinput', { data: ch, inputType: 'insertText', bubbles: true, cancelable: true }));
+            } catch {
+              /* older engines */
+            }
+            nativeSet(el, ch);
+            el.dispatchEvent(new InputEvent('input', { data: ch, inputType: 'insertText', bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+
+          const chars = codeStr.split('');
+          let filled = 0;
+          let mode = 'none';
+
+          const clearInput = (el: HTMLInputElement) => {
+            nativeSet(el, '');
+            el.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true }));
+          };
+
+          // Greenhouse-only hardcode: #email-verification fieldset with security-input-{n} boxes.
+          const greenhouseBoxes = Array.from(
+            document.querySelectorAll<HTMLInputElement>('[id^="security-input-"]'),
+          )
+            .filter((i) => !i.disabled && i.offsetParent !== null)
+            .sort((a, b) => {
+              const ai = Number.parseInt(a.id.replace('security-input-', ''), 10);
+              const bi = Number.parseInt(b.id.replace('security-input-', ''), 10);
+              return (Number.isFinite(ai) ? ai : 0) - (Number.isFinite(bi) ? bi : 0);
+            });
+
+          const useGreenhouse =
+            platformHint === 'greenhouse' ||
+            greenhouseBoxes.length >= chars.length ||
+            Boolean(document.querySelector('#email-verification, fieldset#email-verification'));
+
+          let boxes: HTMLInputElement[] = [];
+          if (useGreenhouse && greenhouseBoxes.length > 0) {
+            boxes = greenhouseBoxes;
+            mode = 'greenhouse-boxes';
+          } else {
+            const inputs = Array.from(
+              document.querySelectorAll<HTMLInputElement>('input:not([type=hidden]):not([disabled])'),
+            ).filter((i) => ['text', 'tel', 'number', ''].includes(i.type) || i.inputMode === 'numeric');
+            boxes = inputs.filter((i) => i.getAttribute('maxlength') === '1');
+          }
+
+          if (boxes.length >= chars.length && boxes.length > 0) {
+            // Clear stale digits from a prior wrong attempt before filling.
+            for (const box of boxes) clearInput(box);
+            await wait(40);
+
+            // Try a real PASTE first — many OTP widgets distribute a pasted code
+            // across the boxes in one shot.
+            try {
+              const dt = new DataTransfer();
+              dt.setData('text', codeStr);
+              boxes[0].focus();
+              boxes[0].dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+              await wait(80);
+            } catch {
+              /* paste not supported — fall through to typing */
+            }
+            const pasteWorked = boxes.slice(0, chars.length).every((b, i) => (b.value || '') === chars[i]);
+            if (!pasteWorked) {
+              for (const box of boxes) clearInput(box);
+              await wait(40);
+              for (let i = 0; i < chars.length; i += 1) {
+                typeChar(boxes[i], chars[i]);
+                await wait(30);
+              }
+            }
+            filled = boxes.slice(0, chars.length).filter((b) => (b.value || '').length > 0).length;
+            if (mode === 'greenhouse-boxes') {
+              mode = pasteWorked ? 'greenhouse-paste' : 'greenhouse-type';
+            } else {
+              mode = pasteWorked ? 'boxes-paste' : 'boxes-type';
+            }
+          } else {
+            const inputs = Array.from(
+              document.querySelectorAll<HTMLInputElement>('input:not([type=hidden]):not([disabled])'),
+            ).filter((i) => ['text', 'tel', 'number', ''].includes(i.type) || i.inputMode === 'numeric');
+            const labelled = inputs.find((i) =>
+              /code|verif|security|otp|passcode|pin/i.test(
+                `${i.name} ${i.id} ${i.getAttribute('aria-label') ?? ''} ${i.placeholder ?? ''}`,
+              ),
+            );
+            const single = labelled ?? inputs[0];
+            if (single) {
+              single.focus();
+              nativeSet(single, codeStr);
+              single.dispatchEvent(new InputEvent('input', { data: codeStr, inputType: 'insertText', bubbles: true }));
+              single.dispatchEvent(new Event('change', { bubbles: true }));
+              filled = (single.value || '').length > 0 ? 1 : 0;
+              mode = 'single';
+            }
+          }
+
+          // Give the framework a tick to enable the submit button, then click it.
+          await wait(120);
+          const clickable = Array.from(
+            document.querySelectorAll<HTMLElement>('button, input[type=submit], [role=button]'),
+          ).filter((b) => b.offsetParent !== null);
+          const submitBtn =
+            clickable.find((b) => (b as HTMLInputElement).type === 'submit') ??
+            clickable.find((b) => /submit|verify|confirm|continue|apply/i.test(b.textContent ?? '')) ??
+            null;
+          let clicked = false;
+          if (filled >= chars.length && submitBtn && !(submitBtn as HTMLButtonElement).disabled) {
+            submitBtn.click();
+            clicked = true;
+          }
+          return { filled, mode, clicked, boxes: boxes.length, expected: chars.length, code: codeStr };
+        },
+        args: [code, platform],
+      });
+      return { actionId: action.id, success: true, data: results[0]?.result ?? { filled: 0, clicked: false } };
+    } catch (error) {
+      return {
+        actionId: action.id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   if (action.action === 'fetch_actionable_tree') {
@@ -293,17 +500,60 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
 export async function connectRelay(
   overrides?: { serverUrl?: string; sessionId?: string },
   onRegistered?: (payload: RegisteredPayload) => void,
+  onConnectError?: (error: Error) => void,
+  options?: { waitForHealth?: boolean },
 ) {
   const config = await getStoredConfig();
   const serverUrl = overrides?.serverUrl ?? config.serverUrl;
-  const sessionId = overrides?.sessionId?.trim() || DEFAULT_SESSION_ID;
+  // Fall back to the SAVED session before "default" — otherwise any reconnect
+  // without an explicit override silently re-registers this extension into the
+  // shared default session, where it executes another user's commands.
+  const sessionId = overrides?.sessionId?.trim() || config.sessionId?.trim() || DEFAULT_SESSION_ID;
+
+  if (options?.waitForHealth) {
+    const reachable = await probeRelayHealthWithRetry(serverUrl);
+    if (!reachable) {
+      const message = `Relay server unreachable at ${serverUrl}. Start the Avalon backend (port 3847).`;
+      await persistRelayError(message);
+      onConnectError?.(new Error(message));
+      return null;
+    }
+  } else {
+    await persistRelayError(null);
+  }
 
   socket?.disconnect();
-  socket = io(serverUrl, { transports: ['websocket', 'polling'] });
+  socket?.removeAllListeners();
+  // MV3 service workers have NO XMLHttpRequest, so socket.io's HTTP long-polling
+  // transport fails immediately ("xhr poll error"). WebSocket IS available in the
+  // worker, so we use it exclusively — this is what makes the extension actually
+  // connect to the relay.
+  socket = io(serverUrl, {
+    transports: ['websocket'],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1500,
+    reconnectionDelayMax: 10000,
+    timeout: 20000,
+  });
   bindTabListeners();
-  bindWebRtcBridge();
+
+  socket.on('connect_error', (error: Error) => {
+    if (socket?.connected) return;
+    void persistRelayConnected(false);
+    onConnectError?.(error);
+  });
+
+  socket.on('disconnect', (reason) => {
+    void persistRelayConnected(false);
+    if (reason === 'io server disconnect') {
+      void persistRelayError('Relay disconnected by server.');
+    }
+  });
 
   socket.on('connect', () => {
+    void persistRelayError(null);
+    void persistRelayConnected(true);
     socket?.emit(
       SOCKET_EVENTS.REGISTER,
       { role: 'extension', sessionId },
@@ -324,9 +574,6 @@ export async function connectRelay(
     socket?.emit(SOCKET_EVENTS.ACTION_RESULT, result);
   });
 
-  socket.on(SOCKET_EVENTS.WEBRTC_SIGNAL, (signal: WebRtcSignal) => {
-    void handleWebRtcSignalFromViewer(signal);
-  });
 
   socket.on(SOCKET_EVENTS.REQUEST_TABS, async () => {
     const tabs = await collectTabs();
@@ -352,13 +599,79 @@ export async function connectRelay(
   return socket;
 }
 
+/** Re-open the relay if the MV3 service worker woke without an in-memory socket. */
+export async function ensureRelayConnected(
+  overrides?: { serverUrl?: string; sessionId?: string },
+): Promise<void> {
+  const existing = getRelaySocket();
+  if (existing?.connected) {
+    await persistRelayError(null);
+    await persistRelayConnected(true);
+    return;
+  }
+  if (existing && !existing.connected) {
+    if (isSocketReconnecting(existing)) return;
+    existing.disconnect();
+    socket = null;
+  }
+
+  const config = await getStoredConfig();
+  await connectRelay({
+    serverUrl: overrides?.serverUrl ?? config.serverUrl,
+    sessionId: overrides?.sessionId ?? config.sessionId,
+  });
+}
+
+export function waitForRelayRegistration(
+  overrides?: { serverUrl?: string; sessionId?: string },
+  timeoutMs = 20000,
+): Promise<RegisteredPayload> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(getRelayLastError() ?? 'Relay connection timed out'));
+    }, timeoutMs);
+
+    void connectRelay(
+      overrides,
+      (payload) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(payload);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+      { waitForHealth: true },
+    );
+  });
+}
+
 export function disconnectRelay() {
   socket?.disconnect();
   socket = null;
+  void persistRelayConnected(false);
 }
 
 export function getRelaySocket() {
   return socket;
+}
+
+export function getRelayLastError() {
+  return lastConnectionError;
+}
+
+export async function readStoredRelayError(): Promise<string | null> {
+  const stored = await browser.storage.local.get(AVALON_RELAY_ERROR_KEY);
+  const message = (stored[AVALON_RELAY_ERROR_KEY] as string | undefined) ?? null;
+  lastConnectionError = message;
+  return message;
 }
 
 export async function saveRelayConfig(serverUrl: string, sessionId?: string) {
