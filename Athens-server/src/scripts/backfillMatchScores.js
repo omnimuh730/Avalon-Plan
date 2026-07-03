@@ -19,7 +19,6 @@ import {
   accountInfoCollection,
   matchProfileStateCollection,
 } from '../db/mongo.js';
-import { initRedis, closeRedis } from '../db/redis.js';
 import { requestUserRescore, countScoresForApplier } from '../services/matching/matchScoreStore.js';
 import { rescoreUser } from '../services/matching/matchScoreWorker.js';
 
@@ -27,7 +26,6 @@ const force = process.argv.includes('--force');
 
 async function main() {
   await initMongo();
-  await initRedis();
 
   if (!jobsCollection || !accountInfoCollection || !matchProfileStateCollection) {
     throw new Error('MongoDB not ready');
@@ -77,7 +75,6 @@ async function main() {
   console.log(
     `[backfill-match-scores] rescored ${done} user(s); marked ${marked.modifiedCount} job(s) scored`,
   );
-  await closeRedis();
   await closeMongo?.();
   process.exit(0);
 }

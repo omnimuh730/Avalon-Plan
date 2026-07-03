@@ -6,6 +6,7 @@
  */
 import { randomUUID } from 'crypto';
 import { jobsCollection } from '../../db/mongo.js';
+import { formatCostUsd } from '../llm/llmService.js';
 import { resolveExtractionAuth, extractAndPersistJob, recordExtractionFailure } from './aiExtractService.js';
 
 // How many jobs to extract concurrently. Each is one LLM request, so this is
@@ -52,6 +53,11 @@ async function processOne(session, auth, job) {
     const result = await extractAndPersistJob(job, auth, { signal: controller.signal });
     session.extracted += 1;
     session.lastJob = { id: result.jobId, title: job.title || '', skills: result.skillCount };
+    if (result.usage) {
+      session.inputTokens += result.usage.inputTokens || 0;
+      session.outputTokens += result.usage.outputTokens || 0;
+      if (typeof result.usage.cost === 'number') session.costUsd += result.usage.cost;
+    }
   } catch (err) {
     if (cancelRequested || controller.signal.aborted) {
       await requeue(job._id); // Stop mid-flight — leave it pending, not stuck 'extracting'
@@ -79,6 +85,12 @@ async function runSession(session) {
     return;
   }
 
+  session.provider = auth.providerId;
+  session.model = auth.model;
+  console.log(
+    `[job-skill-extract] starting — ${auth.providerId}/${auth.model}, up to ${CONCURRENCY} concurrent, ${session.total} job(s)`,
+  );
+
   try {
     // Claim CONCURRENCY jobs and fire them all at once; repeat until drained.
     while (!cancelRequested) {
@@ -96,6 +108,10 @@ async function runSession(session) {
     session.finishedAt = new Date().toISOString();
     session.status = cancelRequested ? 'cancelled' : 'completed';
     session.remaining = await countPendingExtraction();
+    console.log(
+      `[job-skill-extract] ${session.status} — ${session.extracted} extracted, ${session.failed} failed · ` +
+        `${session.inputTokens + session.outputTokens} tokens · ${formatCostUsd(session.costUsd)}`,
+    );
   }
 }
 
@@ -116,6 +132,11 @@ export function getExtractionStatus() {
     finishedAt: activeSession.finishedAt ?? null,
     error: activeSession.error ?? null,
     concurrency: CONCURRENCY,
+    provider: activeSession.provider ?? null,
+    model: activeSession.model ?? null,
+    inputTokens: activeSession.inputTokens,
+    outputTokens: activeSession.outputTokens,
+    costUsd: activeSession.costUsd,
   };
 }
 
@@ -153,6 +174,11 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
     retried: 0,
     remaining: pending,
     lastJob: null,
+    provider: null,
+    model: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
     startedAt: new Date().toISOString(),
     finishedAt: null,
   };

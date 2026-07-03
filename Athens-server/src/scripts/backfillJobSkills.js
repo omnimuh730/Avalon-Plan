@@ -1,24 +1,22 @@
 /**
- * Backfill jobs.skillsNormalized and rebuild Redis skill inverted index.
+ * Backfill jobs.skills / skillsNormalized / skillTokens from the shared
+ * normalizer (e.g. after a tokenizer change). MongoDB only — no Redis.
  * Usage: node src/scripts/backfillJobSkills.js
  */
 import dotenv from 'dotenv';
 dotenv.config();
 
 import { initMongo, jobsCollection, closeMongo } from '../db/mongo.js';
-import { initRedis, closeRedis, isRedisReady } from '../db/redis.js';
-import { indexJobInRedis, jobSkillTokens } from '../services/matching/skillIndex.js';
+import { jobSkillTokens } from '../services/matching/skillIndex.js';
 import { enrichJobSkillsFromTitle } from '../services/matching/jobSkillExtraction.js';
 
 async function main() {
   await initMongo();
-  await initRedis();
 
   if (!jobsCollection) throw new Error('MongoDB not ready');
 
   const cursor = jobsCollection.find({}, { projection: { title: 1, skills: 1, skillsNormalized: 1, skillTokens: 1 } });
   let updated = 0;
-  let indexed = 0;
 
   for await (const doc of cursor) {
     const { skills, skillsNormalized } = enrichJobSkillsFromTitle(doc);
@@ -36,14 +34,9 @@ async function main() {
       );
       updated += 1;
     }
-    if (isRedisReady() && (skillsNormalized.length || skillTokens.length)) {
-      await indexJobInRedis(String(doc._id), skillsNormalized, skillTokens);
-      indexed += 1;
-    }
   }
 
-  console.log(`[backfill-job-skills] updated=${updated} redis-indexed=${indexed}`);
-  await closeRedis();
+  console.log(`[backfill-job-skills] updated=${updated}`);
   await closeMongo?.();
   process.exit(0);
 }

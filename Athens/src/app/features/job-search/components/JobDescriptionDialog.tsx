@@ -33,7 +33,6 @@ import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
 import { DetectedSkillsPanel } from "./DetectedSkillsPanel";
 import { JobStatusActions } from "./JobStatusActions";
 import { AddProfileSkillPanel } from "./AddProfileSkillDialog";
-import { RequiredSkillsMatch } from "./RequiredSkillsMatch";
 
 const WORK_MODE_LABELS: Record<WorkMode, string> = {
   remote: "Remote",
@@ -160,7 +159,7 @@ export function JobDescriptionDialog({
   const [skillMatchOpen, setSkillMatchOpen] = useState(false);
   const [addSkillOpen, setAddSkillOpen] = useState(false);
   const [pendingSkill, setPendingSkill] = useState("");
-  const { boostingSkill, boostSkillForJob, matchContext } = useProfileMatchSkills(open);
+  const { skills: userSkills, boostingSkill, boostSkillForJob, matchContext } = useProfileMatchSkills(open);
 
   const jobId = j.backendId || j.id;
   const { data: resumeRank, loading: resumeRankLoading } = useJobResumeRank(jobId, open && !addSkillOpen);
@@ -297,15 +296,16 @@ export function JobDescriptionDialog({
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 subtle-scroll space-y-6">
-          <RequiredSkillsMatch
-            job={displayJob}
+          <DetectedSkillsPanel
+            aiSkills={displayJob.aiSkills}
+            matchContext={matchContext}
+            userSkills={userSkills}
+            score={displayJob.scores.skill}
+            covered={displayJob.scores.skillsCovered}
+            required={displayJob.scores.skillsRequired}
             onRequestAddSkill={handleRequestAddSkill}
             boostingSkill={boostingSkill}
           />
-
-          {displayJob.aiSkills?.length ? (
-            <DetectedSkillsPanel aiSkills={displayJob.aiSkills} />
-          ) : null}
 
           {displayJob.industries.length > 0 ? (
             <section>

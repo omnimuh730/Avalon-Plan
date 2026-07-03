@@ -1,8 +1,8 @@
 /**
  * Wipe all pre-built skill data so it can be rebuilt with AI. Jobs are kept —
  * only their skill fields are removed and re-queued for extraction. Also clears
- * the manual profile skills, materialized match scores, the global dictionary,
- * and the Redis skill index.
+ * the manual profile skills, materialized match scores, and the global
+ * dictionary.
  *
  * Batched (never a single global $unset) so the collection stays responsive.
  *
@@ -20,10 +20,7 @@ import {
   matchProfileStateCollection,
   skillDictionaryCollection,
 } from '../db/mongo.js';
-import { initRedis, closeRedis, isRedisReady, getRedis } from '../db/redis.js';
-
 const BATCH = 5000;
-const REDIS_PREFIXES = ['skill:', 'tok:', 'job:skills:', 'job:tokens:', 'job:skillcount:'];
 
 async function batchUnsetJobSkills() {
   const cursor = jobsCollection.find({}, { projection: { _id: 1 } });
@@ -61,23 +58,8 @@ async function batchUnsetJobSkills() {
   return updated;
 }
 
-async function clearRedisSkillIndex() {
-  if (!isRedisReady()) return 0;
-  const redis = getRedis();
-  let total = 0;
-  for (const prefix of REDIS_PREFIXES) {
-    const keys = await redis.keys(`${prefix}*`);
-    if (keys.length) {
-      await redis.del(keys);
-      total += keys.length;
-    }
-  }
-  return total;
-}
-
 async function main() {
   await initMongo();
-  await initRedis();
   if (!jobsCollection) throw new Error('MongoDB not ready');
 
   console.log('[reset-skills] wiping job skill fields (batched)…');
@@ -89,7 +71,6 @@ async function main() {
     matchProfileStateCollection?.deleteMany({}),
     skillDictionaryCollection?.deleteMany({}),
   ]);
-  const redisCleared = await clearRedisSkillIndex();
 
   console.log('[reset-skills] done:', {
     jobsReset,
@@ -97,10 +78,8 @@ async function main() {
     matchScoresDeleted: matchScores?.deletedCount ?? 0,
     matchStateDeleted: matchState?.deletedCount ?? 0,
     dictionaryDeleted: dict?.deletedCount ?? 0,
-    redisKeysCleared: redisCleared,
   });
 
-  await closeRedis();
   await closeMongo?.();
   process.exit(0);
 }

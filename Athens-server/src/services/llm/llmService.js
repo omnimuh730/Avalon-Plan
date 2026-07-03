@@ -199,7 +199,16 @@ export async function chatCompletion({
   }
   const content = data?.choices?.[0]?.message?.content;
   if (content == null) throw new Error(`${p.label} returned an empty response.`);
-  return { content, usage: summarizeUsage(data?.usage, model) };
+  const usage = summarizeUsage(data?.usage, model);
+  if (process.env.LLM_LOG !== 'off') {
+    const cost = usage.cost != null ? formatCostUsd(usage.cost) : 'n/a';
+    const cached = usage.cachedTokens ? ` (+${usage.cachedTokens} cached)` : '';
+    // one line per call: purpose · provider/model · tokens · cost
+    console.log(
+      `[llm] ${feature} · ${p.id}/${model} — in ${usage.inputTokens}${cached} out ${usage.outputTokens} · ${cost}`,
+    );
+  }
+  return { content, usage };
 }
 
 const modelCache = new Map();
