@@ -7,7 +7,8 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installTerminalLogger, printBanner } from '@nextoffer/shared/terminal-log';
-import { probe } from './wait-for-ports.mjs';
+import { freePorts, probe } from './wait-for-ports.mjs';
+import { backendPorts } from './lib/dev-runtime.mjs';
 
 installTerminalLogger('prestart');
 
@@ -16,6 +17,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MONGO_HOST = process.env.MONGO_HOST || '127.0.0.1';
 const MONGO_PORT = Number(process.env.MONGO_PORT || 27017);
 
+// Every TCP port this project owns: the four backends + the Vite UI dev server.
+// (MongoDB is external infra — intentionally excluded so we never kill it.)
+const DEV_UI_PORT = Number(process.env.VITE_DEV_PORT || 9030);
+const PROJECT_PORTS = [...backendPorts.map((p) => p.port), DEV_UI_PORT];
+
 function run(cmd, args, opts = {}) {
 	console.log(`> ${cmd} ${args.join(' ')}`);
 	const r = spawnSync(cmd, args, { stdio: 'inherit', cwd: ROOT, ...opts });
@@ -23,6 +29,10 @@ function run(cmd, args, opts = {}) {
 }
 
 printBanner('NextOffer Prestart', ['Mongo-only bootstrap — no Docker required']);
+
+// Free our own ports first so a stale service from a previous run can't linger
+// and cause port-in-use / transient ECONNREFUSED failures on the fresh start.
+await freePorts(PROJECT_PORTS);
 
 if (!(await probe(MONGO_HOST, MONGO_PORT))) {
 	console.error(`
