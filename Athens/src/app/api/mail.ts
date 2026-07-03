@@ -14,7 +14,8 @@ export interface VerificationCodeResult {
 
 /**
  * Fetch the most recent verification credential (one-time CODE or verify LINK) from
- * the applier's inbox (IMAP Gmail). Regex fast-path, then AI extraction that handles
+ * the applier's inbox (IMAP Gmail). Scans the 10 most recent emails in the
+ * lookback window. Regex fast-path, then AI extraction that handles
  * alphanumeric/lowercase/boxed codes and links. Returns { code: null, link: null }
  * when none is found; never throws.
  */

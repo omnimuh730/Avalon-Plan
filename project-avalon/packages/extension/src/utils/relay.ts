@@ -268,13 +268,23 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
             full.length <= LIMIT * 2
               ? full
               : `${full.slice(0, LIMIT)}\n…\n${full.slice(-LIMIT)}`;
-          return { text, controlCount: controls.length };
+          // Greenhouse-only hardcode: the emailed-code step renders an
+          // #email-verification fieldset with single-char security-input-{n} boxes.
+          // Detect it deterministically here so step 8 never depends on the AI
+          // guessing "needs_verification" (it often mislabels it "incomplete").
+          const otpInputs = document.querySelectorAll(
+            '[id^="security-input-"]',
+          ).length;
+          const hasVerificationSection = Boolean(
+            document.querySelector('#email-verification, fieldset#email-verification'),
+          );
+          return { text, controlCount: controls.length, otpInputs, hasVerificationSection };
         },
       });
       return {
         actionId: action.id,
         success: true,
-        data: results[0]?.result ?? { text: '', controlCount: 0 },
+        data: results[0]?.result ?? { text: '', controlCount: 0, otpInputs: 0, hasVerificationSection: false },
       };
     } catch (error) {
       return {
@@ -292,11 +302,12 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   if (action.action === 'fill_verification_code') {
     await focusTab(tabId);
     const code = String(action.payload?.code ?? '').trim();
+    const platform = String(action.payload?.platform ?? '').toLowerCase();
     if (!code) return { actionId: action.id, success: false, error: 'code is required' };
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId },
-        func: async (codeStr: string) => {
+        func: async (codeStr: string, platformHint: string) => {
           const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
           const nativeSet = (el: HTMLInputElement, v: string) => {
             const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
@@ -320,12 +331,35 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
           };
 
           const chars = codeStr.split('');
-          const inputs = Array.from(
-            document.querySelectorAll<HTMLInputElement>('input:not([type=hidden]):not([disabled])'),
-          ).filter((i) => ['text', 'tel', 'number', ''].includes(i.type) || i.inputMode === 'numeric');
-          const boxes = inputs.filter((i) => i.getAttribute('maxlength') === '1');
           let filled = 0;
           let mode = 'none';
+
+          // Greenhouse-only hardcode: #email-verification fieldset with security-input-{n} boxes.
+          const greenhouseBoxes = Array.from(
+            document.querySelectorAll<HTMLInputElement>('[id^="security-input-"]'),
+          )
+            .filter((i) => !i.disabled && i.offsetParent !== null)
+            .sort((a, b) => {
+              const ai = Number.parseInt(a.id.replace('security-input-', ''), 10);
+              const bi = Number.parseInt(b.id.replace('security-input-', ''), 10);
+              return (Number.isFinite(ai) ? ai : 0) - (Number.isFinite(bi) ? bi : 0);
+            });
+
+          const useGreenhouse =
+            platformHint === 'greenhouse' ||
+            greenhouseBoxes.length >= chars.length ||
+            Boolean(document.querySelector('#email-verification, fieldset#email-verification'));
+
+          let boxes: HTMLInputElement[] = [];
+          if (useGreenhouse && greenhouseBoxes.length > 0) {
+            boxes = greenhouseBoxes;
+            mode = 'greenhouse-boxes';
+          } else {
+            const inputs = Array.from(
+              document.querySelectorAll<HTMLInputElement>('input:not([type=hidden]):not([disabled])'),
+            ).filter((i) => ['text', 'tel', 'number', ''].includes(i.type) || i.inputMode === 'numeric');
+            boxes = inputs.filter((i) => i.getAttribute('maxlength') === '1');
+          }
 
           if (boxes.length >= chars.length && boxes.length > 0) {
             // Try a real PASTE first — many OTP widgets distribute a pasted code
@@ -347,8 +381,15 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
               }
             }
             filled = boxes.slice(0, chars.length).filter((b) => (b.value || '').length > 0).length;
-            mode = pasteWorked ? 'boxes-paste' : 'boxes-type';
+            if (mode === 'greenhouse-boxes') {
+              mode = pasteWorked ? 'greenhouse-paste' : 'greenhouse-type';
+            } else {
+              mode = pasteWorked ? 'boxes-paste' : 'boxes-type';
+            }
           } else {
+            const inputs = Array.from(
+              document.querySelectorAll<HTMLInputElement>('input:not([type=hidden]):not([disabled])'),
+            ).filter((i) => ['text', 'tel', 'number', ''].includes(i.type) || i.inputMode === 'numeric');
             const labelled = inputs.find((i) =>
               /code|verif|security|otp|passcode|pin/i.test(
                 `${i.name} ${i.id} ${i.getAttribute('aria-label') ?? ''} ${i.placeholder ?? ''}`,
@@ -381,7 +422,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
           }
           return { filled, mode, clicked, boxes: boxes.length, expected: chars.length };
         },
-        args: [code],
+        args: [code, platform],
       });
       return { actionId: action.id, success: true, data: results[0]?.result ?? { filled: 0, clicked: false } };
     } catch (error) {

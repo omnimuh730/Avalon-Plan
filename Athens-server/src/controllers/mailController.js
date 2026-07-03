@@ -187,8 +187,8 @@ export async function syncMail(req, res) {
 /**
  * POST /api/mail/verification-code — pull the newest mail and return the most
  * recent one-time / verification code (Phase D: OTP handling for auto-apply).
- * Body: { applierName, sinceMs? }. Generic — matches on verification vocabulary,
- * not on any sender or vendor.
+ * Body: { applierName, sinceMs? }. Scans the 10 most recent emails in the
+ * lookback window. Generic — matches on verification vocabulary, not vendor.
  */
 export async function getVerificationCode(req, res) {
 	try {
@@ -224,7 +224,7 @@ export async function getVerificationCode(req, res) {
 		const docs = await mailMessagesCollection
 			.find({ applierName, date: { $gte: cutoff } })
 			.sort({ date: -1 })
-			.limit(25)
+			.limit(10)
 			.toArray();
 
 		// Materialize bodies for the recent messages (needed for both regex + AI).

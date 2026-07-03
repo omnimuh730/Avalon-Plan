@@ -210,6 +210,12 @@ export function AvalonControllerView({
       done: pipeline.applied,
       active: highlightStep === 7,
     },
+    {
+      id: "verify",
+      label: "Verified",
+      done: pipeline.verified,
+      active: highlightStep === 8,
+    },
   ];
 
   const fieldCount = relay.actionableTree?.reduce((n, g) => n + g.children.length, 0) ?? 0;
@@ -666,7 +672,7 @@ export function AvalonControllerView({
               ) : (
                 <>
                   <Play className="w-4 h-4" />
-                  Auto-run (steps 2–7)
+                  Auto-run (steps 2–8)
                 </>
               )}
             </button>

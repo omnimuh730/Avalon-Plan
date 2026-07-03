@@ -32,6 +32,7 @@ import { generateRecoveryScript } from "../avalon/ai/recover-apply";
 import { verifyApplyOutcome, type ApplyVerifyResult } from "../avalon/ai/verify-apply";
 import { validateJobPage, type PageValidityResult } from "../avalon/ai/validate-page";
 import { postApplyLog, type ApplyLogEvent } from "../../../api/avalonLog";
+import { requestVerificationCode } from "../../../api/mail";
 
 /** Short unique id for one apply run (used to correlate the debug log file + Mongo doc). */
 function newRunId(): string {
@@ -119,7 +120,19 @@ export function parseRetryPipelineStep(detail?: string, reason?: string): number
 }
 
 const PIPELINE_AUTO_MAX_CYCLES = 4;
-const VERIFY_RESULT_WAIT_MS = 5000;
+/** Grace period after submit / OTP fill / inbox poll (Greenhouse OTP flow). */
+const VERIFY_RESULT_WAIT_MS = 10_000;
+const OTP_STEP_WAIT_MS = 10_000;
+/** How many times to poll Gmail before giving up on a Greenhouse OTP. */
+const OTP_FETCH_MAX_ATTEMPTS = 5;
+
+/**
+ * When step 8 · Verify result comes back as anything other than "success", the
+ * page is often the next screen of a multi-step application. Re-running
+ * 5 · Scan → 6 · Analyze → 7 · Apply on that new screen usually clears it, so we
+ * loop automatically — bounded to this many retries to avoid spinning forever.
+ */
+const MAX_VERIFY_RETRIES = 10;
 
 export interface AvalonLogEntry {
   id: string;
@@ -134,6 +147,11 @@ export interface QueuedJob {
   company: string;
   url: string;
   source: string;
+}
+
+/** Greenhouse-only OTP automation — other ATS platforms stay manual at step 8. */
+function isGreenhouseJob(job: QueuedJob | null | undefined): boolean {
+  return /greenhouse\.io/i.test(job?.url ?? "");
 }
 
 /** Per-job manual pipeline progress (steps 2–8). */
@@ -1175,10 +1193,16 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           },
           15000,
         );
-        const data = (res.data as { text?: string; controlCount?: number } | undefined) ?? {};
-        return { text: data.text ?? "", controlCount: data.controlCount ?? 0, submitted };
+        const data =
+          (res.data as { text?: string; controlCount?: number; otpInputs?: number } | undefined) ?? {};
+        return {
+          text: data.text ?? "",
+          controlCount: data.controlCount ?? 0,
+          otpInputs: data.otpInputs ?? 0,
+          submitted,
+        };
       } catch {
-        return { text: "", controlCount: 0, submitted };
+        return { text: "", controlCount: 0, otpInputs: 0, submitted };
       }
     },
     [emitActionAsync],
@@ -1223,7 +1247,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       tabId: number,
       job: QueuedJob,
       submitted: boolean,
-      settleMs = 5000,
+      settleMs = OTP_STEP_WAIT_MS,
     ): Promise<{ verdict: ApplyVerifyResult; state: ApplyPageState }> => {
       await emitActionAsync(
         { id: createActionId(), tabId, action: "wait", payload: { ms: settleMs } },
@@ -1251,6 +1275,79 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
   );
 
   /**
+   * Greenhouse-only: poll Gmail (via Athens-server IMAP) for the emailed OTP,
+   * fill the security-code inputs in the extension, and click submit. Each poll
+   * waits OTP_STEP_WAIT_MS so the verification email has time to arrive.
+   */
+  const handleGreenhouseOtpFlow = useCallback(
+    async (tabId: number): Promise<{ filled: boolean; clicked: boolean }> => {
+      if (!applierName) {
+        pushLog("Greenhouse OTP: no applier profile — cannot read Gmail", false);
+        return { filled: false, clicked: false };
+      }
+
+      for (let attempt = 1; attempt <= OTP_FETCH_MAX_ATTEMPTS; attempt += 1) {
+        const seconds = Math.ceil(OTP_STEP_WAIT_MS / 1000);
+        setApplyPhase({
+          phase: "verify-wait",
+          message: `Waiting for verification email (${attempt}/${OTP_FETCH_MAX_ATTEMPTS}, ${seconds}s)…`,
+          secondsLeft: seconds,
+          at: Date.now(),
+        });
+        await new Promise((resolve) => setTimeout(resolve, OTP_STEP_WAIT_MS));
+
+        const inbox = await requestVerificationCode(applierName);
+        if (!inbox.code) {
+          pushLog(
+            `Greenhouse OTP: no code in last ${inbox.scanned ?? 10} email(s) (attempt ${attempt}/${OTP_FETCH_MAX_ATTEMPTS})`,
+            false,
+          );
+          continue;
+        }
+
+        pushLog(
+          `Greenhouse OTP: found code via ${inbox.via ?? "inbox"} — "${inbox.subject ?? "verification email"}"`,
+          true,
+        );
+
+        const fillRes = await emitActionAsync(
+          {
+            id: createActionId(),
+            tabId,
+            action: "fill_verification_code",
+            payload: { code: inbox.code, platform: "greenhouse" },
+          },
+          30_000,
+        );
+        const fillData = fillRes.data as { filled?: number; clicked?: boolean; mode?: string } | undefined;
+        if (!fillRes.success || !(fillData?.filled ?? 0)) {
+          pushLog(`Greenhouse OTP: could not fill code — ${fillRes.error ?? "inputs not found"}`, false);
+          return { filled: false, clicked: false };
+        }
+
+        pushLog(
+          `Greenhouse OTP: filled ${fillData?.filled} char(s) (${fillData?.mode ?? "unknown"})${
+            fillData?.clicked ? " and clicked submit" : ""
+          }`,
+          true,
+        );
+
+        setApplyPhase({
+          phase: "verify-wait",
+          message: `Waiting for OTP submit (${seconds}s)…`,
+          secondsLeft: seconds,
+          at: Date.now(),
+        });
+        await new Promise((resolve) => setTimeout(resolve, OTP_STEP_WAIT_MS));
+        return { filled: true, clicked: fillData?.clicked ?? false };
+      }
+
+      return { filled: false, clicked: false };
+    },
+    [applierName, emitActionAsync, pushLog],
+  );
+
+  /**
    * Manual pipeline step 8 — classify post-submit outcome (success / failed / additional).
    * Shared by the manual Verify button and auto-run orchestration.
    */
@@ -1258,17 +1355,64 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     async (tabId: number, job: QueuedJob | null): Promise<ManualVerifyResult> => {
       const jobForVerify: QueuedJob =
         job ?? { id: "", title: treePage?.title ?? "this application", company: "", url: treePage?.url ?? "", source: "" };
-      const { verdict } = await verifyAfterSubmit(tabId, jobForVerify, true, 1000);
+      const { verdict, state } = await verifyAfterSubmit(tabId, jobForVerify, true, OTP_STEP_WAIT_MS);
 
       if (verdict.status === "success") {
         if (job) await markJobApplied(job);
         return { kind: "success", reason: verdict.reason || "Application submitted." };
       }
 
+      // Greenhouse OTP is detected from the DOM (the #email-verification fieldset /
+      // security-input boxes reported by read_page_state), NOT from the AI verdict —
+      // the model frequently mislabels the code page as "incomplete". Whenever those
+      // boxes are present we run the emailed-code flow and NEVER re-scan (which would
+      // wipe the already-filled form). The AI's needs_verification is kept as a
+      // secondary signal for safety.
+      const greenhouse = isGreenhouseJob(jobForVerify);
+      // DOM signal (rebuilt extension) OR the emailed-code prompt in the page text
+      // (works with the current extension) OR the AI's secondary guess.
+      const otpPageDetected =
+        (state.otpInputs ?? 0) > 0 ||
+        VERIFICATION_CUE.test(state.text) ||
+        verdict.status === "needs_verification";
+      if (greenhouse && otpPageDetected) {
+        pushLog(
+          `Greenhouse: verification code page detected (${state.otpInputs ?? 0} code box(es)) — fetching from Gmail…`,
+          true,
+        );
+        const otp = await handleGreenhouseOtpFlow(tabId);
+        if (otp.filled) {
+          pushLog("Greenhouse OTP submitted — re-running step 8 · Verify result…", true);
+          const { verdict: retryVerdict, state: retryState } = await verifyAfterSubmit(
+            tabId,
+            jobForVerify,
+            true,
+            OTP_STEP_WAIT_MS,
+          );
+          if (retryVerdict.status === "success") {
+            if (job) await markJobApplied(job);
+            return { kind: "success", reason: retryVerdict.reason || "Application submitted after OTP." };
+          }
+          // Still on the code page (wrong/expired code, or a fresh code was sent) →
+          // "additional" so the retry loop re-polls Gmail without re-scanning.
+          const stillOtp = (retryState.otpInputs ?? 0) > 0 || retryVerdict.status === "needs_verification";
+          return {
+            kind: stillOtp ? "additional" : "failed",
+            reason: retryVerdict.reason || "OTP submitted but application not confirmed.",
+            detail: stillOtp ? "OTP may be wrong or expired — will retry." : "Check the page or re-run verify.",
+          };
+        }
+        // Code not available yet (email in flight) → "additional" so the retry loop
+        // waits and polls again instead of re-scanning the form.
+        return {
+          kind: "additional",
+          reason: verdict.reason || "Verification code required.",
+          detail: "Waiting for the Greenhouse verification email — will retry.",
+        };
+      }
+
       if (verdict.status === "needs_verification") {
-        // This page needs an emailed verification code/link. Automated inbox
-        // reading (Gmail IMAP) has been removed — enter the code manually on the
-        // page, then click Verify again to re-check the outcome.
+        // Non-Greenhouse: enter the code manually, then click Verify again.
         return {
           kind: "additional",
           reason: verdict.reason || "Verification required.",
@@ -1282,13 +1426,104 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         detail: "Re-run 5 · Scan DOM → 6 · Analyze → 7 · Apply, then 8 · Verify again.",
       };
     },
-    [applierName, emitActionAsync, markJobApplied, pushLog, treePage?.title, treePage?.url, verifyAfterSubmit],
+    [handleGreenhouseOtpFlow, markJobApplied, pushLog, treePage?.title, treePage?.url, verifyAfterSubmit],
+  );
+
+  /**
+   * Re-run pipeline steps 5 · Scan → 6 · Analyze → 7 · Apply on the current tab,
+   * in-place (same primitives the auto-run uses). Returns true only if all three
+   * completed and the fill plan was applied/submitted. Used by the verify retry
+   * loop to advance multi-step application forms.
+   */
+  const rescanAnalyzeApply = useCallback(
+    async (tabId: number, job: QueuedJob | null): Promise<boolean> => {
+      // Step 5 — Scan DOM (with dropdown probe, same as the manual button).
+      const treeRes = await emitActionAsync(
+        { id: createActionId(), tabId, action: "fetch_actionable_tree", payload: { probeComboboxes } },
+        120000,
+      );
+      if (!treeRes.success) {
+        pushLog(treeRes.error || "Scan failed", false);
+        return false;
+      }
+      const scanData = treeRes.data as { tree?: ActionableTree; page?: ActionablePageContext };
+      const tree = scanData.tree ?? null;
+      if (!tree?.length) {
+        pushLog("Scan returned no fillable fields", false);
+        return false;
+      }
+      const pageCtx: ActionablePageContext = scanData.page ?? { tabId, url: job?.url ?? "" };
+      setActionableTree(tree);
+      setTreePage(pageCtx);
+      setFormAnalysis(null);
+      setInjectionPlan(null);
+      setGeneratedScript("");
+      setFieldScriptsById({});
+      setSelectedTreeFieldId(null);
+      if (job) markPipeline(job.id, { scanned: true, analyzed: false, applied: false, verified: false });
+      pushLog(`Scanned ${tree.length} section(s)`, true);
+
+      // Step 6 — Analyze form + build the fill plan.
+      let plan: InjectionPlan;
+      setAnalyzing(true);
+      try {
+        const result = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined });
+        setFormAnalysis(result);
+        recordUsage("Analyze form", result.usage);
+        const built = buildFormInjectionPlan({ tree, fields: result.fields });
+        plan = built.plan;
+        if (!plan.steps.length) {
+          pushLog("Analyze produced empty fill plan", false);
+          return false;
+        }
+        setInjectionPlan(plan);
+        setGeneratedScript(built.preview);
+        setFieldScriptsById(Object.fromEntries(built.fieldPreviews.map((entry) => [entry.id, entry.preview])));
+        if (job) markPipeline(job.id, { analyzed: true });
+        pushLog(`Action plan: ${result.fields.length} field(s)`, true);
+      } catch (error) {
+        pushLog(error instanceof Error ? error.message : "Analysis failed", false);
+        return false;
+      } finally {
+        setAnalyzing(false);
+      }
+
+      // Step 7 — Apply the fill plan (auto-submit).
+      const resumeFile = job ? getResumeForJob(job) : null;
+      if (!resumeFile?.base64) {
+        pushLog("Tailored résumé required to re-apply — generate it first (step 4)", false);
+        return false;
+      }
+      try {
+        await runApplyWithPlan(plan, pageCtx, resumeFile);
+        setApplyDone(true);
+        if (job) markPipeline(job.id, { applied: true });
+      } catch (error) {
+        pushLog(error instanceof Error ? error.message : "Apply failed", false);
+        return false;
+      }
+      return true;
+    },
+    [
+      applicantContext,
+      emitActionAsync,
+      getResumeForJob,
+      markPipeline,
+      probeComboboxes,
+      pushLog,
+      recordUsage,
+      runApplyWithPlan,
+    ],
   );
 
   /**
    * Manual pipeline step 6 — "Verify result". Reads the current page and classifies
    * the outcome into one of three results the user asked for: success / failed
    * (with reason) / additional process required (OTP, email verification code/link).
+   *
+   * On any non-success outcome the page is often the next screen of a multi-step
+   * form, so we automatically re-run 5 · Scan → 6 · Analyze → 7 · Apply → 8 · Verify,
+   * up to MAX_VERIFY_RETRIES (10) times, until it confirms or the retries run out.
    */
   const verifyActiveResult = useCallback(async () => {
     const job = getActiveQueuedJob();
@@ -1301,17 +1536,63 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       pushLog(executeDisabledReason ?? "Cannot verify — extension not connected", false);
       return;
     }
+    // Greenhouse detection also considers the open tab URL, so the OTP guard holds
+    // even when there is no queued job (manual verify on an already-open tab).
+    const greenhouse = isGreenhouseJob(job) || /greenhouse\.io/i.test(treePage?.url ?? "");
     setVerifying(true);
     setVerifyResult(null);
     try {
       await waitBeforeVerify();
-      const result = await computeVerifyResult(tabId, job);
+      let result = await computeVerifyResult(tabId, job);
       setVerifyResult(result);
+      pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
+
+      // Non-success → likely the next screen of a multi-step form. Re-run
+      // 5 · Scan → 6 · Analyze → 7 · Apply → 8 · Verify, up to MAX_VERIFY_RETRIES.
+      let attempt = 0;
+      while (result.kind !== "success" && attempt < MAX_VERIFY_RETRIES) {
+        attempt += 1;
+        // Greenhouse: NEVER re-scan — that re-fills the form from scratch and wipes
+        // the emailed-code boxes. Just re-verify: computeVerifyResult re-detects the
+        // code page, re-polls Gmail, fills the code and re-submits.
+        if (greenhouse) {
+          pushLog(
+            `Verify not success (Greenhouse) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-check code page / re-fetch OTP → step 8 (no re-scan)`,
+            false,
+          );
+          await waitBeforeVerify();
+          result = await computeVerifyResult(tabId, job);
+          setVerifyResult(result);
+          pushLog(
+            `Verify result (OTP retry ${attempt}/${MAX_VERIFY_RETRIES}): ${result.kind} — ${result.reason}`,
+            result.kind === "success",
+          );
+          continue;
+        }
+        pushLog(
+          `Verify not success (${result.kind}) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-running 5 · Scan → 6 · Analyze → 7 · Apply`,
+          false,
+        );
+        const advanced = await rescanAnalyzeApply(tabId, job);
+        if (!advanced) {
+          pushLog(`Retry ${attempt}/${MAX_VERIFY_RETRIES} could not complete Scan/Analyze/Apply — stopping retries`, false);
+          break;
+        }
+        await waitBeforeVerify();
+        result = await computeVerifyResult(tabId, job);
+        setVerifyResult(result);
+        pushLog(
+          `Verify result (retry ${attempt}/${MAX_VERIFY_RETRIES}): ${result.kind} — ${result.reason}`,
+          result.kind === "success",
+        );
+      }
+
       if (result.kind === "success") {
         if (job) markPipeline(job.id, { verified: true });
         await closeTab(tabId); // application done → close the job tab
+      } else if (attempt >= MAX_VERIFY_RETRIES) {
+        pushLog(`Still not confirmed after ${MAX_VERIFY_RETRIES} retries — leaving for manual review`, false);
       }
-      pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Verify failed";
       setVerifyResult({ kind: "failed", reason: msg });
@@ -1328,6 +1609,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     getActiveQueuedJob,
     markPipeline,
     pushLog,
+    rescanAnalyzeApply,
     selectedTabId,
     treePage,
     waitBeforeVerify,
@@ -1440,7 +1722,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       while (cycle < PIPELINE_AUTO_MAX_CYCLES) {
         cycle += 1;
         if (!(await gate())) return;
-        pushLog("Auto-run: steps 2–7 (open → verify tab → résumé → scan → analyze → apply)…", true);
+        pushLog(
+          "Auto-run: steps 2–8 (open → verify tab → résumé → scan → analyze → apply → verify)…",
+          true,
+        );
 
         if (!(await gate())) return;
         if (startStep <= 2) {
@@ -1630,13 +1915,83 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           }
         }
 
-        // Auto-run ends after step 7 (Apply). Step 8 · Verify result and Mark as
-        // Applied are manual: the human clicks Verify to check the outcome and, on
-        // failure, re-runs 5 · Scan → 6 · Analyze → 7 · Apply by hand.
-        pushLog(
-          "Auto-run finished steps 2–7. Click 8 · Verify result to check the outcome, then Mark as Applied.",
-          true,
-        );
+        // Step 8 · Verify result. On any non-success outcome the page is usually
+        // the next screen of a multi-step form, so loop back to 5 · Scan →
+        // 6 · Analyze → 7 · Apply → 8 · Verify, up to MAX_VERIFY_RETRIES times.
+        if (!(await gate())) return;
+        if (!tabId) {
+          abort("No tab to verify");
+          return;
+        }
+        setVerifying(true);
+        setVerifyResult(null);
+        try {
+          await waitBeforeVerify();
+          let verify = await computeVerifyResult(tabId, job);
+          setVerifyResult(verify);
+          pushLog(`Verify result: ${verify.kind} — ${verify.reason}`, verify.kind === "success");
+
+          let attempt = 0;
+          while (verify.kind !== "success" && attempt < MAX_VERIFY_RETRIES) {
+            if (!(await gate())) return;
+            attempt += 1;
+            // Greenhouse: NEVER re-scan — it re-fills the form and wipes the emailed
+            // code boxes. Re-verify only: computeVerifyResult re-detects the code
+            // page, re-polls Gmail, fills the code and re-submits.
+            if (isGreenhouseJob(job)) {
+              pushLog(
+                `Verify not success (Greenhouse) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-check code page / re-fetch OTP → step 8 (no re-scan)`,
+                false,
+              );
+              await waitBeforeVerify();
+              verify = await computeVerifyResult(tabId, job);
+              setVerifyResult(verify);
+              pushLog(
+                `Verify result (OTP retry ${attempt}/${MAX_VERIFY_RETRIES}): ${verify.kind} — ${verify.reason}`,
+                verify.kind === "success",
+              );
+              continue;
+            }
+            pushLog(
+              `Verify not success (${verify.kind}) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-running 5 · Scan → 6 · Analyze → 7 · Apply`,
+              false,
+            );
+            const advanced = await rescanAnalyzeApply(tabId, job);
+            if (!advanced) {
+              pushLog(
+                `Retry ${attempt}/${MAX_VERIFY_RETRIES} could not complete Scan/Analyze/Apply — stopping retries`,
+                false,
+              );
+              break;
+            }
+            if (!(await gate())) return;
+            await waitBeforeVerify();
+            verify = await computeVerifyResult(tabId, job);
+            setVerifyResult(verify);
+            pushLog(
+              `Verify result (retry ${attempt}/${MAX_VERIFY_RETRIES}): ${verify.kind} — ${verify.reason}`,
+              verify.kind === "success",
+            );
+          }
+
+          if (verify.kind === "success") {
+            markPipeline(job.id, { verified: true });
+            await closeTab(tabId); // application done → close the job tab
+            pushLog(`Auto-run complete — "${job.title}" submitted and verified.`, true);
+          } else {
+            pushLog(
+              `Auto-run finished — "${job.title}" not confirmed after ${MAX_VERIFY_RETRIES} retries; left for manual review.`,
+              false,
+            );
+          }
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "Verify failed";
+          setVerifyResult({ kind: "failed", reason: msg });
+          pushLog(msg, false);
+        } finally {
+          setApplyPhase((prev) => (prev?.phase === "verify-wait" ? null : prev));
+          setVerifying(false);
+        }
         return;
       }
     } finally {
@@ -1661,6 +2016,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     pushLog,
     recordUsage,
     resetJobUsage,
+    rescanAnalyzeApply,
     runApplyWithPlan,
     startResumeForJob,
     validateOpenedTab,
@@ -1738,6 +2094,27 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         } catch (error) {
           pushLog(`Recovery: résumé re-attach failed — ${error instanceof Error ? error.message : error}`, false);
         }
+      }
+
+      // Greenhouse OTP: do not re-scan from step 5 — fetch the emailed code and re-verify.
+      const looksLikeOtpPage =
+        (state.otpInputs ?? 0) > 0 ||
+        VERIFICATION_CUE.test(state.text) ||
+        /security-input-|email-verification/i.test(state.text) ||
+        /needs_verification|verification/i.test(reason);
+      if (isGreenhouseJob(job) && looksLikeOtpPage) {
+        pushLog("Recovery: Greenhouse OTP page — fetching code from Gmail (no re-scan)", true);
+        const otp = await handleGreenhouseOtpFlow(tabId);
+        if (otp.filled) {
+          const { verdict } = await verifyAfterSubmit(tabId, job, true, OTP_STEP_WAIT_MS);
+          if (verdict.status === "success") {
+            await markJobApplied(job);
+            pushLog(`"${job.title}" applied after Greenhouse OTP — ${verdict.reason}`, true);
+            return true;
+          }
+          pushLog(`Greenhouse OTP submitted but not confirmed — ${verdict.reason}`, false);
+        }
+        return false;
       }
 
       for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {
@@ -1843,7 +2220,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       pushLog(`"${job.title}" still unconfirmed after ${MAX_RECOVERY_ATTEMPTS} recovery attempts`, false);
       return false;
     },
-    [applicantContext, applierName, emitActionAsync, markJobApplied, pushLog, rescanTree, verifyAfterSubmit, logRunData],
+    [applicantContext, applierName, emitActionAsync, handleGreenhouseOtpFlow, markJobApplied, pushLog, rescanTree, verifyAfterSubmit, logRunData],
   );
 
   /**
@@ -1969,13 +2346,42 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           pushLog(`Résumé attach reported ${filesAttached}/${filesFound} — verifying on page…`, filesAttached > 0);
         }
 
-        // AI verify: wait 5s for the page to settle, read innerText, classify.
-        const { verdict, state: pageState } = await verifyAfterSubmit(tabId, job, submitted, 5000);
+        // AI verify: wait for the page to settle, read innerText, classify.
+        const { verdict, state: pageState } = await verifyAfterSubmit(tabId, job, submitted, OTP_STEP_WAIT_MS);
         logRunData("verify", { status: verdict.status, reason: verdict.reason, pageText: pageState.text, controlCount: pageState.controlCount });
         if (verdict.status === "success") {
           pushLog(`"${job.title}" applied — ${verdict.reason}`, true);
           await markJobApplied(job);
           finalStatus = "applied";
+        } else if (
+          isGreenhouseJob(job) &&
+          ((pageState.otpInputs ?? 0) > 0 ||
+            VERIFICATION_CUE.test(pageState.text) ||
+            verdict.status === "needs_verification")
+        ) {
+          pushLog(
+            `"${job.title}" needs Greenhouse OTP (${pageState.otpInputs ?? 0} code box(es)) — fetching from Gmail…`,
+            true,
+          );
+          const otp = await handleGreenhouseOtpFlow(tabId);
+          if (otp.filled) {
+            const { verdict: retryVerdict } = await verifyAfterSubmit(tabId, job, submitted, OTP_STEP_WAIT_MS);
+            logRunData("verify-after-otp", { status: retryVerdict.status, reason: retryVerdict.reason });
+            if (retryVerdict.status === "success") {
+              pushLog(`"${job.title}" applied after OTP — ${retryVerdict.reason}`, true);
+              await markJobApplied(job);
+              finalStatus = "applied";
+            } else {
+              pushLog(
+                `"${job.title}" OTP submitted but not confirmed (${retryVerdict.status}) — ${retryVerdict.reason}`,
+                false,
+              );
+              finalStatus = "unconfirmed";
+            }
+          } else {
+            pushLog(`"${job.title}" Greenhouse OTP not found in Gmail`, false);
+            finalStatus = "unconfirmed";
+          }
         } else {
           // needs_verification / error / incomplete → self-healing loop (OTP,
           // missing fields, blocks). Re-scan uses probe-off; up to 10×.
@@ -2004,7 +2410,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         endRunLog(finalStatus);
       }
     },
-    [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, markJobApplied, probeComboboxes, pushLog, runRecoveryLoop, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
+    [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, runRecoveryLoop, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
   );
 
   /**

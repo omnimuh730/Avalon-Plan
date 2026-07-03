@@ -24,6 +24,8 @@ export interface ApplyPageState {
   filesExpected?: number;
   /** Inputs that received the tailored PDF. */
   filesAttached?: number;
+  /** Greenhouse-only: number of emailed-code security-input boxes present on the page. */
+  otpInputs?: number;
 }
 
 export interface ApplyOutcome {
