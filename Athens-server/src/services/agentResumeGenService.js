@@ -1,13 +1,12 @@
 import { ObjectId } from "mongodb";
 import {
   accountInfoCollection,
+  jobsCollection,
   resumeGenerationsCollection,
   userResumesCollection,
 } from "../db/mongo.js";
 import { syncGeneratedResumeAfterRun } from "./generatedResumeService.js";
-import { analyzeGeneratedResumeSkills } from "./generatedResumeSkillAnalysis.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
-import { addUsage } from "./llm/llmService.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
 import { readAgentDraftPdf, deleteAgentDraftPdf } from "./agentResumeDraftService.js";
@@ -54,17 +53,19 @@ async function findProfile(applierNameRaw) {
   return acc?.autoBidProfile || null;
 }
 
-async function findResumeCatalog(applierNameRaw) {
-  const name = cleanString(applierNameRaw);
-  if (!name || !accountInfoCollection) return null;
-  const proj = { projection: { resumeCatalog: 1 } };
-  let acc = await accountInfoCollection.findOne({ name }, proj);
-  if (!acc) {
-    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, proj);
-  }
-  const catalog = acc?.resumeCatalog;
-  return catalog && typeof catalog === "object" && !Array.isArray(catalog) ? catalog : null;
+/**
+ * Load the skills already extracted for a structured (MongoDB) job. These feed
+ * the `{job_skills}` prompt token so the pipeline can skip its AI skill-fetch
+ * step for agent/job-search runs. Returns [] when the job or its skills are absent.
+ */
+async function findJobSkills(jobId) {
+  const id = cleanString(jobId);
+  if (!id || !jobsCollection || !ObjectId.isValid(id)) return [];
+  const job = await jobsCollection.findOne(
+    { _id: new ObjectId(id) },
+    { projection: { skills: 1 } },
+  );
+  return Array.isArray(job?.skills) ? job.skills.map((s) => cleanString(s)).filter(Boolean) : [];
 }
 
 function configSnapshot(body) {
@@ -294,12 +295,17 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
     };
   }
 
+  // Skills already stored on the job let us skip the AI "fetch skills" step for
+  // structured jobs (steps flagged skipForStructuredJobs are dropped below).
+  const jobSkills = await findJobSkills(parentId);
+
   const body = buildGenerationRequestFromSavedConfig({
     applierName: name,
     jobDescription: jd,
     savedConfig,
     identity,
     generateParentJobId: parentId,
+    structuredJob: true,
   });
 
   console.info(
@@ -321,37 +327,16 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
       identity,
       applierName: name,
       jobDescription: jd,
+      jobSkills,
       reasoningEffort: body.reasoningEffort,
     },
     onStep,
   );
 
-  let skillProfile = [];
-  let techStack = null;
-  let skillAnalysisError = null;
-  const catalog = await findResumeCatalog(name);
-
-  try {
-    if (onStep) onStep({ phase: "step-start", name: "Skill analysis", purpose: "skills" });
-    const skillResult = await analyzeGeneratedResumeSkills({
-      sections: result.sections,
-      identity,
-      jobDescription: jd,
-      catalog,
-      providerId: prep.providerId,
-      apiKey: prep.apiKey,
-      model: prep.model,
-      onProgress: onStep,
-    });
-    if (onStep) onStep({ phase: "step-done", name: "Skill analysis", purpose: "skills" });
-    skillProfile = skillResult.skillProfile;
-    techStack = skillResult.techStack;
-    result.perStep.push({ index: result.perStep.length + 1, ...skillResult.perStep });
-    result.usage = addUsage(result.usage, skillResult.usage);
-  } catch (err) {
-    skillAnalysisError = err.message;
-    console.warn("[agent-resume-gen] skill analysis failed:", err.message);
-  }
+  // Skill proficiency comes from the scoring logic downstream — no LLM analysis pass.
+  const skillProfile = [];
+  const techStack = null;
+  const skillAnalysisError = null;
 
   let generationId = null;
   let sync = null;

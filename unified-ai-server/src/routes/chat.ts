@@ -15,6 +15,8 @@ export async function chatCompletionsHandler(req: Request, res: Response) {
       return res.status(401).json({ error: { message: `No API key for ${route.provider}` } });
     }
 
+    console.log(`[llm] route → feature=${feature} provider=${route.provider} model=${model}${runId ? ` run=${runId}` : ''}`);
+
     checkTokenBudget(runId || undefined, CONFIG.maxTokensPerCall);
 
     const { res: upstream, data } = await proxyJson(`${route.baseUrl}/chat/completions`, {

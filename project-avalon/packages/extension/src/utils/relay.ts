@@ -20,6 +20,7 @@ import {
   EXTENSION_MESSAGES,
 } from './constants';
 import { ensureContentScript, runActionInTab } from './tab-messages';
+import { waitForPageReady } from './page-ready';
 
 let socket: Socket | null = null;
 let tabListenersBound = false;
@@ -171,6 +172,11 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
     }
     emitApplyProgress({ phase: 'navigating', message: `Opening ${url}…` });
     await waitForTabComplete(tab.id);
+    // `complete` is only the browser load event — an SPA job page (Ashby, etc.)
+    // is still fetching data behind a spinner at this point. Gate "opened" on the
+    // network going quiet AND real content having rendered.
+    emitApplyProgress({ phase: 'navigating', message: 'Waiting for the page to finish loading…' });
+    await waitForPageReady(tab.id);
     const page = await readPageContext(tab.id);
     emitApplyProgress({ phase: 'navigating', message: `Loaded ${page.title || url}` });
     return { actionId: action.id, success: true, data: { tabId: tab.id, page } };

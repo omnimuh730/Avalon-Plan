@@ -173,6 +173,7 @@ export function AvalonControllerView({
   const pipelineLocked = relay.autoRunning || relay.applying;
   const verifyWaiting = relay.applyPhase?.phase === "verify-wait";
   const verifyWaitSeconds = verifyWaiting ? relay.applyPhase?.secondsLeft : undefined;
+  const showPreviewWorkspace = hasTree || Boolean(activeJob || relay.generatingResume || relay.activeResume || relay.resumeError);
 
   const highlightStep = useMemo(() => {
     if (relay.validatingTab) return 3;
@@ -392,9 +393,14 @@ export function AvalonControllerView({
       )}
 
       {/* Main workspace */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 min-h-[520px]">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start min-h-[520px]">
         {/* Left — job queue */}
-        <aside className="xl:col-span-3 flex flex-col rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
+        <aside
+          className={cn(
+            "xl:col-span-3 flex flex-col rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden",
+            showPreviewWorkspace && "xl:row-span-2",
+          )}
+        >
           <div className="px-4 py-3 border-b border-border/60 bg-gradient-to-r from-violet-500/5 to-transparent">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
@@ -507,12 +513,408 @@ export function AvalonControllerView({
           )}
         </aside>
 
-        {/* Right — résumé preview, pipeline, activity */}
-        <aside className="xl:col-span-9 flex flex-col gap-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Tailored résumé preview — step 4 */}
-          {(activeJob || relay.generatingResume || relay.activeResume || relay.resumeError) && (
-            <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
+        {/* Center — event log / terminal */}
+        <div className="xl:col-span-6 rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden flex flex-col h-[360px] sm:h-[420px] xl:h-[520px]">
+          <div className="px-4 py-2.5 border-b border-border/60 flex items-center gap-2">
+            <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
+            <h2 className="text-xs font-bold text-foreground">Activity</h2>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {relay.logs.length === 0 && (
+              <p className="text-[11px] text-muted-foreground text-center py-8">Waiting for events…</p>
+            )}
+            {relay.logs.map((entry) => (
+              <div
+                key={entry.id}
+                className={cn(
+                  "text-[10px] font-mono leading-relaxed px-2 py-1.5 rounded-lg border border-transparent",
+                  entry.success === true && "bg-emerald-500/8 text-emerald-800 border-emerald-500/15",
+                  entry.success === false && "bg-red-500/8 text-red-800 border-red-500/15",
+                  entry.success === undefined && "text-foreground/80",
+                )}
+              >
+                <span className="text-muted-foreground">{entry.at}</span> {entry.message}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right — pipeline */}
+        <aside className="xl:col-span-3 rounded-2xl border border-border/80 bg-card shadow-sm p-4 space-y-2">
+          <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Pipeline</h2>
+          <button
+            type="button"
+            onClick={() => void relay.runPipelineAuto()}
+            disabled={
+              !activeJob ||
+              !relay.canExecute ||
+              relay.autoRunning ||
+              pipelineLocked ||
+              relay.validatingTab ||
+              relay.generatingResume ||
+              relay.analyzing ||
+              relay.verifying
+            }
+            className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-violet-500/40 bg-violet-500/10 px-3 py-2.5 text-sm font-semibold text-violet-900 hover:bg-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {relay.autoRunning ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {relay.autoRunState === "paused" ? "Paused" : "Auto-running…"}
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                Auto-run (steps 2–8)
+              </>
+            )}
+          </button>
+          {relay.autoRunning && (
+            <div className="flex items-center gap-2">
+              {relay.autoRunState === "paused" ? (
+                <button
+                  type="button"
+                  onClick={() => relay.resumeAutoRun()}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-secondary"
+                >
+                  <Play className="w-3.5 h-3.5" /> Resume
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => relay.pauseAutoRun()}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-secondary"
+                >
+                  <Pause className="w-3.5 h-3.5" /> Pause
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => relay.stopAutoRun()}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-300/70 text-red-700 px-3 py-2 text-xs font-semibold hover:bg-red-500/10"
+              >
+                <Square className="w-3.5 h-3.5" /> Stop
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => void relay.openActiveJob()}
+            disabled={!activeJob || !relay.canExecute || pipelineLocked || relay.autoRunning}
+            className={pipelineStepClass(2, highlightStep, pipeline.opened, Boolean(activeJob && relay.canExecute && !pipelineLocked && !relay.autoRunning))}
+          >
+            {pipeline.opened ? <CheckCircle2 className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
+            2 · Open job link
+          </button>
+          <button
+            type="button"
+            onClick={() => void relay.validateActiveTab()}
+            disabled={!pipeline.opened || !relay.canExecute || relay.validatingTab || pipelineLocked}
+            className={pipelineStepClass(
+              3,
+              highlightStep,
+              pipeline.validated,
+              pipeline.opened && relay.canExecute && !relay.validatingTab && !pipelineLocked,
+            )}
+          >
+            {relay.validatingTab ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : pipeline.validated ? (
+              <CheckCircle2 className="w-4 h-4" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4" />
+            )}
+            {relay.validatingTab ? "Checking…" : "3 · Verify opened tab is a job form"}
+          </button>
+          {relay.tabValidity && (
+            <div
+              className={cn(
+                "rounded-xl border px-3 py-2 text-[11px]",
+                relay.tabValidity.valid
+                  ? "border-emerald-300/70 bg-emerald-50 text-emerald-900"
+                  : "border-red-300/70 bg-red-50 text-red-900",
+              )}
+            >
+              <span className="font-bold">{relay.tabValidity.valid ? "Valid form" : `Skipped (${relay.tabValidity.kind})`}</span>
+              {" — "}
+              {relay.tabValidity.reason}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => void relay.generateActiveJobResume(hasResumeDraft)}
+            disabled={!pipeline.validated || relay.generatingResume || pipelineLocked}
+            className={pipelineStepClass(
+              4,
+              highlightStep,
+              pipeline.resumeReady,
+              pipeline.validated && !relay.generatingResume && !pipelineLocked,
+            )}
+          >
+            {relay.generatingResume ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            {relay.generatingResume
+              ? "Generating résumé…"
+              : hasResumeDraft
+                ? "4 · Résumé ready (regenerate)"
+                : "4 · Generate / load résumé"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void relay.fetchActionableTree()}
+            disabled={!pipeline.resumeReady || !relay.canExecute || pipelineLocked}
+            className={pipelineStepClass(
+              5,
+              highlightStep,
+              pipeline.scanned,
+              pipeline.resumeReady && relay.canExecute && !pipelineLocked,
+            )}
+          >
+            {pipeline.scanned ? <CheckCircle2 className="w-4 h-4" /> : <TreePine className="w-4 h-4" />}
+            5 · Scan DOM (with dropdown probe)
+          </button>
+          <button
+            type="button"
+            onClick={() => void relay.analyzeTree()}
+            disabled={!pipeline.scanned || relay.analyzing || pipelineLocked}
+            className={cn(
+              pipelineStepClass(6, highlightStep, pipeline.analyzed, pipeline.scanned && !relay.analyzing && !pipelineLocked),
+              pipeline.scanned && !relay.analyzing && !pipelineLocked && "font-bold",
+            )}
+          >
+            {relay.analyzing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : pipeline.analyzed ? (
+              <CheckCircle2 className="w-4 h-4" />
+            ) : (
+              <Sparkles className="w-4 h-4" />
+            )}
+            {relay.analyzing ? "Analyzing…" : "6 · Analyze form"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void relay.applyActionPlan()}
+            disabled={!pipeline.analyzed || !canApply || pipelineLocked || relay.analyzing}
+            className={pipelineStepClass(
+              7,
+              highlightStep,
+              pipeline.applied,
+              pipeline.analyzed && Boolean(canApply) && !pipelineLocked && !relay.analyzing,
+            )}
+          >
+            {relay.applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            {relay.applying ? "Injecting…" : "7 · Apply fill plan"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void relay.verifyActiveResult()}
+            disabled={!pipeline.applied || !relay.canExecute || relay.verifying || verifyWaiting || pipelineLocked}
+            className={pipelineStepClass(
+              8,
+              highlightStep,
+              pipeline.verified,
+              pipeline.applied && relay.canExecute && !relay.verifying && !verifyWaiting && !pipelineLocked,
+            )}
+          >
+            {verifyWaiting && verifyWaitSeconds != null ? (
+              <>
+                <span className="w-5 h-5 rounded-full bg-violet-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                  {verifyWaitSeconds}
+                </span>
+                8 · Waiting for submit result
+              </>
+            ) : relay.verifying ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Verifying…
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-4 h-4" />
+                8 · Verify result
+              </>
+            )}
+          </button>
+          {relay.verifyResult && (
+            <div
+              className={cn(
+                "rounded-xl border px-3 py-2 text-[11px] space-y-1",
+                relay.verifyResult.kind === "success" && "border-emerald-300/70 bg-emerald-50 text-emerald-900",
+                relay.verifyResult.kind === "failed" && "border-red-300/70 bg-red-50 text-red-900",
+                relay.verifyResult.kind === "additional" && "border-amber-300/70 bg-amber-50 text-amber-900",
+              )}
+            >
+              <div className="flex items-center gap-1.5 font-bold">
+                {relay.verifyResult.kind === "success" ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Success
+                  </>
+                ) : relay.verifyResult.kind === "additional" ? (
+                  <>
+                    <AlertTriangle className="w-3.5 h-3.5" /> Additional step required
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-3.5 h-3.5" /> Failed
+                  </>
+                )}
+              </div>
+              <p className="leading-snug">{relay.verifyResult.reason}</p>
+              {relay.verifyResult.detail && (
+                <p className="leading-snug font-medium">{relay.verifyResult.detail}</p>
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => void relay.markActiveJobApplied()}
+            disabled={!activeJob || relay.applying}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-500 disabled:opacity-40"
+            title="Mark this job Applied in MongoDB with the current profile"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            Mark as Applied
+          </button>
+          {hasPlan && relay.injectionPlan && (
+            <p className="text-[10px] text-center text-muted-foreground pt-1">
+              {relay.injectionPlan.steps.length} steps · uses drafted PDF
+            </p>
+          )}
+          {relay.formAnalysis?.usage && (
+            <p className="text-[10px] text-center text-violet-600 font-medium">
+              {relay.formAnalysis.usage.totalTokens} tokens
+              {relay.formAnalysis.usage.cost
+                ? ` · $${relay.formAnalysis.usage.cost.totalUsd.toFixed(4)}`
+                : ""}
+            </p>
+          )}
+          <p className="text-[9px] text-center text-muted-foreground leading-relaxed pt-1">
+            Steps run in order: open → verify tab → résumé → scan → analyze → apply → verify.
+          </p>
+        </aside>
+
+        {/* Lower preview workspace */}
+        {showPreviewWorkspace && (
+          hasTree ? (
+            <div className="xl:col-span-9 rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
+              <div className="px-4 py-3 border-b border-border/60 flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-violet-500/5 via-transparent to-indigo-500/5">
+                <div>
+                  <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+                    <TreePine className="w-4 h-4 text-violet-600" />
+                    Form fields
+                    <span className="text-[10px] font-bold text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
+                      {fieldCount} targets
+                    </span>
+                  </h2>
+                  {relay.treePage?.url && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5 truncate max-w-xl">{relay.treePage.url}</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => relay.generatePlan()}
+                  disabled={!hasPlan || relay.applying || relay.analyzing}
+                  className="text-xs font-semibold text-violet-600 hover:text-violet-700 disabled:opacity-50"
+                >
+                  Rebuild plan
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-0 lg:divide-x divide-border/60">
+                <div className="lg:col-span-3 p-4 max-h-[400px] overflow-y-auto space-y-4">
+                  {relay.actionableTree!.map((group, groupIdx) => (
+                    <div key={groupIdx}>
+                      <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 sticky top-0 bg-card py-1">
+                        {group.content || "Section"}
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {group.children.map((entry, childIdx) => {
+                          const id = fieldId(groupIdx, childIdx);
+                          const plan = relay.actionPlanByFieldId.get(id);
+                          const required = entry.target.includes("*");
+                          const selected = relay.selectedTreeFieldId === id;
+                          const skipped = plan?.shouldSkip === "Yes";
+                          return (
+                            <button
+                              key={childIdx}
+                              type="button"
+                              onClick={() => relay.selectTreeTarget(entry, id)}
+                              disabled={!relay.canExecute}
+                              className={cn(
+                                "text-left rounded-xl border px-3 py-2.5 transition-all",
+                                selected
+                                  ? "border-violet-500 bg-violet-500/8 ring-1 ring-violet-500/25"
+                                  : "border-border/60 hover:border-border hover:bg-secondary/30",
+                                skipped && "opacity-60",
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-1">
+                                <span className="text-[11px] font-semibold text-foreground leading-snug line-clamp-2">
+                                  {entry.target.replace(/\*+$/, "").trim()}
+                                </span>
+                                {required && (
+                                  <span className="text-[8px] font-bold text-rose-600 bg-rose-50 px-1 rounded shrink-0">
+                                    req
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[9px] text-muted-foreground mt-1">
+                                {entry.controlType} · {entry.control.tag}
+                              </p>
+                              {plan && (
+                                <div
+                                  className={cn(
+                                    "mt-1.5 text-[9px] font-medium truncate",
+                                    skipped ? "text-muted-foreground" : "text-violet-700",
+                                  )}
+                                >
+                                  {plan.action} → {plan.value}
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="lg:col-span-2 p-4 flex flex-col bg-secondary/10 min-h-[280px]">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <h3 className="text-xs font-bold text-foreground truncate">
+                      {selectedFieldLabel ? selectedFieldLabel : "Fill plan"}
+                    </h3>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {relay.selectedTreeFieldId && (
+                        <button
+                          type="button"
+                          onClick={() => relay.setSelectedTreeFieldId(null)}
+                          className="text-[10px] font-semibold text-violet-600"
+                        >
+                          All steps
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void copyScript()}
+                        disabled={!relay.displayedScript.trim()}
+                        className="p-1.5 rounded-lg border border-border hover:bg-card disabled:opacity-40"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    value={relay.displayedScript}
+                    readOnly
+                    spellCheck={false}
+                    placeholder="Run Analyze to generate the deterministic fill plan…"
+                    className="flex-1 min-h-[200px] w-full rounded-xl border border-border bg-card px-3 py-2.5 text-[11px] font-mono leading-relaxed resize-none focus:outline-none shadow-inner"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="xl:col-span-9 rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
               <div className="px-4 py-2.5 border-b border-border/60 flex items-center justify-between gap-2">
                 <h2 className="text-xs font-bold text-foreground flex items-center gap-2">
                   {relay.generatingResume ? (
@@ -593,7 +995,7 @@ export function AvalonControllerView({
                     jobId={activeJob?.id}
                     base64={relay.activeResume.file.base64}
                     mimeType={relay.activeResume.file.mimeType}
-                    className="w-full h-[240px] bg-secondary/20 border-0"
+                    className="w-full h-[320px] xl:h-[420px] bg-secondary/20 border-0"
                   />
                   <div className="px-4 py-2 border-t border-border/60 flex flex-col gap-1">
                     <div className="flex items-center justify-between gap-2">
@@ -635,411 +1037,9 @@ export function AvalonControllerView({
                 </div>
               )}
             </div>
-          )}
-
-          {/* Pipeline steps 2–8 */}
-          <div className="rounded-2xl border border-border/80 bg-card shadow-sm p-4 space-y-2">
-            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Pipeline</h2>
-            <button
-              type="button"
-              onClick={() => void relay.runPipelineAuto()}
-              disabled={
-                !activeJob ||
-                !relay.canExecute ||
-                relay.autoRunning ||
-                pipelineLocked ||
-                relay.validatingTab ||
-                relay.generatingResume ||
-                relay.analyzing ||
-                relay.verifying
-              }
-              className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-violet-500/40 bg-violet-500/10 px-3 py-2.5 text-sm font-semibold text-violet-900 hover:bg-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {relay.autoRunning ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {relay.autoRunState === "paused" ? "Paused" : "Auto-running…"}
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4" />
-                  Auto-run (steps 2–8)
-                </>
-              )}
-            </button>
-            {relay.autoRunning && (
-              <div className="flex items-center gap-2">
-                {relay.autoRunState === "paused" ? (
-                  <button
-                    type="button"
-                    onClick={() => relay.resumeAutoRun()}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-secondary"
-                  >
-                    <Play className="w-3.5 h-3.5" /> Resume
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => relay.pauseAutoRun()}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-secondary"
-                  >
-                    <Pause className="w-3.5 h-3.5" /> Pause
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => relay.stopAutoRun()}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-300/70 text-red-700 px-3 py-2 text-xs font-semibold hover:bg-red-500/10"
-                >
-                  <Square className="w-3.5 h-3.5" /> Stop
-                </button>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => void relay.openActiveJob()}
-              disabled={!activeJob || !relay.canExecute || pipelineLocked || relay.autoRunning}
-              className={pipelineStepClass(2, highlightStep, pipeline.opened, Boolean(activeJob && relay.canExecute && !pipelineLocked && !relay.autoRunning))}
-            >
-              {pipeline.opened ? <CheckCircle2 className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
-              2 · Open job link
-            </button>
-            <button
-              type="button"
-              onClick={() => void relay.validateActiveTab()}
-              disabled={!pipeline.opened || !relay.canExecute || relay.validatingTab || pipelineLocked}
-              className={pipelineStepClass(
-                3,
-                highlightStep,
-                pipeline.validated,
-                pipeline.opened && relay.canExecute && !relay.validatingTab && !pipelineLocked,
-              )}
-            >
-              {relay.validatingTab ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : pipeline.validated ? (
-                <CheckCircle2 className="w-4 h-4" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4" />
-              )}
-              {relay.validatingTab ? "Checking…" : "3 · Verify opened tab is a job form"}
-            </button>
-            {relay.tabValidity && (
-              <div
-                className={cn(
-                  "rounded-xl border px-3 py-2 text-[11px]",
-                  relay.tabValidity.valid
-                    ? "border-emerald-300/70 bg-emerald-50 text-emerald-900"
-                    : "border-red-300/70 bg-red-50 text-red-900",
-                )}
-              >
-                <span className="font-bold">{relay.tabValidity.valid ? "Valid form" : `Skipped (${relay.tabValidity.kind})`}</span>
-                {" — "}
-                {relay.tabValidity.reason}
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => void relay.generateActiveJobResume(hasResumeDraft)}
-              disabled={!pipeline.validated || relay.generatingResume || pipelineLocked}
-              className={pipelineStepClass(
-                4,
-                highlightStep,
-                pipeline.resumeReady,
-                pipeline.validated && !relay.generatingResume && !pipelineLocked,
-              )}
-            >
-              {relay.generatingResume ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              {relay.generatingResume
-                ? "Generating résumé…"
-                : hasResumeDraft
-                  ? "4 · Résumé ready (regenerate)"
-                  : "4 · Generate / load résumé"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void relay.fetchActionableTree()}
-              disabled={!pipeline.resumeReady || !relay.canExecute || pipelineLocked}
-              className={pipelineStepClass(
-                5,
-                highlightStep,
-                pipeline.scanned,
-                pipeline.resumeReady && relay.canExecute && !pipelineLocked,
-              )}
-            >
-              {pipeline.scanned ? <CheckCircle2 className="w-4 h-4" /> : <TreePine className="w-4 h-4" />}
-              5 · Scan DOM (with dropdown probe)
-            </button>
-            <button
-              type="button"
-              onClick={() => void relay.analyzeTree()}
-              disabled={!pipeline.scanned || relay.analyzing || pipelineLocked}
-              className={cn(
-                pipelineStepClass(6, highlightStep, pipeline.analyzed, pipeline.scanned && !relay.analyzing && !pipelineLocked),
-                pipeline.scanned && !relay.analyzing && !pipelineLocked && "font-bold",
-              )}
-            >
-              {relay.analyzing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : pipeline.analyzed ? (
-                <CheckCircle2 className="w-4 h-4" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
-              )}
-              {relay.analyzing ? "Analyzing…" : "6 · Analyze form"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void relay.applyActionPlan()}
-              disabled={!pipeline.analyzed || !canApply || pipelineLocked || relay.analyzing}
-              className={pipelineStepClass(
-                7,
-                highlightStep,
-                pipeline.applied,
-                pipeline.analyzed && Boolean(canApply) && !pipelineLocked && !relay.analyzing,
-              )}
-            >
-              {relay.applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-              {relay.applying ? "Injecting…" : "7 · Apply fill plan"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void relay.verifyActiveResult()}
-              disabled={!pipeline.applied || !relay.canExecute || relay.verifying || verifyWaiting || pipelineLocked}
-              className={pipelineStepClass(
-                8,
-                highlightStep,
-                pipeline.verified,
-                pipeline.applied && relay.canExecute && !relay.verifying && !verifyWaiting && !pipelineLocked,
-              )}
-            >
-              {verifyWaiting && verifyWaitSeconds != null ? (
-                <>
-                  <span className="w-5 h-5 rounded-full bg-violet-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
-                    {verifyWaitSeconds}
-                  </span>
-                  8 · Waiting for submit result
-                </>
-              ) : relay.verifying ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Verifying…
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  8 · Verify result
-                </>
-              )}
-            </button>
-            {relay.verifyResult && (
-              <div
-                className={cn(
-                  "rounded-xl border px-3 py-2 text-[11px] space-y-1",
-                  relay.verifyResult.kind === "success" && "border-emerald-300/70 bg-emerald-50 text-emerald-900",
-                  relay.verifyResult.kind === "failed" && "border-red-300/70 bg-red-50 text-red-900",
-                  relay.verifyResult.kind === "additional" && "border-amber-300/70 bg-amber-50 text-amber-900",
-                )}
-              >
-                <div className="flex items-center gap-1.5 font-bold">
-                  {relay.verifyResult.kind === "success" ? (
-                    <>
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Success
-                    </>
-                  ) : relay.verifyResult.kind === "additional" ? (
-                    <>
-                      <AlertTriangle className="w-3.5 h-3.5" /> Additional step required
-                    </>
-                  ) : (
-                    <>
-                      <AlertTriangle className="w-3.5 h-3.5" /> Failed
-                    </>
-                  )}
-                </div>
-                <p className="leading-snug">{relay.verifyResult.reason}</p>
-                {relay.verifyResult.detail && (
-                  <p className="leading-snug font-medium">{relay.verifyResult.detail}</p>
-                )}
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => void relay.markActiveJobApplied()}
-              disabled={!activeJob || relay.applying}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-500 disabled:opacity-40"
-              title="Mark this job Applied in MongoDB with the current profile"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              Mark as Applied
-            </button>
-            {hasPlan && relay.injectionPlan && (
-              <p className="text-[10px] text-center text-muted-foreground pt-1">
-                {relay.injectionPlan.steps.length} steps · uses drafted PDF
-              </p>
-            )}
-            {relay.formAnalysis?.usage && (
-              <p className="text-[10px] text-center text-violet-600 font-medium">
-                {relay.formAnalysis.usage.totalTokens} tokens
-                {relay.formAnalysis.usage.cost
-                  ? ` · $${relay.formAnalysis.usage.cost.totalUsd.toFixed(4)}`
-                  : ""}
-              </p>
-            )}
-            <p className="text-[9px] text-center text-muted-foreground leading-relaxed pt-1">
-              Steps run in order: open → verify tab → résumé → scan → analyze → apply → verify.
-            </p>
-          </div>
-          </div>
-
-          {/* Event log */}
-          <div className="flex-1 rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden flex flex-col min-h-[240px]">
-            <div className="px-4 py-2.5 border-b border-border/60 flex items-center gap-2">
-              <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
-              <h2 className="text-xs font-bold text-foreground">Activity</h2>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {relay.logs.length === 0 && (
-                <p className="text-[11px] text-muted-foreground text-center py-8">Waiting for events…</p>
-              )}
-              {relay.logs.map((entry) => (
-                <div
-                  key={entry.id}
-                  className={cn(
-                    "text-[10px] font-mono leading-relaxed px-2 py-1.5 rounded-lg border border-transparent",
-                    entry.success === true && "bg-emerald-500/8 text-emerald-800 border-emerald-500/15",
-                    entry.success === false && "bg-red-500/8 text-red-800 border-red-500/15",
-                    entry.success === undefined && "text-foreground/80",
-                  )}
-                >
-                  <span className="text-muted-foreground">{entry.at}</span> {entry.message}
-                </div>
-              ))}
-            </div>
-          </div>
-        </aside>
+          )
+        )}
       </div>
-
-      {/* Form workspace */}
-      {hasTree && (
-        <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-border/60 flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-violet-500/5 via-transparent to-indigo-500/5">
-            <div>
-              <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
-                <TreePine className="w-4 h-4 text-violet-600" />
-                Form fields
-                <span className="text-[10px] font-bold text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
-                  {fieldCount} targets
-                </span>
-              </h2>
-              {relay.treePage?.url && (
-                <p className="text-[10px] text-muted-foreground mt-0.5 truncate max-w-xl">{relay.treePage.url}</p>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => relay.generatePlan()}
-              disabled={!hasPlan || relay.applying || relay.analyzing}
-              className="text-xs font-semibold text-violet-600 hover:text-violet-700 disabled:opacity-50"
-            >
-              Rebuild plan
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-0 lg:divide-x divide-border/60">
-            <div className="lg:col-span-3 p-4 max-h-[400px] overflow-y-auto space-y-4">
-              {relay.actionableTree!.map((group, groupIdx) => (
-                <div key={groupIdx}>
-                  <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 sticky top-0 bg-card py-1">
-                    {group.content || "Section"}
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                    {group.children.map((entry, childIdx) => {
-                      const id = fieldId(groupIdx, childIdx);
-                      const plan = relay.actionPlanByFieldId.get(id);
-                      const required = entry.target.includes("*");
-                      const selected = relay.selectedTreeFieldId === id;
-                      const skipped = plan?.shouldSkip === "Yes";
-                      return (
-                        <button
-                          key={childIdx}
-                          type="button"
-                          onClick={() => relay.selectTreeTarget(entry, id)}
-                          disabled={!relay.canExecute}
-                          className={cn(
-                            "text-left rounded-xl border px-3 py-2.5 transition-all",
-                            selected
-                              ? "border-violet-500 bg-violet-500/8 ring-1 ring-violet-500/25"
-                              : "border-border/60 hover:border-border hover:bg-secondary/30",
-                            skipped && "opacity-60",
-                          )}
-                        >
-                          <div className="flex items-start justify-between gap-1">
-                            <span className="text-[11px] font-semibold text-foreground leading-snug line-clamp-2">
-                              {entry.target.replace(/\*+$/, "").trim()}
-                            </span>
-                            {required && (
-                              <span className="text-[8px] font-bold text-rose-600 bg-rose-50 px-1 rounded shrink-0">
-                                req
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[9px] text-muted-foreground mt-1">
-                            {entry.controlType} · {entry.control.tag}
-                          </p>
-                          {plan && (
-                            <div
-                              className={cn(
-                                "mt-1.5 text-[9px] font-medium truncate",
-                                skipped ? "text-muted-foreground" : "text-violet-700",
-                              )}
-                            >
-                              {plan.action} → {plan.value}
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="lg:col-span-2 p-4 flex flex-col bg-secondary/10 min-h-[280px]">
-              <div className="flex items-center justify-between gap-2 mb-3">
-                <h3 className="text-xs font-bold text-foreground truncate">
-                  {selectedFieldLabel ? selectedFieldLabel : "Fill plan"}
-                </h3>
-                <div className="flex items-center gap-2 shrink-0">
-                  {relay.selectedTreeFieldId && (
-                    <button
-                      type="button"
-                      onClick={() => relay.setSelectedTreeFieldId(null)}
-                      className="text-[10px] font-semibold text-violet-600"
-                    >
-                      All steps
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void copyScript()}
-                    disabled={!relay.displayedScript.trim()}
-                    className="p-1.5 rounded-lg border border-border hover:bg-card disabled:opacity-40"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-              <textarea
-                value={relay.displayedScript}
-                readOnly
-                spellCheck={false}
-                placeholder="Run Analyze to generate the deterministic fill plan…"
-                className="flex-1 min-h-[200px] w-full rounded-xl border border-border bg-card px-3 py-2.5 text-[11px] font-mono leading-relaxed resize-none focus:outline-none shadow-inner"
-              />
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Empty state CTA */}
       {!hasTree && relay.canExecute && activeJob && pipeline.opened && (

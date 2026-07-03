@@ -12,6 +12,8 @@ export async function anthropicHandler(req: Request, res: Response) {
     const runId = String(req.headers['x-run-id'] || '');
     if (!auth) return res.status(401).json({ error: { message: 'No API key' } });
 
+    console.log(`[llm] route → feature=anthropic provider=deepseek model=${model}${runId ? ` run=${runId}` : ''}`);
+
     checkTokenBudget(runId || undefined, CONFIG.maxTokensPerCall);
 
     const { res: upstream, data } = await proxyJson(`${DEEPSEEK_ANTHROPIC_BASE_URL}/v1/messages`, {

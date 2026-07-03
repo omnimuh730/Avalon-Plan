@@ -3,11 +3,16 @@ import { useApplier } from "@/context/applier-context";
 import { fetchAgentModels, fetchJobSources, fetchCandidateJobs, type JobCandidate } from "../../../services/agentApi";
 import type { DeployOptions, ModelOption, SourceOption } from "../../../types/agent";
 
-export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> | void) {
+export function useDeployForm(
+  onDeploy: (opts: DeployOptions) => Promise<void> | void,
+  opts?: { asNewSession?: boolean },
+) {
   const { applier, applierReady } = useApplier();
   const profileId = applier?._id != null ? String(applier._id) : "";
+  const asNewSession = Boolean(opts?.asNewSession);
 
   const [name, setName] = useState("");
+  const [avalonSessionId, setAvalonSessionId] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -112,7 +117,9 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
 
   const selectedSource = sources.find((s) => s.title === source);
   const posted = selectedSource?.posted ?? 0;
-  const valid = !!profileId && queue.length > 0;
+  // A new session can start empty (queue jobs into it later); queuing into the
+  // active session still requires at least one job.
+  const valid = !!profileId && (queue.length > 0 || asNewSession);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -138,6 +145,7 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
           url: j.url,
           source: j.source,
         })),
+        ...(asNewSession ? { createNewSession: true, avalonSessionId: avalonSessionId.trim() } : {}),
       });
     } catch (e: unknown) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -148,6 +156,9 @@ export function useDeployForm(onDeploy: (opts: DeployOptions) => Promise<void> |
   return {
     name,
     setName,
+    asNewSession,
+    avalonSessionId,
+    setAvalonSessionId,
     loading,
     err,
     profileName: applier?.name || "",

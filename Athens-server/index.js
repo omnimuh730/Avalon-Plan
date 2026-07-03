@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { installTerminalLogger } from "@nextoffer/shared/terminal-log";
+import { installTerminalLogger, requestLogger } from "@nextoffer/shared/terminal-log";
 installTerminalLogger("athens");
 
 import http from "http";
@@ -40,6 +40,7 @@ const host = process.env.HOST !== undefined && process.env.HOST !== "" ? process
 
 app.use(express.json({ limit: '50mb' }));
 app.use(cors({ origin: '*' }));
+app.use(requestLogger('api'));
 
 async function bootstrap() {
 	// Mongo-only startup — no Redis/Qdrant/Ollama/Docker. Matching is served from

@@ -194,9 +194,46 @@ const EMPTY_PIPELINE: JobPipelineState = {
 export interface AvalonRelayOptions {
   sessionId?: string;
   persist?: boolean;
+  /**
+   * When set, the queue + apply progress (jobQueue, activeJobIndex, appliedJobIds,
+   * pipelineByJobId) are persisted to localStorage under this key and restored on
+   * mount — so a hard refresh (or a dev-server Fast Refresh full reload) doesn't
+   * wipe an in-progress queue the way pure in-memory state would. Distinct from
+   * `sessionId`/`persist` above, which govern the *Avalon relay* pairing id, not
+   * this UI-facing queue state.
+   */
+  persistKey?: string;
+}
+
+export const QUEUE_STORAGE_PREFIX = "athens-agent-queue-";
+
+interface PersistedQueueState {
+  jobQueue: QueuedJob[];
+  activeJobIndex: number;
+  appliedJobIds: string[];
+  pipelineByJobId: Record<string, JobPipelineState>;
+}
+
+function loadPersistedQueue(persistKey: string): PersistedQueueState | null {
+  try {
+    const raw = localStorage.getItem(`${QUEUE_STORAGE_PREFIX}${persistKey}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedQueueState>;
+    if (!Array.isArray(parsed.jobQueue)) return null;
+    return {
+      jobQueue: parsed.jobQueue,
+      activeJobIndex: typeof parsed.activeJobIndex === "number" ? parsed.activeJobIndex : 0,
+      appliedJobIds: Array.isArray(parsed.appliedJobIds) ? parsed.appliedJobIds : [],
+      pipelineByJobId: parsed.pipelineByJobId && typeof parsed.pipelineByJobId === "object" ? parsed.pipelineByJobId : {},
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function useAvalonRelay(applicantContext: string, applierName = "", options?: AvalonRelayOptions) {
+  const persistKey = options?.persistKey;
+  const initialPersisted = useMemo(() => (persistKey ? loadPersistedQueue(persistKey) : null), [persistKey]);
   const persistSession = options?.persist !== false;
   const [serverUrl, setServerUrl] = useState(() => avalonRelayUrl());
   const [sessionId, setSessionId] = useState(() => options?.sessionId ?? storedAvalonSessionId());
@@ -219,10 +256,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const [selectedTreeFieldId, setSelectedTreeFieldId] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [applying, setApplying] = useState(false);
-  const [jobQueue, setJobQueue] = useState<QueuedJob[]>([]);
-  const [activeJobIndex, setActiveJobIndex] = useState(0);
+  const [jobQueue, setJobQueue] = useState<QueuedJob[]>(() => initialPersisted?.jobQueue ?? []);
+  const [activeJobIndex, setActiveJobIndex] = useState(() => initialPersisted?.activeJobIndex ?? 0);
   const [applyPhase, setApplyPhase] = useState<ApplyProgress | null>(null);
-  const [appliedJobIds, setAppliedJobIds] = useState<Set<string>>(new Set());
+  const [appliedJobIds, setAppliedJobIds] = useState<Set<string>>(
+    () => new Set(initialPersisted?.appliedJobIds ?? []),
+  );
   const [resumesByJobId, setResumesByJobId] = useState<Record<string, JobResume>>({});
   const [resumeJobId, setResumeJobId] = useState<string | null>(null);
   const [generatingResume, setGeneratingResume] = useState(false);
@@ -231,7 +270,9 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const [resumeGeneratedSections, setResumeGeneratedSections] = useState<
     Partial<Record<ResumeSectionPurpose, boolean>>
   >({});
-  const [pipelineByJobId, setPipelineByJobId] = useState<Record<string, JobPipelineState>>({});
+  const [pipelineByJobId, setPipelineByJobId] = useState<Record<string, JobPipelineState>>(
+    () => initialPersisted?.pipelineByJobId ?? {},
+  );
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<ManualVerifyResult | null>(null);
   const [verifying, setVerifying] = useState(false);
@@ -271,6 +312,25 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   selectedTabIdRef.current = selectedTabId;
   jobQueueRef.current = jobQueue;
   activeJobIndexRef.current = activeJobIndex;
+
+  // Persist the queue + apply progress so a hard refresh (or a dev-server full
+  // reload) doesn't wipe an in-progress run the way pure in-memory state would.
+  // Résumés/logs/live tree stay in-memory only — this is deliberately just enough
+  // to restore "what's queued and how far did it get".
+  useEffect(() => {
+    if (!persistKey) return;
+    try {
+      const snapshot: PersistedQueueState = {
+        jobQueue,
+        activeJobIndex,
+        appliedJobIds: Array.from(appliedJobIds),
+        pipelineByJobId,
+      };
+      localStorage.setItem(`${QUEUE_STORAGE_PREFIX}${persistKey}`, JSON.stringify(snapshot));
+    } catch {
+      /* storage unavailable or full — non-fatal */
+    }
+  }, [persistKey, jobQueue, activeJobIndex, appliedJobIds, pipelineByJobId]);
 
   const canExecute = connected && peers.extension;
   const executeDisabledReason = !connected
@@ -1842,7 +1902,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     runAbortRef.current = new AbortController();
     setAutoRunning(true);
     setAutoRunState("running");
-    startRunLog(job, { url: job.url, company: job.company, source: job.source, mode: "auto-run" });
+    startRunLog(job, { url: job.url, company: job.company, source: job.source, mode: "auto-run", sessionId: sessionIdRef.current });
 
     const startStep = 2;
     let cycle = 0;
@@ -2415,7 +2475,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       applyingRef.current = true;
       setApplyDone(false);
       resetJobUsage();
-      startRunLog(job, { url: job.url, company: job.company, source: job.source });
+      startRunLog(job, { url: job.url, company: job.company, source: job.source, sessionId: sessionIdRef.current });
       let finalStatus = "failed";
       try {
         pushLog(`Applying to "${job.title}"…`, true);

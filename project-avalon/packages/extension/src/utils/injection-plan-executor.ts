@@ -8,10 +8,9 @@ import {
 import { EXTENSION_MESSAGES } from './constants';
 import { ensureContentScript } from './tab-messages';
 import { FILE_TARGET_ATTR, type InjectionPlanRunResult } from './injection-plan-runner';
+import { waitForDomSettle } from './page-ready';
 
 const DEFAULT_SUBMIT_DELAY_MS = 5000;
-/** After the résumé bytes are set, give async uploaders (S3 dropzones) time to finish. */
-const FILE_SETTLE_MS = 5000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -109,58 +108,6 @@ async function attachTaggedFiles(tabId: number, resume: AttachedFile): Promise<n
     console.warn('[Avalon] MAIN-world attach errors:', res.errors);
   }
   return res.attached ?? 0;
-}
-
-/**
- * Resolves once the page's DOM has been quiet for `quietMs` (no mutations), or
- * after `maxMs`. Runs in the MAIN world. Some uploaders parse the résumé and
- * RE-RENDER the whole form a few seconds later; filling before that re-render
- * lands the values on soon-to-be-discarded nodes (they end up blank). Waiting for
- * quiescence is a generic, portable way to fill AFTER the form has settled — no
- * vendor/site strings involved.
- */
-function domSettleInMainWorld(quietMs: number, maxMs: number): Promise<string> {
-  return new Promise((resolve) => {
-    let quietTimer: ReturnType<typeof setTimeout>;
-    const finish = (reason: string) => {
-      try {
-        observer.disconnect();
-      } catch {
-        /* already gone */
-      }
-      clearTimeout(quietTimer);
-      clearTimeout(hardTimer);
-      resolve(reason);
-    };
-    const bump = () => {
-      clearTimeout(quietTimer);
-      quietTimer = setTimeout(() => finish('quiet'), quietMs);
-    };
-    const observer = new MutationObserver(bump);
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      characterData: true,
-    });
-    const hardTimer = setTimeout(() => finish('timeout'), maxMs);
-    bump();
-  });
-}
-
-/** Wait for the page to stop mutating (e.g. a résumé-parse re-render) before filling. */
-async function waitForDomSettle(tabId: number, quietMs = 1200, maxMs = 15000): Promise<void> {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: domSettleInMainWorld,
-      args: [quietMs, maxMs],
-    });
-  } catch {
-    // Best-effort: if settle detection fails, fall back to a short fixed wait.
-    await sleep(FILE_SETTLE_MS);
-  }
 }
 
 export async function executeInjectionPlan(

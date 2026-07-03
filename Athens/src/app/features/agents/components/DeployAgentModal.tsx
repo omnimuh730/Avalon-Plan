@@ -27,11 +27,14 @@ function JobRow({ job, action, onClick }: { job: JobCandidate; action: "add" | "
 export function DeployAgentModal({
   onClose,
   onDeploy,
+  asNewSession = false,
 }: {
   onClose: () => void;
   onDeploy: (opts: DeployOptions) => Promise<void> | void;
+  /** Creates a brand-new tabbed session (with its own Avalon extension pairing) instead of queuing into the active one. */
+  asNewSession?: boolean;
 }) {
-  const form = useDeployForm(onDeploy);
+  const form = useDeployForm(onDeploy, { asNewSession });
   const [urlInput, setUrlInput] = useState("");
 
   const submitUrl = () => {
@@ -49,7 +52,9 @@ export function DeployAgentModal({
               <Rocket size={18} className="text-primary" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-foreground leading-tight">Queue Jobs</h2>
+              <h2 className="text-lg font-bold text-foreground leading-tight">
+                {asNewSession ? "New Session" : "Queue Jobs"}
+              </h2>
               <p className="text-xs text-muted-foreground">
                 {form.profileName || "No profile"} · Avalon extension auto-apply
               </p>
@@ -201,16 +206,34 @@ export function DeployAgentModal({
             </div>
           </div>
 
-          {/* Optional session name */}
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-muted-foreground">Session name <span className="font-normal">(optional)</span></span>
-            <input
-              value={form.name}
-              onChange={(e) => form.setName(e.target.value)}
-              placeholder="Auto-named from the source if left blank"
-              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </label>
+          {/* Optional session name (+ Avalon session id when creating a new tabbed session) */}
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-muted-foreground">Session name <span className="font-normal">(optional)</span></span>
+              <input
+                value={form.name}
+                onChange={(e) => form.setName(e.target.value)}
+                placeholder="Auto-named from the source if left blank"
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+            {asNewSession && (
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-muted-foreground">Avalon session ID</span>
+                <input
+                  value={form.avalonSessionId}
+                  onChange={(e) => form.setAvalonSessionId(e.target.value)}
+                  placeholder="Must match the extension on this lane"
+                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </label>
+            )}
+          </div>
+          {asNewSession && (
+            <p className="text-[11px] text-muted-foreground -mt-2">
+              Pair a separate Chrome extension instance to this ID so it runs concurrently with your other sessions. Leave blank to share the default session.
+            </p>
+          )}
 
           <p className="text-xs text-muted-foreground text-center">
             <span className="font-semibold text-primary">{form.queue.length}</span> job{form.queue.length === 1 ? "" : "s"} will open in the Avalon controller.
@@ -236,7 +259,11 @@ export function DeployAgentModal({
             disabled={form.loading || !form.valid || !form.applierReady}
             className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 disabled:opacity-50"
           >
-            {form.loading ? (<><Loader2 size={13} className="animate-spin" /> Starting…</>) : (<><Zap size={13} /> Start session</>)}
+            {form.loading ? (
+              <><Loader2 size={13} className="animate-spin" /> {asNewSession ? "Creating…" : "Starting…"}</>
+            ) : (
+              <><Zap size={13} /> {asNewSession ? "Create session" : "Start session"}</>
+            )}
           </button>
         </div>
       </div>

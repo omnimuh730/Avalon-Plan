@@ -46,6 +46,7 @@ export const TAG_COLORS = {
 	'avalon-relay': c.yellow,
 	'ai-bff': c.magenta,
 	mongo: c.blue,
+	llm: c.brightGreen,
 };
 
 /** @type {Record<string, { icon: string, color: string }>} */
@@ -205,4 +206,26 @@ export function printBanner(title, lines = []) {
 		originalConsole.log(`${c.brightBlue}${c.bold}│${c.reset} ${pad(`${c.dim}${line}${c.reset}`)}${c.brightBlue}${c.bold}│${c.reset}`);
 	}
 	originalConsole.log(`${c.brightBlue}${c.bold}╰${bar}╯${c.reset}`);
+}
+
+/**
+ * Express middleware: logs every incoming request and its outcome
+ * (method, path, status, duration) using the shared [api] styling.
+ * Pure observability — never mutates req/res.
+ *
+ * @param {string} [tag]
+ */
+export function requestLogger(tag = 'api') {
+	return function requestLoggerMiddleware(req, res, next) {
+		const startedAt = process.hrtime.bigint();
+		console.log(`[${tag}] → ${req.method} ${req.originalUrl}`);
+		res.on('finish', () => {
+			const ms = Number(process.hrtime.bigint() - startedAt) / 1e6;
+			const line = `[${tag}] ← ${req.method} ${req.originalUrl} ${res.statusCode} (${ms.toFixed(1)}ms)`;
+			if (res.statusCode >= 500) console.error(line);
+			else if (res.statusCode >= 400) console.warn(line);
+			else console.log(line);
+		});
+		next();
+	};
 }

@@ -3,10 +3,12 @@ import { Bot, Loader2, Plus } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { PageShell } from "../../components/layout/PageShell";
 import { useAgentSessions } from "./context/AgentSessionsContext";
+import { RunHistoryPanel } from "./components/RunHistoryPanel";
+import { SessionTabs } from "./components/SessionTabs";
 
 export function AgentsPage() {
-  const { applierReady } = useApplier();
-  const { openDeploy, registerSlot } = useAgentSessions();
+  const { applier, applierReady } = useApplier();
+  const { sessions, openDeploy, registerSlot } = useAgentSessions();
 
   // The active session's controller is portaled into this slot by the persistent
   // engine in AgentSessionsProvider — so leaving and returning keeps its live state.
@@ -51,7 +53,13 @@ export function AgentsPage() {
             <p className="text-sm font-medium">Loading your profile…</p>
           </div>
         ) : (
-          <div ref={slotRef} />
+          <>
+            <SessionTabs />
+            <div className="flex items-start gap-4">
+              <div ref={slotRef} className="flex-1 min-w-0" />
+              <RunHistoryPanel applierName={applier?.name ?? ""} sessions={sessions} />
+            </div>
+          </>
         )}
       </div>
     </PageShell>

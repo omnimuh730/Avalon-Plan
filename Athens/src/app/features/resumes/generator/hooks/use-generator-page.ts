@@ -77,6 +77,9 @@ export function useGeneratorPage() {
     const careers = identity?.careers ?? [];
     const map: Record<string, string> = {
       job_description: config.jobDescription || "",
+      // Populated from the job doc for structured (Job Search / Agent) runs; empty
+      // here on the free-text Resume Generator page.
+      job_skills: "",
       career: careers
         .map((c) => [c.title, c.company, c.period].filter(Boolean).join(" | "))
         .filter(Boolean)

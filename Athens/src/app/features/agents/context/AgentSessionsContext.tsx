@@ -16,7 +16,7 @@ import type { DeployOptions } from "../../../types/agent";
 import { formatApplierProfile } from "../avalon/ai/profile";
 import { AvalonControllerView } from "../components/AvalonControllerView";
 import { DeployAgentModal } from "../components/DeployAgentModal";
-import { useAvalonRelay, type QueuedJob } from "../hooks/useAvalonRelay";
+import { QUEUE_STORAGE_PREFIX, useAvalonRelay, type QueuedJob } from "../hooks/useAvalonRelay";
 
 /**
  * Persistent, multi-session Avalon engine.
@@ -58,7 +58,10 @@ interface AgentSessionsContextValue {
   removeSession: (id: string) => void;
   renameSession: (id: string, name: string) => void;
   setSessionQueue: (id: string, jobs: QueuedJob[]) => void;
+  /** Opens the deploy modal to queue jobs into the active session. */
   openDeploy: () => void;
+  /** Opens the deploy modal in "create a new session" mode (name + Avalon session id). */
+  openNewSession: () => void;
   registerSlot: (el: HTMLElement | null) => void;
 }
 
@@ -116,7 +119,7 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
   const [activeSessionId, setActiveSessionId] = useState<string>(() => sessions[0]?.id ?? "");
   const [statusById, setStatusById] = useState<Record<string, AgentSessionStatus>>({});
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
-  const [showDeploy, setShowDeploy] = useState(false);
+  const [deployMode, setDeployMode] = useState<"closed" | "queue" | "new-session">("closed");
 
   // Live relay per session for imperative provider actions (enqueue/stop).
   const enginesRef = useRef<Map<string, Relay>>(new Map());
@@ -166,12 +169,10 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
 
   const createSession = useCallback(
     (opts?: { name?: string; sessionId?: string; jobs?: QueuedJob[] }) => {
-      const meta = defaultSession(opts?.name?.trim() || "New session", opts?.sessionId?.trim() ?? "");
+      const trimmedName = opts?.name?.trim();
+      const meta = defaultSession(trimmedName || "New session", opts?.sessionId?.trim() ?? "");
       if (opts?.jobs?.length) pendingJobsRef.current.set(meta.id, opts.jobs);
-      setSessions((prev) => [
-        ...prev,
-        { ...meta, name: opts?.name?.trim() || `Session ${prev.length + 1}` },
-      ]);
+      setSessions((prev) => [...prev, { ...meta, name: trimmedName || `Session ${prev.length + 1}` }]);
       setActiveSessionId(meta.id);
       return meta.id;
     },
@@ -181,6 +182,11 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
   const removeSession = useCallback((id: string) => {
     enginesRef.current.get(id)?.stopAutoRun();
     pendingJobsRef.current.delete(id);
+    try {
+      localStorage.removeItem(`${QUEUE_STORAGE_PREFIX}${id}`);
+    } catch {
+      /* storage unavailable */
+    }
     setStatusById((prev) => {
       if (!(id in prev)) return prev;
       const next = { ...prev };
@@ -203,11 +209,12 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
     else pendingJobsRef.current.set(id, jobs);
   }, []);
 
-  const openDeploy = useCallback(() => setShowDeploy(true), []);
+  const openDeploy = useCallback(() => setDeployMode("queue"), []);
+  const openNewSession = useCallback(() => setDeployMode("new-session"), []);
   const registerSlot = useCallback((el: HTMLElement | null) => setSlotEl(el), []);
 
-  // Phase 1: the deploy modal fills the ACTIVE session's queue. Phase 3 extends it
-  // to spin up a new named session on its own sessionId.
+  // "queue" mode fills the ACTIVE session's queue (Phase 1 behavior); "new-session"
+  // mode spins up a brand-new session on its own Avalon sessionId (Phase 3).
   const handleDeploy = useCallback(
     (opts: DeployOptions) => {
       const jobs: QueuedJob[] = (opts.jobs ?? []).map((j) => ({
@@ -217,10 +224,14 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
         url: j.url,
         source: j.source,
       }));
-      setSessionQueue(activeSessionId, jobs);
-      setShowDeploy(false);
+      if (opts.createNewSession) {
+        createSession({ name: opts.name, sessionId: opts.avalonSessionId, jobs });
+      } else {
+        setSessionQueue(activeSessionId, jobs);
+      }
+      setDeployMode("closed");
     },
-    [activeSessionId, setSessionQueue],
+    [activeSessionId, createSession, setSessionQueue],
   );
 
   const value = useMemo<AgentSessionsContextValue>(
@@ -234,6 +245,7 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
       renameSession,
       setSessionQueue,
       openDeploy,
+      openNewSession,
       registerSlot,
     }),
     [
@@ -246,6 +258,7 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
       renameSession,
       setSessionQueue,
       openDeploy,
+      openNewSession,
       registerSlot,
     ],
   );
@@ -268,7 +281,13 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
         />
       ))}
       {children}
-      {showDeploy && <DeployAgentModal onClose={() => setShowDeploy(false)} onDeploy={handleDeploy} />}
+      {deployMode !== "closed" && (
+        <DeployAgentModal
+          onClose={() => setDeployMode("closed")}
+          onDeploy={handleDeploy}
+          asNewSession={deployMode === "new-session"}
+        />
+      )}
     </AgentSessionsContext.Provider>
   );
 }
@@ -296,7 +315,11 @@ function AgentSessionEngine({
   pendingJobsRef: MutableRefObject<Map<string, QueuedJob[]>>;
   onQueueJobs: () => void;
 }) {
-  const relay = useAvalonRelay(applicantContext, applierName, { sessionId: meta.sessionId, persist: false });
+  const relay = useAvalonRelay(applicantContext, applierName, {
+    sessionId: meta.sessionId,
+    persist: false,
+    persistKey: meta.id,
+  });
 
   // Expose the latest relay for imperative provider actions (enqueue/stop). Writing
   // to a ref during render keeps it current for event-handler-time reads.

@@ -10,3 +10,4 @@ export function parseStyledLine(
 ): { time: string; level: 'info' | 'warn' | 'error'; tag: string; message: string; service: string };
 export function installTerminalLogger(defaultTag?: string): void;
 export function printBanner(title: string, lines?: string[]): void;
+export function requestLogger(tag?: string): (req: any, res: any, next: () => void) => void;
