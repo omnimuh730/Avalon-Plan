@@ -127,12 +127,15 @@ const OTP_STEP_WAIT_MS = 10_000;
 const OTP_FETCH_MAX_ATTEMPTS = 5;
 
 /**
- * When step 8 · Verify result comes back as anything other than "success", the
- * page is often the next screen of a multi-step application. Re-running
- * 5 · Scan → 6 · Analyze → 7 · Apply on that new screen usually clears it, so we
- * loop automatically — bounded to this many retries to avoid spinning forever.
+ * When step 8 · Verify result is not "success" we loop, but the recovery differs by
+ * cause:
+ *  - "additional" (a security/verification code page appeared) → run the OTP flow;
+ *    never re-scan (that would wipe the code boxes).
+ *  - "failed" (something else — e.g. a missing/next form) → re-run 5 · Scan →
+ *    6 · Analyze → 7 · Apply.
+ * Bounded to this many retries to avoid spinning forever.
  */
-const MAX_VERIFY_RETRIES = 10;
+const MAX_VERIFY_RETRIES = 3;
 
 export interface AvalonLogEntry {
   id: string;
@@ -1595,9 +1598,9 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
    * the outcome into one of three results the user asked for: success / failed
    * (with reason) / additional process required (OTP, email verification code/link).
    *
-   * On any non-success outcome the page is often the next screen of a multi-step
-   * form, so we automatically re-run 5 · Scan → 6 · Analyze → 7 · Apply → 8 · Verify,
-   * up to MAX_VERIFY_RETRIES (10) times, until it confirms or the retries run out.
+   * On a non-success outcome we retry by cause (bounded to MAX_VERIFY_RETRIES):
+   *  - "additional" (a security/verification code page) → re-run the OTP flow.
+   *  - "failed" (e.g. a missing/next form) → re-run 5 · Scan → 6 · Analyze → 7 · Apply.
    */
   const verifyActiveResult = useCallback(async () => {
     const job = getActiveQueuedJob();
@@ -1610,9 +1613,6 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       pushLog(executeDisabledReason ?? "Cannot verify — extension not connected", false);
       return;
     }
-    // Greenhouse detection also considers the open tab URL, so the OTP guard holds
-    // even when there is no queued job (manual verify on an already-open tab).
-    const greenhouse = isGreenhouseJob(job) || /greenhouse\.io/i.test(treePage?.url ?? "");
     setVerifying(true);
     setVerifyResult(null);
     try {
@@ -1621,17 +1621,18 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
       setVerifyResult(result);
       pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
 
-      // Non-success → likely the next screen of a multi-step form. Re-run
-      // 5 · Scan → 6 · Analyze → 7 · Apply → 8 · Verify, up to MAX_VERIFY_RETRIES.
+      // Recovery depends on WHY it wasn't success:
+      //  - "additional" → a security/verification code page appeared. Re-run the OTP
+      //    flow (computeVerifyResult re-detects the page, re-polls Gmail, fills, re-submits).
+      //    NEVER re-scan here — that would wipe the code boxes.
+      //  - "failed" → not a code page (e.g. a missing/next form). Re-run
+      //    5 · Scan → 6 · Analyze → 7 · Apply.
       let attempt = 0;
       while (result.kind !== "success" && attempt < MAX_VERIFY_RETRIES) {
         attempt += 1;
-        // Greenhouse: NEVER re-scan — that re-fills the form from scratch and wipes
-        // the emailed-code boxes. Just re-verify: computeVerifyResult re-detects the
-        // code page, re-polls Gmail, fills the code and re-submits.
-        if (greenhouse) {
+        if (result.kind === "additional") {
           pushLog(
-            `Verify not success (Greenhouse) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-check code page / re-fetch OTP → step 8 (no re-scan)`,
+            `Verify not success (verification code page) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-fetch OTP → step 8 (no re-scan)`,
             false,
           );
           await waitBeforeVerify();
@@ -2009,12 +2010,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           while (verify.kind !== "success" && attempt < MAX_VERIFY_RETRIES) {
             if (!(await gate())) return;
             attempt += 1;
-            // Greenhouse: NEVER re-scan — it re-fills the form and wipes the emailed
-            // code boxes. Re-verify only: computeVerifyResult re-detects the code
-            // page, re-polls Gmail, fills the code and re-submits.
-            if (isGreenhouseJob(job)) {
+            // "additional" = a security/verification code page appeared → re-run the
+            // OTP flow (re-detect page, re-poll Gmail, fill, re-submit). NEVER re-scan
+            // here — that would wipe the emailed-code boxes.
+            if (verify.kind === "additional") {
               pushLog(
-                `Verify not success (Greenhouse) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-check code page / re-fetch OTP → step 8 (no re-scan)`,
+                `Verify not success (verification code page) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-fetch OTP → step 8 (no re-scan)`,
                 false,
               );
               await waitBeforeVerify();
@@ -2026,6 +2027,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
               );
               continue;
             }
+            // "failed" = not a code page (e.g. a missing/next form) → re-run 5→6→7.
             pushLog(
               `Verify not success (${verify.kind}) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-running 5 · Scan → 6 · Analyze → 7 · Apply`,
               false,
