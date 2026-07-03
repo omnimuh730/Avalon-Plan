@@ -1,5 +1,13 @@
 import { API_BASE } from "@/lib/api-base";
 
+/** One scanned inbox email, surfaced so the Agent Activity can show what was read. */
+export interface ScannedEmail {
+  index: number;
+  from: string;
+  subject: string;
+  date: string | null;
+}
+
 export interface VerificationCodeResult {
   code: string | null;
   /** A verification LINK to open, when the email uses a click-to-verify flow instead of a code. */
@@ -10,24 +18,38 @@ export interface VerificationCodeResult {
   via?: string | null;
   /** How many emails were scanned (for UI visibility). */
   scanned?: number;
+  /** The actual emails scanned (titles/senders) — shown in the Agent Activity log. */
+  emails?: ScannedEmail[];
+  /** Why the AI did/didn't find a code (which email it picked, or the miss reason). */
+  debug?: { selectedIndex: number | null; aiFound: boolean; note: string | null };
+}
+
+export interface VerificationCodeRequest {
+  applierName: string;
+  sinceMs?: number;
+  /** When set, AI picks the OTP email that best matches this company (Greenhouse apply). */
+  companyName?: string;
+  jobTitle?: string;
 }
 
 /**
- * Fetch the most recent verification credential (one-time CODE or verify LINK) from
- * the applier's inbox (IMAP Gmail). Scans the 10 most recent emails in the
- * lookback window. Regex fast-path, then AI extraction that handles
- * alphanumeric/lowercase/boxed codes and links. Returns { code: null, link: null }
- * when none is found; never throws.
+ * Fetch the most recent verification credential from the applier's inbox (IMAP Gmail).
+ * Sends the 10 newest emails to AI with company/job context; AI returns the best-matching code.
  */
 export async function requestVerificationCode(
   applierName: string,
-  sinceMs?: number,
+  options?: Omit<VerificationCodeRequest, "applierName">,
 ): Promise<VerificationCodeResult> {
   try {
     const res = await fetch(`${API_BASE}/mail/verification-code`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ applierName, ...(sinceMs ? { sinceMs } : {}) }),
+      body: JSON.stringify({
+        applierName,
+        ...(options?.sinceMs ? { sinceMs: options.sinceMs } : {}),
+        ...(options?.companyName ? { companyName: options.companyName } : {}),
+        ...(options?.jobTitle ? { jobTitle: options.jobTitle } : {}),
+      }),
     });
     if (!res.ok) return { code: null, link: null };
     const data = (await res.json()) as {
@@ -38,6 +60,8 @@ export async function requestVerificationCode(
       from?: string | null;
       via?: string | null;
       scanned?: number;
+      emails?: ScannedEmail[];
+      debug?: { selectedIndex: number | null; aiFound: boolean; note: string | null };
     };
     if (!data.success) return { code: null, link: null };
     return {
@@ -47,6 +71,8 @@ export async function requestVerificationCode(
       from: data.from,
       via: data.via,
       scanned: data.scanned,
+      emails: data.emails,
+      debug: data.debug,
     };
   } catch {
     return { code: null, link: null };

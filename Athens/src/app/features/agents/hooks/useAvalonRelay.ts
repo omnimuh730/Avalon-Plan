@@ -154,6 +154,14 @@ function isGreenhouseJob(job: QueuedJob | null | undefined): boolean {
   return /greenhouse\.io/i.test(job?.url ?? "");
 }
 
+/** Company name for OTP inbox matching — job.company, else Greenhouse ?for= slug. */
+function greenhouseOtpCompanyName(job: QueuedJob | null | undefined): string {
+  const fromJob = job?.company?.trim() || "";
+  if (fromJob) return fromJob;
+  const slug = job?.url?.match(/[?&]for=([^&]+)/i)?.[1];
+  return slug ? decodeURIComponent(slug).replace(/\+/g, " ") : "";
+}
+
 /** Per-job manual pipeline progress (steps 2–8). */
 export interface JobPipelineState {
   opened: boolean;
@@ -287,7 +295,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           message,
           success,
         },
-        ...prev.slice(0, 49),
+        ...prev.slice(0, 199),
       ]);
       // Mirror every UI log line into the active run's debug log.
       if (runIdRef.current) {
@@ -1208,19 +1216,43 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
     [emitActionAsync],
   );
 
+  /**
+   * setTimeout-based wait that bails out early (~250ms granularity) the moment the
+   * auto-run Stop is pressed (autoAbortRef). Returns false if aborted, true if it
+   * slept the whole duration. `onSecond` drives the countdown UI.
+   */
+  const waitUnlessAborted = useCallback(
+    async (ms: number, onSecond?: (secondsLeft: number) => void): Promise<boolean> => {
+      const stepMs = 250;
+      let remaining = ms;
+      let lastSecond = -1;
+      while (remaining > 0) {
+        if (autoAbortRef.current) return false;
+        const secondsLeft = Math.ceil(remaining / 1000);
+        if (onSecond && secondsLeft !== lastSecond) {
+          onSecond(secondsLeft);
+          lastSecond = secondsLeft;
+        }
+        const chunk = Math.min(stepMs, remaining);
+        await new Promise((resolve) => setTimeout(resolve, chunk));
+        remaining -= chunk;
+      }
+      return true;
+    },
+    [],
+  );
+
   /** Pause after submit so the result page can load before step 8 reads it. */
   const waitBeforeVerify = useCallback(async (): Promise<void> => {
-    const totalSeconds = Math.ceil(VERIFY_RESULT_WAIT_MS / 1000);
-    for (let secondsLeft = totalSeconds; secondsLeft > 0; secondsLeft -= 1) {
+    await waitUnlessAborted(VERIFY_RESULT_WAIT_MS, (secondsLeft) =>
       setApplyPhase({
         phase: "verify-wait",
         message: `Waiting for result page (${secondsLeft}s)…`,
         secondsLeft,
         at: Date.now(),
-      });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  }, []);
+      }),
+    );
+  }, [waitUnlessAborted]);
 
   /** Mark a (non-manual) queued job Applied in the pipeline and badge it locally. */
   const markJobApplied = useCallback(
@@ -1280,36 +1312,74 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
    * waits OTP_STEP_WAIT_MS so the verification email has time to arrive.
    */
   const handleGreenhouseOtpFlow = useCallback(
-    async (tabId: number): Promise<{ filled: boolean; clicked: boolean }> => {
+    async (tabId: number, job: QueuedJob | null): Promise<{ filled: boolean; clicked: boolean }> => {
       if (!applierName) {
         pushLog("Greenhouse OTP: no applier profile — cannot read Gmail", false);
         return { filled: false, clicked: false };
       }
 
-      for (let attempt = 1; attempt <= OTP_FETCH_MAX_ATTEMPTS; attempt += 1) {
-        const seconds = Math.ceil(OTP_STEP_WAIT_MS / 1000);
-        setApplyPhase({
-          phase: "verify-wait",
-          message: `Waiting for verification email (${attempt}/${OTP_FETCH_MAX_ATTEMPTS}, ${seconds}s)…`,
-          secondsLeft: seconds,
-          at: Date.now(),
-        });
-        await new Promise((resolve) => setTimeout(resolve, OTP_STEP_WAIT_MS));
+      const companyName = greenhouseOtpCompanyName(job);
+      const jobTitle = job?.title?.trim() || "";
 
-        const inbox = await requestVerificationCode(applierName);
-        if (!inbox.code) {
+      for (let attempt = 1; attempt <= OTP_FETCH_MAX_ATTEMPTS; attempt += 1) {
+        if (autoAbortRef.current) {
+          pushLog("Greenhouse OTP: stopped", false);
+          return { filled: false, clicked: false };
+        }
+        const slept = await waitUnlessAborted(OTP_STEP_WAIT_MS, (secondsLeft) =>
+          setApplyPhase({
+            phase: "verify-wait",
+            message: `Waiting for verification email (${attempt}/${OTP_FETCH_MAX_ATTEMPTS}, ${secondsLeft}s)…`,
+            secondsLeft,
+            at: Date.now(),
+          }),
+        );
+        if (!slept) {
+          pushLog("Greenhouse OTP: stopped while waiting for the verification email", false);
+          return { filled: false, clicked: false };
+        }
+
+        pushLog(`Greenhouse OTP: reading Gmail for "${applierName}" (attempt ${attempt}/${OTP_FETCH_MAX_ATTEMPTS})…`, true);
+        const inbox = await requestVerificationCode(applierName, {
+          companyName: companyName || undefined,
+          jobTitle: jobTitle || undefined,
+        });
+
+        // Surface EXACTLY what was read + how the AI decided, into the Activity feed.
+        if (inbox.emails?.length) {
           pushLog(
-            `Greenhouse OTP: no code in last ${inbox.scanned ?? 10} email(s) (attempt ${attempt}/${OTP_FETCH_MAX_ATTEMPTS})`,
+            `Greenhouse OTP: scanned ${inbox.emails.length} newest email(s) → ` +
+              inbox.emails
+                .map((e) => `#${e.index} ${e.from ? `${e.from.replace(/^.*<|>.*$/g, "").trim()} ` : ""}"${e.subject || "(no subject)"}"`)
+                .join("  |  "),
             false,
           );
+        } else {
+          pushLog(
+            `Greenhouse OTP: inbox returned ${inbox.scanned ?? 0} email(s), none listed — the verification email may not have synced into the mailbox yet`,
+            false,
+          );
+        }
+        if (inbox.debug) {
+          pushLog(
+            `Greenhouse OTP: AI ${
+              inbox.debug.aiFound ? `picked email #${inbox.debug.selectedIndex}` : "did not find a verification email"
+            }${inbox.debug.note ? ` — ${inbox.debug.note}` : ""}`,
+            Boolean(inbox.code),
+          );
+        }
+
+        if (!inbox.code) {
+          pushLog(`Greenhouse OTP: no code yet (attempt ${attempt}/${OTP_FETCH_MAX_ATTEMPTS}) — retrying`, false);
           continue;
         }
 
-        pushLog(
-          `Greenhouse OTP: found code via ${inbox.via ?? "inbox"} — "${inbox.subject ?? "verification email"}"`,
-          true,
-        );
+        pushLog(`Greenhouse OTP: got code "${inbox.code}" from "${inbox.subject ?? "verification email"}"`, true);
 
+        if (autoAbortRef.current) {
+          pushLog("Greenhouse OTP: stopped before filling the code", false);
+          return { filled: false, clicked: false };
+        }
         const fillRes = await emitActionAsync(
           {
             id: createActionId(),
@@ -1328,23 +1398,24 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         pushLog(
           `Greenhouse OTP: filled ${fillData?.filled} char(s) (${fillData?.mode ?? "unknown"})${
             fillData?.clicked ? " and clicked submit" : ""
-          }`,
+          } — sent "${inbox.code}"`,
           true,
         );
 
-        setApplyPhase({
-          phase: "verify-wait",
-          message: `Waiting for OTP submit (${seconds}s)…`,
-          secondsLeft: seconds,
-          at: Date.now(),
-        });
-        await new Promise((resolve) => setTimeout(resolve, OTP_STEP_WAIT_MS));
+        await waitUnlessAborted(OTP_STEP_WAIT_MS, (secondsLeft) =>
+          setApplyPhase({
+            phase: "verify-wait",
+            message: `Waiting for OTP submit (${secondsLeft}s)…`,
+            secondsLeft,
+            at: Date.now(),
+          }),
+        );
         return { filled: true, clicked: fillData?.clicked ?? false };
       }
 
       return { filled: false, clicked: false };
     },
-    [applierName, emitActionAsync, pushLog],
+    [applierName, emitActionAsync, pushLog, waitUnlessAborted],
   );
 
   /**
@@ -1380,7 +1451,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
           `Greenhouse: verification code page detected (${state.otpInputs ?? 0} code box(es)) — fetching from Gmail…`,
           true,
         );
-        const otp = await handleGreenhouseOtpFlow(tabId);
+        const otp = await handleGreenhouseOtpFlow(tabId, job);
+        if (autoAbortRef.current) {
+          return { kind: "failed", reason: "Stopped during Greenhouse OTP." };
+        }
         if (otp.filled) {
           pushLog("Greenhouse OTP submitted — re-running step 8 · Verify result…", true);
           const { verdict: retryVerdict, state: retryState } = await verifyAfterSubmit(
@@ -2104,7 +2178,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
         /needs_verification|verification/i.test(reason);
       if (isGreenhouseJob(job) && looksLikeOtpPage) {
         pushLog("Recovery: Greenhouse OTP page — fetching code from Gmail (no re-scan)", true);
-        const otp = await handleGreenhouseOtpFlow(tabId);
+        const otp = await handleGreenhouseOtpFlow(tabId, job);
         if (otp.filled) {
           const { verdict } = await verifyAfterSubmit(tabId, job, true, OTP_STEP_WAIT_MS);
           if (verdict.status === "success") {
@@ -2363,7 +2437,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "") {
             `"${job.title}" needs Greenhouse OTP (${pageState.otpInputs ?? 0} code box(es)) — fetching from Gmail…`,
             true,
           );
-          const otp = await handleGreenhouseOtpFlow(tabId);
+          const otp = await handleGreenhouseOtpFlow(tabId, job);
           if (otp.filled) {
             const { verdict: retryVerdict } = await verifyAfterSubmit(tabId, job, submitted, OTP_STEP_WAIT_MS);
             logRunData("verify-after-otp", { status: retryVerdict.status, reason: retryVerdict.reason });

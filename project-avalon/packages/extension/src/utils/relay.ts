@@ -334,6 +334,11 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
           let filled = 0;
           let mode = 'none';
 
+          const clearInput = (el: HTMLInputElement) => {
+            nativeSet(el, '');
+            el.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true }));
+          };
+
           // Greenhouse-only hardcode: #email-verification fieldset with security-input-{n} boxes.
           const greenhouseBoxes = Array.from(
             document.querySelectorAll<HTMLInputElement>('[id^="security-input-"]'),
@@ -362,6 +367,10 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
           }
 
           if (boxes.length >= chars.length && boxes.length > 0) {
+            // Clear stale digits from a prior wrong attempt before filling.
+            for (const box of boxes) clearInput(box);
+            await wait(40);
+
             // Try a real PASTE first — many OTP widgets distribute a pasted code
             // across the boxes in one shot.
             try {
@@ -375,6 +384,8 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
             }
             const pasteWorked = boxes.slice(0, chars.length).every((b, i) => (b.value || '') === chars[i]);
             if (!pasteWorked) {
+              for (const box of boxes) clearInput(box);
+              await wait(40);
               for (let i = 0; i < chars.length; i += 1) {
                 typeChar(boxes[i], chars[i]);
                 await wait(30);
@@ -420,7 +431,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
             submitBtn.click();
             clicked = true;
           }
-          return { filled, mode, clicked, boxes: boxes.length, expected: chars.length };
+          return { filled, mode, clicked, boxes: boxes.length, expected: chars.length, code: codeStr };
         },
         args: [code, platform],
       });
