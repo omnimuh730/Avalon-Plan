@@ -10,6 +10,7 @@ import { MailPage } from "../features/mail/MailPage";
 import { CalendarPage } from "../features/calendar/CalendarPage";
 import { InterviewPrepPage } from "../features/interview-prep/InterviewPrepPage";
 import { AnalyticsPage } from "../features/analytics/AnalyticsPage";
+import { VendorMonitorPage } from "../features/vendor-monitor/VendorMonitorPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 
 export const VIEW_COMPONENTS: Record<View, ComponentType> = {
@@ -23,5 +24,6 @@ export const VIEW_COMPONENTS: Record<View, ComponentType> = {
   calendar: CalendarPage,
   interviews: InterviewPrepPage,
   reports: AnalyticsPage,
+  "vendor-monitor": VendorMonitorPage,
   settings: SettingsPage,
 };

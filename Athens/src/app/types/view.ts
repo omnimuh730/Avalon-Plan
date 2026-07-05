@@ -9,4 +9,5 @@ export type View =
   | "calendar"
   | "interviews"
   | "reports"
+  | "vendor-monitor"
   | "settings";

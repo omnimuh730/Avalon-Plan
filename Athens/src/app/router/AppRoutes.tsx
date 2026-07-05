@@ -17,6 +17,7 @@ const {
   calendar: CalendarPage,
   interviews: InterviewPrepPage,
   reports: AnalyticsPage,
+  "vendor-monitor": VendorMonitorPage,
   settings: SettingsPage,
 } = VIEW_COMPONENTS;
 
@@ -42,6 +43,7 @@ export function AppRoutes() {
         <Route path={`${PATHS.calendar.slice(1)}/:view?`} element={<CalendarPage />} />
         <Route path={PATHS.interviews.slice(1)} element={<InterviewPrepPage />} />
         <Route path={`${PATHS.reports.slice(1)}/:tab?`} element={<AnalyticsPage />} />
+        <Route path={PATHS.vendorMonitor.slice(1)} element={<VendorMonitorPage />} />
         <Route path={`${PATHS.settings.slice(1)}/:tab?`} element={<SettingsPage />} />
         <Route path="*" element={<Navigate to={PATHS.dashboard} replace />} />
       </Route>

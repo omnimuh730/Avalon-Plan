@@ -223,7 +223,7 @@ function getBidRecordsCollection(source = 'cloud') {
 			collection: null,
 			error:
 				normalized === 'cloud'
-					? cloudMirrorConnectError || 'Cloud MongoDB is not connected. Set MONGO_CLOUD_URL and restart lancer-backend.'
+					? cloudMirrorConnectError || 'Cloud MongoDB is not connected. Set MONGO_CLOUD_URL and restart athens-server.'
 					: 'Local MongoDB is not connected.',
 		};
 	}

@@ -1,0 +1,467 @@
+{
+  "AI": {
+    "AI": 10,
+    "Machine Learning": 10,
+    "Python": 10,
+    "RAG": 9,
+    "LLM": 9,
+    "Deep Learning": 9,
+    "NLP": 8,
+    "PyTorch": 8,
+    "TensorFlow": 8,
+    "Full Stack": 6
+  },
+  "Angular": {
+    "Angular": 10,
+    "TypeScript": 10,
+    "RxJS": 9,
+    "JavaScript": 8,
+    "HTML/CSS": 8,
+    "REST API": 7,
+    "Frontend": 6
+  },
+  "Angular + React + Vue": {
+    "Angular": 9,
+    "React": 9,
+    "Vue": 9,
+    "TypeScript": 10,
+    "JavaScript": 9,
+    "Frontend": 6
+  },
+  "Application(Desktop Application, MFC, QT)": {
+    "C++": 10,
+    "Qt": 10,
+    "MFC": 9,
+    "Desktop Application": 10,
+    "Windows": 8,
+    ".NET": 6
+  },
+  "C#": {
+    "C#": 10,
+    ".NET": 10,
+    "ASP.NET": 9,
+    "SQL Server": 8,
+    "Entity Framework": 8,
+    "Backend": 6
+  },
+  "C# + Angular": {
+    "C#": 10,
+    ".NET": 9,
+    "Angular": 10,
+    "TypeScript": 9,
+    "ASP.NET": 8,
+    "Full Stack": 6
+  },
+  "C# + Java": {
+    "C#": 10,
+    ".NET": 9,
+    "Java": 10,
+    "Spring": 8,
+    "Enterprise": 8,
+    "Backend": 6
+  },
+  "C# + Python": {
+    "C#": 10,
+    ".NET": 9,
+    "Python": 10,
+    "ASP.NET": 8,
+    "Data Processing": 7,
+    "Backend": 6
+  },
+  "C# + React": {
+    "C#": 10,
+    ".NET": 9,
+    "React": 10,
+    "TypeScript": 9,
+    "ASP.NET": 8,
+    "Full Stack": 6
+  },
+  "C# + Vue": {
+    "C#": 10,
+    ".NET": 9,
+    "Vue": 10,
+    "JavaScript": 9,
+    "ASP.NET": 8,
+    "Full Stack": 6
+  },
+  "C++": {
+    "C++": 10,
+    "STL": 9,
+    "Systems Programming": 9,
+    "Performance": 9,
+    "Linux": 7,
+    "Backend": 5
+  },
+  "C++ + Python": {
+    "C++": 10,
+    "Python": 10,
+    "Performance": 8,
+    "Scripting": 8,
+    "Automation": 7,
+    "Backend": 6
+  },
+  "C++ + Rust": {
+    "C++": 10,
+    "Rust": 10,
+    "Systems Programming": 10,
+    "Performance": 9,
+    "Memory Safety": 9,
+    "Backend": 5
+  },
+  "Django": {
+    "Python": 10,
+    "Django": 10,
+    "REST API": 9,
+    "PostgreSQL": 8,
+    "Celery": 7,
+    "Backend": 6
+  },
+  "Django + Angular": {
+    "Python": 9,
+    "Django": 10,
+    "Angular": 10,
+    "TypeScript": 9,
+    "REST API": 8,
+    "Full Stack": 6
+  },
+  "Django + React": {
+    "Python": 9,
+    "Django": 10,
+    "React": 10,
+    "REST API": 9,
+    "JavaScript": 8,
+    "Full Stack": 6
+  },
+  "Django + Vue": {
+    "Python": 9,
+    "Django": 10,
+    "Vue": 10,
+    "REST API": 8,
+    "JavaScript": 8,
+    "Full Stack": 6
+  },
+  "GIS": {
+    "GIS": 10,
+    "Geospatial": 10,
+    "ArcGIS": 9,
+    "QGIS": 9,
+    "PostGIS": 8,
+    "Python": 8,
+    "Mapbox": 7,
+    "Full Stack": 6
+  },
+  "Go": {
+    "Go": 10,
+    "Golang": 10,
+    "Microservices": 9,
+    "REST API": 9,
+    "Docker": 8,
+    "Kubernetes": 7,
+    "Backend": 6
+  },
+  "Go + Java": {
+    "Go": 10,
+    "Java": 10,
+    "Microservices": 9,
+    "REST API": 8,
+    "Enterprise": 8,
+    "Backend": 6
+  },
+  "Go + NodeJS": {
+    "Go": 10,
+    "Node.js": 10,
+    "JavaScript": 9,
+    "Microservices": 9,
+    "REST API": 8,
+    "Backend": 6,
+    "Infrastructure as Code": 6,
+    "Infrastructure": 6,
+    "DevOps": 5,
+    "Site Reliability": 5
+  },
+  "Go + Python": {
+    "Go": 10,
+    "Python": 10,
+    "Microservices": 8,
+    "API": 8,
+    "Backend": 6
+  },
+  "Go + React": {
+    "Go": 10,
+    "React": 10,
+    "TypeScript": 9,
+    "REST API": 8,
+    "Full Stack": 6
+  },
+  "Go + Ruby": {
+    "Go": 10,
+    "Ruby": 10,
+    "API": 8,
+    "Microservices": 7,
+    "Backend": 6
+  },
+  "Go + Rust": {
+    "Go": 10,
+    "Rust": 10,
+    "Systems Programming": 9,
+    "Performance": 9,
+    "Backend": 5
+  },
+  "Healthcare": {
+    "Healthcare": 10,
+    "HIPAA": 10,
+    "HL7": 9,
+    "FHIR": 9,
+    ".NET": 6,
+    "Java": 6,
+    "Python": 6,
+    "React": 6,
+    "Angular": 6,
+    "Full Stack": 6
+  },
+  "Java": {
+    "Java": 10,
+    "Spring Boot": 10,
+    "Spring": 9,
+    "Maven": 8,
+    "REST API": 8,
+    "SQL": 7,
+    "Backend": 6
+  },
+  "Java + Angular": {
+    "Java": 10,
+    "Spring Boot": 9,
+    "Angular": 10,
+    "TypeScript": 9,
+    "REST API": 8,
+    "Full Stack": 6
+  },
+  "Java + NodeJS": {
+    "Java": 10,
+    "Spring Boot": 9,
+    "Node.js": 10,
+    "JavaScript": 9,
+    "Microservices": 8,
+    "Backend": 6
+  },
+  "Java + Python": {
+    "Java": 10,
+    "Spring Boot": 9,
+    "Python": 10,
+    "API": 8,
+    "Backend": 6
+  },
+  "Java + React": {
+    "Java": 10,
+    "Spring Boot": 9,
+    "React": 10,
+    "TypeScript": 9,
+    "Full Stack": 6
+  },
+  "Kotlin + Java(not mobile)": {
+    "Kotlin": 10,
+    "Java": 10,
+    "Spring Boot": 9,
+    "JVM": 9,
+    "Backend": 6
+  },
+  "Kotlin(Java) + React(non-mobile)": {
+    "Kotlin": 10,
+    "Java": 9,
+    "React": 10,
+    "Spring Boot": 8,
+    "TypeScript": 9,
+    "Full Stack": 6
+  },
+  "Laravel": {
+    "PHP": 10,
+    "Laravel": 10,
+    "MySQL": 8,
+    "REST API": 8,
+    "Blade": 7,
+    "Backend": 6
+  },
+  "Laravel + React": {
+    "PHP": 9,
+    "Laravel": 10,
+    "React": 10,
+    "JavaScript": 9,
+    "REST API": 8,
+    "Full Stack": 6
+  },
+  "Laravel + Vue": {
+    "PHP": 9,
+    "Laravel": 10,
+    "Vue": 10,
+    "JavaScript": 9,
+    "REST API": 8,
+    "Full Stack": 6
+  },
+  "Mobile - Android": {
+    "Android": 10,
+    "Kotlin": 10,
+    "Mobile Development": 10,
+    "Jetpack": 9,
+    "Java": 8,
+    "Mobile": 6
+  },
+  "Mobile - iOS": {
+    "iOS": 10,
+    "Swift": 10,
+    "Mobile Development": 10,
+    "UIKit": 9,
+    "SwiftUI": 9,
+    "Mobile": 6
+  },
+  "Mobile - React Native": {
+    "React Native": 10,
+    "JavaScript": 10,
+    "Mobile Development": 10,
+    "React": 9,
+    "TypeScript": 9,
+    "Mobile": 6
+  },
+  "Mobile(Flutter, Ionic)": {
+    "Flutter": 10,
+    "Ionic": 9,
+    "Dart": 9,
+    "Mobile Development": 10,
+    "Cross-platform": 10,
+    "Mobile": 6
+  },
+  "Mobile(iOS + Android)": {
+    "iOS": 10,
+    "Android": 10,
+    "Mobile Development": 10,
+    "Swift": 9,
+    "Kotlin": 9,
+    "Cross-platform": 8,
+    "Mobile": 6
+  },
+  "NodeJS": {
+    "Node.js": 10,
+    "JavaScript": 10,
+    "TypeScript": 9,
+    "Express": 9,
+    "REST API": 9,
+    "Backend": 6
+  },
+  "NodeJS + Python": {
+    "Node.js": 10,
+    "Python": 10,
+    "JavaScript": 9,
+    "API": 8,
+    "Backend": 6
+  },
+  "PHP": {
+    "PHP": 10,
+    "Laravel": 8,
+    "MySQL": 8,
+    "WordPress": 7,
+    "REST API": 7,
+    "Backend": 6
+  },
+  "PHP Framework + Javascript Framework": {
+    "PHP": 10,
+    "Laravel": 9,
+    "Symfony": 8,
+    "JavaScript": 9,
+    "React": 8,
+    "Vue": 8,
+    "Full Stack": 6
+  },
+  "Python + React": {
+    "Python": 10,
+    "React": 10,
+    "Django": 8,
+    "Flask": 8,
+    "Full Stack": 6
+  },
+  "Python for web(Never used Django)": {
+    "Python": 10,
+    "Flask": 10,
+    "Web Development": 10,
+    "FastAPI": 7,
+    "Backend": 6
+  },
+  "Python - Script(scraping, big data)": {
+    "Python": 10,
+    "Scripting": 10,
+    "Web Scraping": 9,
+    "Big Data": 9,
+    "Data Engineering": 9,
+    "ETL": 9,
+    "Data Pipelines": 9,
+    "Data Processing": 9,
+    "Data Analysis": 9,
+    "Data Visualization": 9,
+    "Data Modeling": 9,
+    "Data Warehousing": 9,
+    "Data Lake": 9,
+    "Data Lakehouse": 9,
+    "Pandas": 9,
+    "Spark": 8,
+    "Backend": 5
+  },
+  "React + Next.js, Remix(frontend)": {
+    "React": 10,
+    "Next.js": 10,
+    "TypeScript": 10,
+    "Remix": 9,
+    "Frontend": 6
+  },
+  "React + Node.js(MERN)": {
+    "React": 10,
+    "Node.js": 10,
+    "JavaScript": 10,
+    "MERN": 10,
+    "MongoDB": 9,
+    "Express": 9,
+    "Full Stack": 6
+  },
+  "Ruby + React": {
+    "Ruby": 10,
+    "React": 10,
+    "JavaScript": 9,
+    "Ruby on Rails": 8,
+    "Full Stack": 6
+  },
+  "Ruby on Rails": {
+    "Ruby": 10,
+    "Ruby on Rails": 10,
+    "PostgreSQL": 8,
+    "REST API": 8,
+    "HTML/CSS": 7,
+    "Full Stack": 6
+  },
+  "Rust": {
+    "Rust": 10,
+    "Systems Programming": 10,
+    "Performance": 9,
+    "WebAssembly": 8,
+    "Backend": 6
+  },
+  "Shopify(React)": {
+    "Shopify": 10,
+    "React": 10,
+    "E-commerce": 10,
+    "Liquid": 9,
+    "JavaScript": 9,
+    "Full Stack": 6
+  },
+  "Vue": {
+    "Vue": 10,
+    "JavaScript": 10,
+    "TypeScript": 8,
+    "Vuex": 8,
+    "Frontend": 6
+  },
+  "WordPress + React": {
+    "WordPress": 10,
+    "React": 10,
+    "Headless CMS": 9,
+    "PHP": 8,
+    "JavaScript": 9,
+    "Full Stack": 6
+  }
+}

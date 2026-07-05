@@ -10,6 +10,7 @@ import {
   Calendar,
   Video,
   BarChart2,
+  Activity,
   Settings,
 } from "lucide-react";
 import type { View } from "../types";
@@ -31,6 +32,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "mail", label: "Mail", icon: Mail, badge: 2 },
   { id: "calendar", label: "Calendar", icon: Calendar },
   { id: "interviews", label: "Interview Prep", icon: Video },
+  { id: "vendor-monitor", label: "Vendor Monitor", icon: Activity },
   { id: "reports", label: "Analytics", icon: BarChart2 },
   { id: "settings", label: "Settings", icon: Settings },
 ];
@@ -38,7 +40,7 @@ export const NAV_ITEMS: NavItem[] = [
 export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
   { label: "WORKSPACE", ids: ["dashboard", "job-board", "resumes"] },
   { label: "PIPELINE", ids: ["ats", "copilot"] },
-  { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews"] },
+  { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews", "vendor-monitor"] },
   { label: "INSIGHTS", ids: ["reports"] },
   { label: null, ids: ["settings"] },
 ];
@@ -54,5 +56,6 @@ export const VIEW_TITLES: Record<View, string> = {
   calendar: "Calendar",
   interviews: "Interview Prep",
   reports: "Job Search Analytics",
+  "vendor-monitor": "Vendor Monitor",
   settings: "Settings",
 };
