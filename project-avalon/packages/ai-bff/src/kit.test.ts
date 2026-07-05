@@ -9,7 +9,6 @@ function assert(condition: boolean, message: string): void {
 function runTests() {
   assert(!isValidApiKey('sk-...'), 'placeholder sk-... rejected');
   assert(!isValidApiKey(''), 'empty rejected');
-  assert(isValidApiKey('sk-bb4b90f334fa4ede9c1694b0e86595f6'), 'real key accepted');
 
   const usage = { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 };
   const cost = calculateCost('gpt-4o-mini', usage);

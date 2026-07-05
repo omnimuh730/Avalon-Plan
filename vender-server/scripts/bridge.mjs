@@ -36,7 +36,7 @@ import {
 loadEnv();
 
 const HOST = process.env.BRIDGE_HOST || '127.0.0.1';
-const PORT = Number(process.env.BRIDGE_PORT || 3847);
+const PORT = Number(process.env.BRIDGE_PORT || 3848);
 const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL ?? 'gpt-5-nano';
 
 // The job-analysis prompt is embedded in the codebase (src/config/jobAnalysisPrompt.js),

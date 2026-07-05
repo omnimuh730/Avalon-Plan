@@ -40,6 +40,11 @@ export interface ChatRequest {
   /** Structured output schema (JSON Schema) */
   responseSchema?: JsonSchemaDefinition;
   stream?: boolean;
+  /** Per-request provider keys (server-to-server; overrides env when set). */
+  apiKeys?: {
+    openai?: string;
+    deepseek?: string;
+  };
 }
 
 export interface TokenUsage {

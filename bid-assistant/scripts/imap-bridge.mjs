@@ -9,7 +9,7 @@ import { rankResumes } from './resume-match.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-const PORT = 3847;
+const PORT = 3848;
 const HOST = '127.0.0.1';
 const GMAIL_LABEL = 'Notify/Unnecessary';
 const DEFAULT_BATCH_SIZE = 100;

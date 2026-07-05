@@ -7,6 +7,7 @@ import type {
   ChatResponse,
   ModelInfo,
 } from './types.js';
+import { normalizeApiKey } from './api-keys.js';
 import type { AiProvider } from './providers/base.js';
 import { createProviders, resolveProvider } from './providers/registry.js';
 
@@ -36,7 +37,16 @@ export class AiKit {
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const model = request.model ?? this.config.defaultModel ?? 'gpt-4o-mini';
-    const provider = resolveProvider(this.providers, model);
+    const providers = request.apiKeys
+      ? createProviders({
+          ...this.config,
+          openaiApiKey:
+            normalizeApiKey(request.apiKeys.openai) ?? this.config.openaiApiKey,
+          deepseekApiKey:
+            normalizeApiKey(request.apiKeys.deepseek) ?? this.config.deepseekApiKey,
+        })
+      : this.providers;
+    const provider = resolveProvider(providers, model);
     const pricing = resolveModelPricing(model);
 
     if (request.responseSchema && !pricing.supportsStructuredOutput) {

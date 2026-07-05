@@ -33,7 +33,7 @@ export const FORM_ACTION_PLAN_SCHEMA: JsonSchemaDefinition = {
               description: 'Brief rationale (profile source, why skip, etc.)',
             },
           },
-          required: ['id', 'action', 'shouldSkip', 'value'],
+          required: ['id', 'action', 'shouldSkip', 'value', 'notes'],
           additionalProperties: false,
         },
       },

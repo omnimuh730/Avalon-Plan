@@ -6,6 +6,32 @@ import type { AiProviderId, JsonSchemaDefinition } from './types.js';
 
 type ResponseFormat = ChatCompletionCreateParamsNonStreaming['response_format'];
 
+/**
+ * OpenAI strict json_schema requires every key in `properties` to appear in `required`.
+ * DeepSeek uses prompt-only JSON and is unaffected — this runs only on the OpenAI path.
+ */
+export function normalizeStrictJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...schema };
+
+  if (out.type === 'object' && out.properties && typeof out.properties === 'object') {
+    const props = out.properties as Record<string, Record<string, unknown>>;
+    const normalizedProps: Record<string, Record<string, unknown>> = {};
+    for (const [key, value] of Object.entries(props)) {
+      normalizedProps[key] =
+        value && typeof value === 'object' ? normalizeStrictJsonSchema(value) : value;
+    }
+    out.properties = normalizedProps;
+    out.required = Object.keys(normalizedProps);
+    out.additionalProperties = false;
+  }
+
+  if (out.type === 'array' && out.items && typeof out.items === 'object') {
+    out.items = normalizeStrictJsonSchema(out.items as Record<string, unknown>);
+  }
+
+  return out;
+}
+
 export function parseStructuredContent(content: string): unknown {
   const trimmed = content.trim();
   try {
@@ -67,6 +93,10 @@ export function prepareStructuredChat(
   }
 
   if (providerId === 'openai') {
+    const strict = responseSchema.strict ?? true;
+    const schema = strict
+      ? normalizeStrictJsonSchema(responseSchema.schema)
+      : responseSchema.schema;
     return {
       messages,
       responseFormat: {
@@ -74,8 +104,8 @@ export function prepareStructuredChat(
         json_schema: {
           name: responseSchema.name,
           description: responseSchema.description,
-          schema: responseSchema.schema,
-          strict: responseSchema.strict ?? true,
+          schema,
+          strict,
         },
       },
     };

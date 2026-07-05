@@ -13,6 +13,11 @@ import { createPortal } from "react-dom";
 import { useApplier } from "@/context/applier-context";
 import { storedAvalonSessionId } from "../../../services/agentApi";
 import type { DeployOptions } from "../../../types/agent";
+import {
+  resolveProfileDefaultModel,
+  setProfileApplierName,
+  setProfileDefaultModel,
+} from "../avalon/ai/model";
 import { formatApplierProfile } from "../avalon/ai/profile";
 import { AvalonControllerView } from "../components/AvalonControllerView";
 import { DeployAgentModal } from "../components/DeployAgentModal";
@@ -114,6 +119,12 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
     () => formatApplierProfile(applier?.autoBidProfile as Record<string, unknown> | undefined),
     [applier?.autoBidProfile],
   );
+
+  useEffect(() => {
+    setProfileApplierName(applierName || undefined);
+    const profile = applier?.autoBidProfile as Record<string, unknown> | undefined;
+    setProfileDefaultModel(resolveProfileDefaultModel(profile));
+  }, [applierName, applier?.autoBidProfile]);
 
   const [sessions, setSessions] = useState<AgentSessionMeta[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string>(() => sessions[0]?.id ?? "");

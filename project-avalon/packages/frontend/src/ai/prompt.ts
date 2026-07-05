@@ -7,7 +7,7 @@ For every field id, return:
 - action: one of Click | Typing | SelectOption | FileUpload | Check | Uncheck
 - shouldSkip: Yes | No
 - value: the literal value to use, or "N/A" when not applicable
-- notes: optional brief rationale
+- notes: brief rationale (use "" if none)
 
 Action rules by controlType:
 - text / textarea → Typing, value = the text to enter (a real, complete answer — never a placeholder).
