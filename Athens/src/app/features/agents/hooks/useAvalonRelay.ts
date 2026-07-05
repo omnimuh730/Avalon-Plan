@@ -28,6 +28,7 @@ import {
 } from "../../../services/agentApi";
 import { applyToJob, fetchJobDescription, generateJobResumeStream, type ResumeSectionPurpose } from "../../../api/jobs";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
+import { clampJobBudgetUsd, loadJobBudgetUsd, saveJobBudgetUsd } from "../lib/agentBudget";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
 import { verifyApplyOutcome, type ApplyVerifyResult } from "../avalon/ai/verify-apply";
 import { validateJobPage, type PageValidityResult } from "../avalon/ai/validate-page";
@@ -283,8 +284,13 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const [autoRunning, setAutoRunning] = useState(false);
   // "idle" | "running" | "paused" — drives the Pause/Resume/Stop controls.
   const [autoRunState, setAutoRunState] = useState<"idle" | "running" | "paused">("idle");
+  const [jobBudgetLimitUsd, setJobBudgetLimitUsdState] = useState(() => loadJobBudgetUsd());
+  const [budgetSkippedJobIds, setBudgetSkippedJobIds] = useState<Set<string>>(() => new Set());
 
   const socketRef = useRef<Socket | null>(null);
+  const jobRunCostRef = useRef(0);
+  const jobBudgetLimitRef = useRef(jobBudgetLimitUsd);
+  jobBudgetLimitRef.current = jobBudgetLimitUsd;
   const applyingRef = useRef(false);
   const autoRunningRef = useRef(false);
   // Interrupt controls for the auto-run/queue loops (checked between steps).
@@ -389,12 +395,28 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     [scheduleRunFlush],
   );
 
+  const setJobBudgetLimitUsd = useCallback((value: number) => {
+    const clamped = clampJobBudgetUsd(value);
+    setJobBudgetLimitUsdState(clamped);
+    saveJobBudgetUsd(clamped);
+  }, []);
+
+  const resetJobRunCost = useCallback(() => {
+    jobRunCostRef.current = 0;
+  }, []);
+
+  const checkBudgetExceeded = useCallback(
+    () => jobRunCostRef.current > jobBudgetLimitRef.current,
+    [],
+  );
+
   /** Record one AI request's token/cost usage for the per-job usage panel. */
-  const recordUsage = useCallback((label: string, u: UsageLike) => {
-    if (!u) return;
+  const recordUsage = useCallback((label: string, u: UsageLike): { exceeded: boolean } => {
+    if (!u) return { exceeded: checkBudgetExceeded() };
     const costUsd =
       u.costUsd ?? (typeof u.cost === "number" ? u.cost : u.cost?.totalUsd) ?? 0;
-    if ((u.totalTokens ?? 0) === 0 && costUsd === 0) return;
+    if ((u.totalTokens ?? 0) === 0 && costUsd === 0) return { exceeded: checkBudgetExceeded() };
+    jobRunCostRef.current += costUsd;
     setUsageRequests((prev) => [
       ...prev,
       {
@@ -407,7 +429,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         costUsd,
       },
     ]);
-  }, []);
+    return { exceeded: checkBudgetExceeded() };
+  }, [checkBudgetExceeded]);
 
   /**
    * True for the AbortError we throw/reject with when the run is stopped — matches
@@ -1148,6 +1171,20 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     [emitActionAsync],
   );
 
+  const abortForBudget = useCallback(
+    async (job: QueuedJob, tabId?: number) => {
+      const spent = jobRunCostRef.current;
+      const limit = jobBudgetLimitRef.current;
+      pushLog(
+        `"${job.title}" skipped — AI budget exceeded ($${spent.toFixed(4)} / $${limit.toFixed(2)})`,
+        false,
+      );
+      setBudgetSkippedJobIds((prev) => new Set(prev).add(job.id));
+      if (tabId) await closeTab(tabId);
+    },
+    [closeTab, pushLog],
+  );
+
   /**
    * Validity gate — after a job tab is opened, read the page + scan its structure
    * and let the AI decide whether it's a live application form. Returns the scanned
@@ -1671,7 +1708,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       try {
         const result = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined }, runSignal());
         setFormAnalysis(result);
-        recordUsage("Analyze form", result.usage);
+        const usage = recordUsage("Analyze form", result.usage);
+        if (usage.exceeded) return false;
         const built = buildFormInjectionPlan({ tree, fields: result.fields });
         plan = built.plan;
         if (!plan.steps.length) {
@@ -1903,6 +1941,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     setAutoRunning(true);
     setAutoRunState("running");
     startRunLog(job, { url: job.url, company: job.company, source: job.source, mode: "auto-run", sessionId: sessionIdRef.current });
+    resetJobRunCost();
 
     const startStep = 2;
     let cycle = 0;
@@ -1918,6 +1957,13 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       finalStatus = status;
     };
 
+    const budgetAbort = async (): Promise<boolean> => {
+      if (!checkBudgetExceeded()) return false;
+      await abortForBudget(job, tabId);
+      finalStatus = "budget-exceeded";
+      return true;
+    };
+
     // Between-step interrupt gate: blocks while paused, returns false if stopped.
     const gate = async (): Promise<boolean> => {
       while (autoPauseRef.current && !autoAbortRef.current) {
@@ -1925,6 +1971,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       }
       if (autoAbortRef.current) {
         pushLog("Auto-run stopped", false);
+        return false;
+      }
+      if (checkBudgetExceeded()) {
+        await abortForBudget(job, tabId);
+        finalStatus = "budget-exceeded";
         return false;
       }
       return true;
@@ -2013,6 +2064,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           } finally {
             setValidatingTab(false);
           }
+          if (await budgetAbort()) return;
         }
 
         if (!(await gate())) return;
@@ -2026,6 +2078,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           } catch {
             return;
           }
+          if (await budgetAbort()) return;
         }
 
         if (!(await gate())) return;
@@ -2081,7 +2134,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
               runSignal(),
             );
             setFormAnalysis(result);
-            recordUsage("Analyze form", result.usage);
+            const usage = recordUsage("Analyze form", result.usage);
+            if (usage.exceeded) {
+              await abortForBudget(job, tabId);
+              finalStatus = "budget-exceeded";
+              return;
+            }
             const built = buildFormInjectionPlan({ tree, fields: result.fields });
             plan = built.plan;
             if (!plan.steps.length) {
@@ -2142,6 +2200,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           await waitBeforeVerify();
           throwIfAborted();
           let verify = await computeVerifyResult(tabId, job);
+          if (await budgetAbort()) return;
           setVerifyResult(verify);
           pushLog(`Verify result: ${verify.kind} — ${verify.reason}`, verify.kind === "success");
 
@@ -2159,6 +2218,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
               );
               await waitBeforeVerify();
               verify = await computeVerifyResult(tabId, job);
+              if (await budgetAbort()) return;
               setVerifyResult(verify);
               pushLog(
                 `Verify result (OTP retry ${attempt}/${MAX_VERIFY_RETRIES}): ${verify.kind} — ${verify.reason}`,
@@ -2172,6 +2232,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
               false,
             );
             const advanced = await rescanAnalyzeApply(tabId, job);
+            if (checkBudgetExceeded()) {
+              await abortForBudget(job, tabId);
+              finalStatus = "budget-exceeded";
+              return;
+            }
             if (!advanced) {
               pushLog(
                 `Retry ${attempt}/${MAX_VERIFY_RETRIES} could not complete Scan/Analyze/Apply — stopping retries`,
@@ -2182,6 +2247,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
             if (!(await gate())) return;
             await waitBeforeVerify();
             verify = await computeVerifyResult(tabId, job);
+            if (await budgetAbort()) return;
             setVerifyResult(verify);
             pushLog(
               `Verify result (retry ${attempt}/${MAX_VERIFY_RETRIES}): ${verify.kind} — ${verify.reason}`,
@@ -2236,9 +2302,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       endRunLog(finalStatus);
     }
   }, [
+    abortForBudget,
     applicantContext,
     applierName,
     canExecute,
+    checkBudgetExceeded,
     closeTab,
     computeVerifyResult,
     emitActionAsync,
@@ -2251,6 +2319,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     probeComboboxes,
     pushLog,
     recordUsage,
+    resetJobRunCost,
     resetJobUsage,
     rescanAnalyzeApply,
     runApplyWithPlan,
@@ -2407,6 +2476,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
             otpCode,
           }, runSignal());
           recordUsage(`Recovery ${attempt} (AI)`, recovery.usage);
+          if (checkBudgetExceeded()) return false;
         } catch (error) {
           pushLog(`Recovery ${attempt}: AI failed — ${error instanceof Error ? error.message : error}`, false);
           continue;
@@ -2446,6 +2516,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         // Re-verify with the AI (settles the page, reads innerText, classifies).
         lastResults = [];
         const { verdict, state: newState } = await verifyAfterSubmit(tabId, job, true, 3000);
+        if (checkBudgetExceeded()) return false;
         state = newState;
         logRunData("recovery-verify", { attempt, status: verdict.status, reason: verdict.reason, pageText: newState.text });
         if (verdict.status === "success") {
@@ -2459,7 +2530,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       pushLog(`"${job.title}" still unconfirmed after ${MAX_RECOVERY_ATTEMPTS} recovery attempts`, false);
       return false;
     },
-    [applicantContext, applierName, emitActionAsync, handleGreenhouseOtpFlow, markJobApplied, pushLog, rescanTree, runSignal, verifyAfterSubmit, logRunData],
+    [applicantContext, applierName, checkBudgetExceeded, emitActionAsync, handleGreenhouseOtpFlow, markJobApplied, pushLog, recordUsage, rescanTree, runSignal, verifyAfterSubmit, logRunData],
   );
 
   /**
@@ -2475,14 +2546,21 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       applyingRef.current = true;
       setApplyDone(false);
       resetJobUsage();
+      resetJobRunCost();
       startRunLog(job, { url: job.url, company: job.company, source: job.source, sessionId: sessionIdRef.current });
       let finalStatus = "failed";
+      let tabId: number | undefined;
       try {
         pushLog(`Applying to "${job.title}"…`, true);
         let resumeFile = getResumeForJob(job);
         const preGenerated = Boolean(resumeFile);
         if (!resumeFile) {
           resumeFile = await startResumeForJob(job);
+        }
+        if (checkBudgetExceeded()) {
+          await abortForBudget(job);
+          finalStatus = "budget-exceeded";
+          return;
         }
         if (!resumeFile) throw new Error("Tailored résumé PDF is required but was not generated");
         logRunData("resume", {
@@ -2500,12 +2578,17 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         });
         if (!opened.success) throw new Error(opened.error || "Failed to open tab");
         const openedData = opened.data as { tabId?: number; page?: ActionablePageContext };
-        const tabId = openedData.tabId;
+        tabId = openedData.tabId;
         if (!tabId) throw new Error("open_tab returned no tab id");
         setSelectedTabId(tabId);
 
         // Validity gate — skip dead/expired/non-form links (close tab + mark handled).
         const gate = await validateOpenedTab(tabId, job);
+        if (checkBudgetExceeded()) {
+          await abortForBudget(job, tabId);
+          finalStatus = "budget-exceeded";
+          return;
+        }
         logRunData("validity", { kind: gate.validity.kind, valid: gate.validity.valid, reason: gate.validity.reason });
         if (!gate.validity.valid) {
           pushLog(`"${job.title}" skipped — ${gate.validity.kind}: ${gate.validity.reason}`, false);
@@ -2538,6 +2621,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         setAnalyzing(true);
         const analysis = await analyzeFormFields({ tree, applicantContext: applicantContext || undefined }, runSignal());
         setAnalyzing(false);
+        recordUsage("Analyze form", analysis.usage);
+        if (checkBudgetExceeded()) {
+          await abortForBudget(job, tabId);
+          finalStatus = "budget-exceeded";
+          return;
+        }
         setActionableTree(tree);
         setTreePage(pageCtx);
         setFormAnalysis(analysis);
@@ -2587,6 +2676,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
         // AI verify: wait for the page to settle, read innerText, classify.
         const { verdict, state: pageState } = await verifyAfterSubmit(tabId, job, submitted, OTP_STEP_WAIT_MS);
+        if (checkBudgetExceeded()) {
+          await abortForBudget(job, tabId);
+          finalStatus = "budget-exceeded";
+          return;
+        }
         logRunData("verify", { status: verdict.status, reason: verdict.reason, pageText: pageState.text, controlCount: pageState.controlCount });
         if (verdict.status === "success") {
           pushLog(`"${job.title}" applied — ${verdict.reason}`, true);
@@ -2635,6 +2729,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
             resumeFile,
             pageCtx,
           });
+          if (checkBudgetExceeded()) {
+            await abortForBudget(job, tabId);
+            finalStatus = "budget-exceeded";
+            return;
+          }
           finalStatus = recovered ? "applied-recovered" : "unconfirmed";
         }
       } catch (error) {
@@ -2649,7 +2748,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         endRunLog(finalStatus);
       }
     },
-    [applicantContext, canExecute, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, runRecoveryLoop, runSignal, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
+    [abortForBudget, applicantContext, canExecute, checkBudgetExceeded, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, recordUsage, resetJobRunCost, resetJobUsage, runRecoveryLoop, runSignal, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
   );
 
   /**
@@ -2751,6 +2850,9 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     validateActiveTab,
     applyDone,
     jobUsage,
+    jobBudgetLimitUsd,
+    setJobBudgetLimitUsd,
+    budgetSkippedJobIds,
     markActiveJobApplied,
     socketRef,
     connect,

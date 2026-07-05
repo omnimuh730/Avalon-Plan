@@ -10,8 +10,6 @@ export function AgentsPage() {
   const { applier, applierReady } = useApplier();
   const { sessions, openDeploy, registerSlot } = useAgentSessions();
 
-  // The active session's controller is portaled into this slot by the persistent
-  // engine in AgentSessionsProvider — so leaving and returning keeps its live state.
   const slotRef = useCallback(
     (el: HTMLDivElement | null) => registerSlot(el),
     [registerSlot],
@@ -55,7 +53,7 @@ export function AgentsPage() {
         ) : (
           <>
             <SessionTabs />
-            <div className="flex items-start gap-4">
+            <div className="flex items-start gap-4 min-w-0">
               <div ref={slotRef} className="flex-1 min-w-0" />
               <RunHistoryPanel applierName={applier?.name ?? ""} sessions={sessions} />
             </div>

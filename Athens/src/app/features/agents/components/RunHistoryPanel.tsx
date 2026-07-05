@@ -27,6 +27,7 @@ function statusMeta(status?: string | null): { label: string; tone: StatusTone }
   if (s === "unconfirmed") return { label: "Unconfirmed", tone: "warn" };
   if (s === "stopped") return { label: "Stopped", tone: "neutral" };
   if (s === "error" || s === "failed") return { label: "Error", tone: "error" };
+  if (s === "budget-exceeded") return { label: "Budget skip", tone: "warn" };
   if (s.startsWith("skipped-")) return { label: `Skipped (${s.slice(8)})`, tone: "neutral" };
   if (!s) return { label: "Unknown", tone: "neutral" };
   return { label: s, tone: "neutral" };
@@ -183,7 +184,7 @@ export function RunHistoryPanel({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="shrink-0 w-9 self-stretch flex flex-col items-center justify-center gap-2 rounded-2xl border border-border/80 bg-card shadow-sm hover:bg-secondary/40 transition-colors"
+        className="shrink-0 w-9 self-start h-[440px] flex flex-col items-center justify-center gap-2 rounded-2xl border border-border/80 bg-card shadow-sm hover:bg-secondary/40 transition-colors"
         title="Show run history"
       >
         <ChevronLeft className="w-3.5 h-3.5 text-muted-foreground" />
@@ -194,7 +195,7 @@ export function RunHistoryPanel({
   }
 
   return (
-    <div className="shrink-0 w-80 flex flex-col rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
+    <div className="shrink-0 self-start w-80 h-[440px] flex flex-col rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
       <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-2 bg-gradient-to-r from-violet-500/5 to-transparent">
         <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
           <Clock className="w-4 h-4 text-violet-600" />
@@ -236,7 +237,7 @@ export function RunHistoryPanel({
           </select>
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-2 space-y-1.5 min-h-[200px]">
+      <div className="flex-1 min-h-0 overflow-y-auto subtle-scroll p-2 space-y-1.5">
         {loading && runs.length === 0 && (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />

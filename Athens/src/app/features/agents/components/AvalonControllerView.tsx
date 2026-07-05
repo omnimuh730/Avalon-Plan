@@ -25,7 +25,15 @@ import { cn } from "../../../lib/utils";
 import { useSessionRelay } from "../context/AgentSessionsContext";
 import type { JobPipelineState, useAvalonRelay } from "../hooks/useAvalonRelay";
 import { ApplyStatusPanel } from "./ApplyStatusPanel";
+import { DEFAULT_JOB_BUDGET_USD } from "../lib/agentBudget";
 import { AgentResumePdfPreview, agentJobResumePdfUrl } from "./AgentResumePdfPreview";
+
+const WORKSPACE_PANEL =
+  "rounded-2xl border border-border/80 bg-card shadow-sm flex flex-col min-w-0 overflow-hidden";
+/** Shared height for Queue / Activity / Pipeline — scroll inside, not viewport-stretched */
+const MAIN_PANEL_H = "h-[440px]";
+/** Preview row below the three columns */
+const PREVIEW_PANEL_H = "h-[380px]";
 
 function pipelineStepClass(step: number, highlightStep: number, done: boolean, enabled: boolean): string {
   return cn(
@@ -211,6 +219,11 @@ export function AvalonControllerView({
   ];
 
   const fieldCount = relay.actionableTree?.reduce((n, g) => n + g.children.length, 0) ?? 0;
+  const budgetSpent = relay.jobUsage.totalCostUsd;
+  const budgetLimit = relay.jobBudgetLimitUsd;
+  const budgetRatio = budgetLimit > 0 ? budgetSpent / budgetLimit : 0;
+  const budgetNearLimit = budgetRatio >= 0.8 && budgetRatio <= 1;
+  const budgetOverLimit = budgetSpent > budgetLimit;
 
   const copyScript = async () => {
     if (!relay.displayedScript.trim()) return;
@@ -223,7 +236,7 @@ export function AvalonControllerView({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 min-w-0">
       {/* Status + workflow rail */}
       <div className="rounded-2xl border border-border/80 bg-card/80 backdrop-blur-sm shadow-sm overflow-hidden">
         <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b border-border/60">
@@ -273,7 +286,7 @@ export function AvalonControllerView({
         </div>
 
         {showSettings && (
-          <div className="px-4 py-3 bg-secondary/30 border-b border-border/60 flex flex-wrap gap-2">
+          <div className="px-4 py-3 bg-secondary/30 border-b border-border/60 flex flex-wrap gap-2 items-end">
             <input
               value={relay.serverUrl}
               onChange={(e) => relay.setServerUrl(e.target.value)}
@@ -286,6 +299,18 @@ export function AvalonControllerView({
               placeholder="Session ID (optional)"
               className="w-40 rounded-xl border border-border bg-background px-3 py-2 text-xs"
             />
+            <label className="flex flex-col gap-1 shrink-0">
+              <span className="text-[10px] font-semibold text-muted-foreground">AI budget / job (USD)</span>
+              <input
+                type="number"
+                min={0.01}
+                max={5}
+                step={0.01}
+                value={relay.jobBudgetLimitUsd}
+                onChange={(e) => relay.setJobBudgetLimitUsd(Number.parseFloat(e.target.value) || DEFAULT_JOB_BUDGET_USD)}
+                className="w-24 rounded-xl border border-border bg-background px-3 py-2 text-xs"
+              />
+            </label>
             <button
               type="button"
               onClick={relay.connect}
@@ -320,17 +345,26 @@ export function AvalonControllerView({
               AI usage · this job
               {activeJob && <span className="text-xs font-normal text-muted-foreground truncate max-w-[180px]">· {activeJob.title}</span>}
             </h2>
-            <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-3 text-xs flex-wrap">
               <span className="font-bold text-foreground">
                 {relay.jobUsage.totalTokens.toLocaleString()} tokens
               </span>
               {relay.jobUsage.cachedTokens > 0 && (
                 <span className="text-muted-foreground">({relay.jobUsage.cachedTokens.toLocaleString()} cached)</span>
               )}
-              <span className="font-bold text-violet-700">${relay.jobUsage.totalCostUsd.toFixed(4)}</span>
+              <span
+                className={cn(
+                  "font-bold",
+                  budgetOverLimit && "text-red-700",
+                  budgetNearLimit && !budgetOverLimit && "text-amber-700",
+                  !budgetNearLimit && !budgetOverLimit && "text-violet-700",
+                )}
+              >
+                ${budgetSpent.toFixed(4)} / ${budgetLimit.toFixed(2)}
+              </span>
             </div>
           </div>
-          <div className="px-2 py-1.5 max-h-[180px] overflow-y-auto">
+          <div className="px-2 py-1.5 max-h-[180px] overflow-y-auto subtle-scroll">
             <table className="w-full text-[11px]">
               <thead>
                 <tr className="text-muted-foreground text-left">
@@ -392,16 +426,11 @@ export function AvalonControllerView({
         </div>
       )}
 
-      {/* Main workspace */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start min-h-[520px]">
+      {/* Main workspace — Queue · Activity · Pipeline */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-w-0">
         {/* Left — job queue */}
-        <aside
-          className={cn(
-            "xl:col-span-3 flex flex-col rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden",
-            showPreviewWorkspace && "xl:row-span-2",
-          )}
-        >
-          <div className="px-4 py-3 border-b border-border/60 bg-gradient-to-r from-violet-500/5 to-transparent">
+        <aside className={cn(WORKSPACE_PANEL, MAIN_PANEL_H, "lg:col-span-3")}>
+          <div className="shrink-0 px-4 py-3 border-b border-border/60 bg-gradient-to-r from-violet-500/5 to-transparent">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
                 <ListOrdered className="w-4 h-4 text-violet-600" />
@@ -424,7 +453,7 @@ export function AvalonControllerView({
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-2 space-y-1.5 min-h-[200px] max-h-[420px] xl:max-h-none">
+          <div className="flex-1 min-h-0 overflow-y-auto subtle-scroll p-2 space-y-1.5">
             {relay.jobQueue.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full py-10 px-4 text-center">
                 <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center mb-3">
@@ -446,6 +475,7 @@ export function AvalonControllerView({
               relay.jobQueue.map((job, i) => {
                 const active = i === relay.activeJobIndex;
                 const applied = relay.appliedJobIds.has(job.id);
+                const budgetSkipped = relay.budgetSkippedJobIds.has(job.id);
                 return (
                   <div
                     key={job.id}
@@ -485,6 +515,10 @@ export function AvalonControllerView({
                       <div className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold text-emerald-700 bg-emerald-500/10">
                         ✓ Applied
                       </div>
+                    ) : budgetSkipped ? (
+                      <div className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold text-amber-800 bg-amber-500/10">
+                        Budget skip
+                      </div>
                     ) : (
                       <button
                         type="button"
@@ -505,7 +539,7 @@ export function AvalonControllerView({
           </div>
 
           {activeJob && (
-            <div className="px-3 py-2 border-t border-border/60 bg-secondary/20">
+            <div className="shrink-0 px-3 py-2 border-t border-border/60 bg-secondary/20">
               <p className="text-[10px] text-muted-foreground truncate" title={activeJob.url}>
                 {activeJob.url}
               </p>
@@ -514,12 +548,12 @@ export function AvalonControllerView({
         </aside>
 
         {/* Center — event log / terminal */}
-        <div className="xl:col-span-6 rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden flex flex-col h-[360px] sm:h-[420px] xl:h-[520px]">
-          <div className="px-4 py-2.5 border-b border-border/60 flex items-center gap-2">
+        <div className={cn(WORKSPACE_PANEL, MAIN_PANEL_H, "lg:col-span-6")}>
+          <div className="shrink-0 px-4 py-2.5 border-b border-border/60 flex items-center gap-2">
             <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
             <h2 className="text-xs font-bold text-foreground">Activity</h2>
           </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="flex-1 min-h-0 overflow-y-auto subtle-scroll p-2 space-y-1">
             {relay.logs.length === 0 && (
               <p className="text-[11px] text-muted-foreground text-center py-8">Waiting for events…</p>
             )}
@@ -540,8 +574,11 @@ export function AvalonControllerView({
         </div>
 
         {/* Right — pipeline */}
-        <aside className="xl:col-span-3 rounded-2xl border border-border/80 bg-card shadow-sm p-4 space-y-2">
-          <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Pipeline</h2>
+        <aside className={cn(WORKSPACE_PANEL, MAIN_PANEL_H, "lg:col-span-3")}>
+          <div className="shrink-0 px-4 pt-4 pb-2">
+            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Pipeline</h2>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto subtle-scroll px-4 pb-2 space-y-2">
           <button
             type="button"
             onClick={() => void relay.runPipelineAuto()}
@@ -787,16 +824,18 @@ export function AvalonControllerView({
                 : ""}
             </p>
           )}
-          <p className="text-[9px] text-center text-muted-foreground leading-relaxed pt-1">
+          </div>
+          <p className="shrink-0 px-4 pb-4 text-[9px] text-center text-muted-foreground leading-relaxed">
             Steps run in order: open → verify tab → résumé → scan → analyze → apply → verify.
           </p>
         </aside>
+      </div>
 
-        {/* Lower preview workspace */}
-        {showPreviewWorkspace && (
-          hasTree ? (
-            <div className="xl:col-span-9 rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
-              <div className="px-4 py-3 border-b border-border/60 flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-violet-500/5 via-transparent to-indigo-500/5">
+      {/* Preview workspace — full width below the three columns */}
+      {showPreviewWorkspace && (
+        hasTree ? (
+          <div className={cn(WORKSPACE_PANEL, PREVIEW_PANEL_H, "w-full min-w-0")}>
+              <div className="shrink-0 px-4 py-3 border-b border-border/60 flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-violet-500/5 via-transparent to-indigo-500/5">
                 <div>
                   <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
                     <TreePine className="w-4 h-4 text-violet-600" />
@@ -819,8 +858,8 @@ export function AvalonControllerView({
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-5 gap-0 lg:divide-x divide-border/60">
-                <div className="lg:col-span-3 p-4 max-h-[400px] overflow-y-auto space-y-4">
+              <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-5 gap-0 lg:divide-x divide-border/60">
+                <div className="lg:col-span-3 p-4 min-h-0 overflow-y-auto subtle-scroll space-y-4">
                   {relay.actionableTree!.map((group, groupIdx) => (
                     <div key={groupIdx}>
                       <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 sticky top-0 bg-card py-1">
@@ -878,8 +917,8 @@ export function AvalonControllerView({
                   ))}
                 </div>
 
-                <div className="lg:col-span-2 p-4 flex flex-col bg-secondary/10 min-h-[280px]">
-                  <div className="flex items-center justify-between gap-2 mb-3">
+                <div className="lg:col-span-2 p-4 flex flex-col bg-secondary/10 min-h-0 overflow-hidden">
+                  <div className="shrink-0 flex items-center justify-between gap-2 mb-3">
                     <h3 className="text-xs font-bold text-foreground truncate">
                       {selectedFieldLabel ? selectedFieldLabel : "Fill plan"}
                     </h3>
@@ -908,14 +947,14 @@ export function AvalonControllerView({
                     readOnly
                     spellCheck={false}
                     placeholder="Run Analyze to generate the deterministic fill plan…"
-                    className="flex-1 min-h-[200px] w-full rounded-xl border border-border bg-card px-3 py-2.5 text-[11px] font-mono leading-relaxed resize-none focus:outline-none shadow-inner"
+                    className="flex-1 min-h-0 w-full rounded-xl border border-border bg-card px-3 py-2.5 text-[11px] font-mono leading-relaxed resize-none focus:outline-none shadow-inner overflow-y-auto subtle-scroll"
                   />
                 </div>
               </div>
             </div>
           ) : (
-            <div className="xl:col-span-9 rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-border/60 flex items-center justify-between gap-2">
+            <div className={cn(WORKSPACE_PANEL, PREVIEW_PANEL_H, "w-full min-w-0")}>
+              <div className="shrink-0 px-4 py-2.5 border-b border-border/60 flex items-center justify-between gap-2">
                 <h2 className="text-xs font-bold text-foreground flex items-center gap-2">
                   {relay.generatingResume ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-600" />
@@ -990,13 +1029,15 @@ export function AvalonControllerView({
               )}
               {relay.activeResume && (relay.activeResume.file.base64 || activeJob) && (
                 <>
+                  <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                   <AgentResumePdfPreview
                     applierName={applier?.name}
                     jobId={activeJob?.id}
                     base64={relay.activeResume.file.base64}
                     mimeType={relay.activeResume.file.mimeType}
-                    className="w-full h-[320px] xl:h-[420px] bg-secondary/20 border-0"
+                    className="w-full flex-1 min-h-[240px] max-h-[360px] bg-secondary/20 border-0"
                   />
+                  </div>
                   <div className="px-4 py-2 border-t border-border/60 flex flex-col gap-1">
                     <div className="flex items-center justify-between gap-2">
                       <span
@@ -1038,8 +1079,7 @@ export function AvalonControllerView({
               )}
             </div>
           )
-        )}
-      </div>
+      )}
 
       {/* Empty state CTA */}
       {!hasTree && relay.canExecute && activeJob && pipeline.opened && (
