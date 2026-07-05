@@ -4,6 +4,13 @@ export async function streamSSE(
   onEvent: (event: string, data: Record<string, unknown>) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  const throwIfAborted = () => {
+    if (signal?.aborted) {
+      const err = new DOMException("Aborted", "AbortError");
+      throw err;
+    }
+  };
+
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -24,27 +31,36 @@ export async function streamSSE(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let sep: number;
-    while ((sep = buf.indexOf("\n\n")) !== -1) {
-      const block = buf.slice(0, sep);
-      buf = buf.slice(sep + 2);
-      let event = "message";
-      let data = "";
-      for (const line of block.split("\n")) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) data += line.slice(5).trim();
-      }
-      if (data) {
-        try {
-          onEvent(event, JSON.parse(data) as Record<string, unknown>);
-        } catch {
-          /* ignore malformed event */
+  try {
+    for (;;) {
+      throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buf.indexOf("\n\n")) !== -1) {
+        const block = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        let event = "message";
+        let data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (data) {
+          try {
+            onEvent(event, JSON.parse(data) as Record<string, unknown>);
+          } catch {
+            /* ignore malformed event */
+          }
         }
       }
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      /* ignore */
     }
   }
 }

@@ -1,7 +1,9 @@
 import React from "react";
-import { Download, FileText, Loader2, Send, Trash2 } from "lucide-react";
+import { Download, Loader2, Send, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
+import { Progress } from "../../../components/ui/progress";
 import { cn } from "../../../lib/utils";
+import type { JobResumeBulkProgress } from "../hooks/useJobResumeGeneration";
 
 type JobBulkActionsBarProps = {
   selectedOnPage: number;
@@ -15,7 +17,7 @@ type JobBulkActionsBarProps = {
   onGenerateResumes?: () => void;
   onStopGenerateResumes?: () => void;
   resumeGenerating?: boolean;
-  resumeProgress?: { done: number; total: number };
+  resumeProgress?: JobResumeBulkProgress;
   className?: string;
 };
 
@@ -35,14 +37,18 @@ export function JobBulkActionsBar({
   className,
 }: JobBulkActionsBarProps) {
   const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
+  const progressPct =
+    resumeProgress && resumeProgress.total > 0
+      ? Math.round((resumeProgress.done / resumeProgress.total) * 100)
+      : 0;
 
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 py-1.5 px-2 rounded-lg border border-border/60 bg-secondary/20 text-sm",
-        className,
-      )}
-    >
+    <div className={cn("space-y-1.5", className)}>
+      <div
+        className={cn(
+          "flex items-center gap-2 py-1.5 px-2 rounded-lg border border-border/60 bg-secondary/20 text-sm",
+        )}
+      >
       <label className="inline-flex items-center gap-2 cursor-pointer select-none shrink-0">
         <input
           type="checkbox"
@@ -64,6 +70,15 @@ export function JobBulkActionsBar({
         </span>
       </label>
 
+      {resumeGenerating && resumeProgress ? (
+        <div className="hidden sm:flex flex-1 min-w-[6rem] max-w-xs items-center gap-2 px-1">
+          <Progress value={progressPct} className="h-1.5 flex-1" />
+          <span className="text-[11px] tabular-nums text-muted-foreground whitespace-nowrap">
+            {progressPct}%
+          </span>
+        </div>
+      ) : null}
+
       <div className="flex items-center gap-1 ml-auto">
         {onGenerateResumes ? (
           resumeGenerating ? (
@@ -72,13 +87,24 @@ export function JobBulkActionsBar({
               size="sm"
               className="h-8 px-2.5 gap-1 text-amber-700 hover:text-amber-800 hover:bg-amber-50"
               onClick={onStopGenerateResumes}
-              title="Stop after in-flight résumés finish"
+              title="Stop résumé generation immediately"
             >
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span className="hidden sm:inline">
-                {resumeProgress
-                  ? `Résumés ${resumeProgress.done}/${resumeProgress.total} · Stop`
-                  : "Generating résumés… · Stop"}
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              <span className="tabular-nums whitespace-nowrap">
+                {resumeProgress ? (
+                  <>
+                    <span className="sm:hidden">{resumeProgress.done}/{resumeProgress.total}</span>
+                    <span className="hidden sm:inline">
+                      Generating résumés {resumeProgress.done}/{resumeProgress.total}
+                      {resumeProgress.active > 0
+                        ? ` · ${resumeProgress.active} active`
+                        : ""}
+                      {" · Stop"}
+                    </span>
+                  </>
+                ) : (
+                  "Generating résumés… · Stop"
+                )}
               </span>
             </Button>
           ) : (
@@ -90,8 +116,9 @@ export function JobBulkActionsBar({
               disabled={totalSelected === 0}
               title="Generate tailored résumés for the selected jobs (max 10 at a time)"
             >
-              <FileText className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Resumes</span>
+              <Sparkles className="w-3.5 h-3.5" />
+              <span className="sm:hidden">Generate</span>
+              <span className="hidden sm:inline">Generate résumés</span>
             </Button>
           )
         ) : null}
@@ -114,6 +141,20 @@ export function JobBulkActionsBar({
           <span className="hidden sm:inline">Remove</span>
         </Button>
       </div>
+      </div>
+
+      {resumeGenerating && resumeProgress ? (
+        <div className="sm:hidden px-2">
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
+            <span>
+              Generating résumés {resumeProgress.done}/{resumeProgress.total}
+              {resumeProgress.active > 0 ? ` · ${resumeProgress.active} active` : ""}
+            </span>
+            <span className="tabular-nums">{progressPct}%</span>
+          </div>
+          <Progress value={progressPct} className="h-1" />
+        </div>
+      ) : null}
     </div>
   );
 }

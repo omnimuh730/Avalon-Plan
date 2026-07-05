@@ -265,7 +265,11 @@ export function JobCard({
                 ) : (
                   <Sparkles className="w-4 h-4" />
                 )}
-                {resumeReady ? "View résumé" : "Resume"}
+                {resumeState?.status === "generating"
+                  ? "Generating…"
+                  : resumeReady
+                    ? "View résumé"
+                    : "Generate résumé"}
               </Button>
             ) : null}
             <Button

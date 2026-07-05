@@ -11,7 +11,18 @@ import type { Job } from "../../../types";
 /** Max résumés generated concurrently during a bulk run (rate-limit guard). */
 const MAX_CONCURRENT_GENERATIONS = 10;
 
+function isAbortError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { name?: string }).name === "AbortError";
+}
+
 export type JobResumeGenerationStatus = "generating" | "done" | "error";
+
+export type JobResumeBulkProgress = {
+  done: number;
+  total: number;
+  /** Résumés currently in flight (fetch JD + SSE generation). */
+  active: number;
+};
 
 export type JobResumeGenerationState = {
   status: JobResumeGenerationStatus;
@@ -34,8 +45,9 @@ export function useJobResumeGeneration(jobs: Job[]) {
   const { applier } = useApplier();
   const [resumeStates, setResumeStates] = useState<Record<string, JobResumeGenerationState>>({});
   const [bulkRunning, setBulkRunning] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
-  const inflightRef = useRef<Map<string, Promise<boolean>>>(new Map());
+  const [bulkProgress, setBulkProgress] = useState<JobResumeBulkProgress | null>(null);
+  const inflightRef = useRef<Map<string, Promise<boolean | null>>>(new Map());
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const bulkCancelledRef = useRef(false);
   const resumeStatesRef = useRef(resumeStates);
   resumeStatesRef.current = resumeStates;
@@ -68,9 +80,18 @@ export function useJobResumeGeneration(jobs: Job[]) {
     };
   }, [applier?.name, jobs]);
 
-  /** Generate (or reuse) a résumé for one job. Resolves true on success. */
+  const clearGeneratingState = useCallback((jobId: string) => {
+    setResumeStates((prev) => {
+      if (prev[jobId]?.status !== "generating") return prev;
+      const next = { ...prev };
+      delete next[jobId];
+      return next;
+    });
+  }, []);
+
+  /** Generate (or reuse) a résumé for one job. Resolves true on success, null when aborted. */
   const generateForJob = useCallback(
-    (job: Job, options?: { silent?: boolean }): Promise<boolean> => {
+    (job: Job, options?: { silent?: boolean }): Promise<boolean | null> => {
       // Already generated (this session or found on the server) — nothing to do.
       if (resumeStatesRef.current[job.id]?.status === "done") return Promise.resolve(true);
       const inflight = inflightRef.current.get(job.id);
@@ -81,10 +102,14 @@ export function useJobResumeGeneration(jobs: Job[]) {
           if (!options?.silent) toast.error("Select a profile before generating résumés");
           return false;
         }
+        const controller = new AbortController();
+        abortControllersRef.current.set(job.id, controller);
+        const { signal } = controller;
+
         const backendId = job.backendId || job.id;
         patchState(job.id, { status: "generating", step: "Fetching job description…" });
         try {
-          const jd = await fetchJobDescription(backendId);
+          const jd = await fetchJobDescription(backendId, signal);
           if (!jd) throw new Error("No job description saved for this job");
           const gen = await generateJobResumeStream(
             { applierName: applier.name, jobId: backendId, jobDescription: jd },
@@ -93,6 +118,7 @@ export function useJobResumeGeneration(jobs: Job[]) {
                 patchState(job.id, { status: "generating", step: progress.stepLabel });
               }
             },
+            signal,
           );
           patchState(job.id, { status: "done", reused: gen.reused });
           if (!options?.silent) {
@@ -100,11 +126,16 @@ export function useJobResumeGeneration(jobs: Job[]) {
           }
           return true;
         } catch (error) {
+          if (isAbortError(error) || signal.aborted) {
+            clearGeneratingState(job.id);
+            return null;
+          }
           const msg = error instanceof Error ? error.message : "Résumé generation failed";
           patchState(job.id, { status: "error", error: msg });
           if (!options?.silent) toast.error(`"${job.title}": ${msg}`);
           return false;
         } finally {
+          abortControllersRef.current.delete(job.id);
           inflightRef.current.delete(job.id);
         }
       })();
@@ -112,7 +143,7 @@ export function useJobResumeGeneration(jobs: Job[]) {
       inflightRef.current.set(job.id, promise);
       return promise;
     },
-    [applier, patchState],
+    [applier, clearGeneratingState, patchState],
   );
 
   /** Generate résumés for many jobs, at most MAX_CONCURRENT_GENERATIONS at a time. */
@@ -138,20 +169,32 @@ export function useJobResumeGeneration(jobs: Job[]) {
 
       bulkCancelledRef.current = false;
       setBulkRunning(true);
-      setBulkProgress({ done: 0, total: jobs.length });
+      setBulkProgress({ done: 0, total: jobs.length, active: 0 });
 
       let succeeded = 0;
       let failed = 0;
+      let active = 0;
       let nextIndex = 0;
+
+      const syncProgress = () => {
+        setBulkProgress({ done: succeeded + failed, total: jobs.length, active });
+      };
 
       const worker = async () => {
         while (!bulkCancelledRef.current) {
           const index = nextIndex++;
           if (index >= jobs.length) return;
-          const ok = await generateForJob(jobs[index], { silent: true });
-          if (ok) succeeded++;
-          else failed++;
-          setBulkProgress({ done: succeeded + failed, total: jobs.length });
+          active++;
+          syncProgress();
+          const result = await generateForJob(jobs[index], { silent: true });
+          active--;
+          if (bulkCancelledRef.current) {
+            syncProgress();
+            return;
+          }
+          if (result === true) succeeded++;
+          else if (result === false) failed++;
+          syncProgress();
         }
       };
 
@@ -165,7 +208,7 @@ export function useJobResumeGeneration(jobs: Job[]) {
       }
 
       const skipped = jobs.length - succeeded - failed;
-      if (bulkCancelledRef.current && skipped > 0) {
+      if (bulkCancelledRef.current) {
         toast.info(`Résumé generation stopped · ${succeeded} done, ${failed} failed, ${skipped} skipped`);
       } else if (failed > 0) {
         toast.warning(`Résumés generated for ${succeeded}/${jobs.length} jobs (${failed} failed)`);
@@ -176,10 +219,28 @@ export function useJobResumeGeneration(jobs: Job[]) {
     [applier, bulkRunning, generateForJob],
   );
 
-  /** Stop the bulk run after in-flight generations finish. */
+  /** Stop the bulk run immediately — aborts every in-flight HTTP request. */
   const cancelBulk = useCallback(() => {
+    if (!bulkRunning) return;
     bulkCancelledRef.current = true;
-  }, []);
+    for (const controller of abortControllersRef.current.values()) {
+      controller.abort();
+    }
+    abortControllersRef.current.clear();
+    setResumeStates((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [jobId, state] of Object.entries(next)) {
+        if (state.status === "generating") {
+          delete next[jobId];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    setBulkRunning(false);
+    setBulkProgress(null);
+  }, [bulkRunning]);
 
   return {
     resumeStates,
