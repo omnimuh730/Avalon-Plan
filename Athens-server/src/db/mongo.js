@@ -35,6 +35,18 @@ let matchProfileStateCollection;
 let userSkillsCollection;
 // Deduped global dictionary of every skill seen in a job description (AI-categorized).
 let skillDictionaryCollection;
+// 3rd-party scraped jobs ingested via the expose API (separate from job_market).
+let externalScrapedJobsCollection;
+
+async function ensureExternalScrapedJobsIndexes() {
+	if (!externalScrapedJobsCollection) return;
+	await externalScrapedJobsCollection.createIndex({ createdAt: -1 });
+	await externalScrapedJobsCollection.createIndex({ source: 1, createdAt: -1 });
+	await externalScrapedJobsCollection.createIndex(
+		{ jobLink: 1 },
+		{ unique: true, partialFilterExpression: { jobLink: { $type: "string" } } },
+	);
+}
 
 async function ensureMailCollectionsIndexes() {
 	if (mailMessagesCollection) {
@@ -147,6 +159,7 @@ async function initMongo() {
 	matchProfileStateCollection = db.collection('match_profile_state');
 	userSkillsCollection = db.collection('user_skills');
 	skillDictionaryCollection = db.collection('skill_dictionary');
+	externalScrapedJobsCollection = db.collection('external_scraped_jobs');
 	try {
 		await avalonRunsCollection.createIndex({ runId: 1 }, { unique: true });
 		await avalonRunsCollection.createIndex({ applierName: 1, startedAt: -1 });
@@ -158,6 +171,7 @@ async function initMongo() {
 	await ensureSkillCollectionsIndexes();
 	await ensureMailCollectionsIndexes();
 	await ensureMatchScoreIndexes();
+	await ensureExternalScrapedJobsIndexes();
 	// Remove pre-existing duplicate applyLink jobs, then enforce uniqueness so
 	// no duplicate links can be inserted afterward. Index creation must run only
 	// after the cleanup completes, otherwise it would fail on existing dupes.
@@ -287,5 +301,6 @@ export {
 	matchProfileStateCollection,
 	userSkillsCollection,
 	skillDictionaryCollection,
+	externalScrapedJobsCollection,
 	closeMongo
 };

@@ -25,6 +25,7 @@ import vendorMonitorRoutes from "./src/routes/vendorMonitorRoutes.js";
 import mailRoutes from "./src/routes/mailRoutes.js";
 import settingsRoutes from "./src/routes/settingsRoutes.js";
 import agentRoutes from "./src/routes/agentRoutes.js";
+import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
 import {
 	getAutoBidProfile,
@@ -67,6 +68,7 @@ app.use('/api', vendorMonitorRoutes);
 app.use('/api', mailRoutes);
 app.use('/api', settingsRoutes);
 app.use('/api/agents', agentRoutes);
+app.use('/api', scrapedJobIngestRoutes);
 
 app.get("/personal/auto-bid-profile", getAutoBidProfile);
 app.put("/personal/auto-bid-profile", upsertAutoBidProfile);
