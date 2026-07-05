@@ -32,7 +32,7 @@ import { useProfileMatchSkills } from "../hooks/useProfileMatchSkills";
 import { JobSkillMatchPanel } from "./JobSkillMatchPanel";
 import { DetectedSkillsPanel } from "./DetectedSkillsPanel";
 import { JobStatusActions } from "./JobStatusActions";
-import { AddProfileSkillPanel } from "./AddProfileSkillDialog";
+import { AddProfileSkillPanel, pendingSkillFromJobRequirement, type PendingProfileSkill } from "./AddProfileSkillDialog";
 
 const WORK_MODE_LABELS: Record<WorkMode, string> = {
   remote: "Remote",
@@ -158,7 +158,9 @@ export function JobDescriptionDialog({
   const j = localJob ?? detailJob ?? job;
   const [skillMatchOpen, setSkillMatchOpen] = useState(false);
   const [addSkillOpen, setAddSkillOpen] = useState(false);
-  const [pendingSkill, setPendingSkill] = useState("");
+  const [pendingSkill, setPendingSkill] = useState<PendingProfileSkill>(() =>
+    pendingSkillFromJobRequirement(""),
+  );
   const { skills: userSkills, boostingSkill, boostSkillForJob, matchContext } = useProfileMatchSkills(open);
 
   const jobId = j.backendId || j.id;
@@ -178,7 +180,7 @@ export function JobDescriptionDialog({
     if (!open) {
       setSkillMatchOpen(false);
       setAddSkillOpen(false);
-      setPendingSkill("");
+      setPendingSkill(pendingSkillFromJobRequirement(""));
     }
   }, [open]);
 
@@ -186,18 +188,21 @@ export function JobDescriptionDialog({
     if (open) setLocalJob(null);
   }, [open, job.id, detailJob?.id]);
 
-  const handleRequestAddSkill = (skill: string) => {
-    setPendingSkill(skill);
+  const handleRequestAddSkill = (skill: { name: string; category: string; requirement: number }) => {
+    setPendingSkill(pendingSkillFromJobRequirement(skill.name, skill.category, skill.requirement));
     setAddSkillOpen(true);
   };
 
-  const handleConfirmAddSkill = async (skill: string) => {
-    const updated = await boostSkillForJob(skill.trim(), j);
+  const handleConfirmAddSkill = async (skill: PendingProfileSkill) => {
+    const updated = await boostSkillForJob(skill.name.trim(), j, {
+      category: skill.category,
+      level: skill.level,
+    });
     if (updated) {
       setLocalJob(updated);
       onJobScoresUpdated?.(updated);
       setAddSkillOpen(false);
-      setPendingSkill("");
+      setPendingSkill(pendingSkillFromJobRequirement(""));
     }
   };
 

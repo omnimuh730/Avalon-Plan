@@ -59,7 +59,7 @@ export function DetectedSkillsPanel({
   score: number;
   covered?: number;
   required?: number;
-  onRequestAddSkill?: (skill: string) => void;
+  onRequestAddSkill?: (skill: { name: string; category: string; requirement: number }) => void;
   boostingSkill?: string | null;
 }) {
   const rows = useMemo(() => {
@@ -154,7 +154,7 @@ export function DetectedSkillsPanel({
                   <button
                     type="button"
                     disabled={boostingSkill !== null}
-                    onClick={() => onRequestAddSkill?.(s.name)}
+                    onClick={() => onRequestAddSkill?.({ name: s.name, category: s.category, requirement: s.requirement })}
                     className="shrink-0 inline-flex items-center gap-0.5 text-[11px] text-primary hover:underline disabled:opacity-50"
                   >
                     {isBoosting ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}

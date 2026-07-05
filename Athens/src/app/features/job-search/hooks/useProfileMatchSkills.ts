@@ -81,7 +81,11 @@ export function useProfileMatchSkills(enabled = true) {
   }, [reload]);
 
   const boostSkillForJob = useCallback(
-    async (skill: string, job: Job): Promise<Job | null> => {
+    async (
+      skill: string,
+      job: Job,
+      options?: { category?: UserSkillCategory; level?: number },
+    ): Promise<Job | null> => {
       const name = applier?.name?.trim();
       if (!name) return null;
 
@@ -90,6 +94,8 @@ export function useProfileMatchSkills(enabled = true) {
         const res = (await post("/personal/profile-match-skills", {
           applierName: name,
           skill,
+          category: options?.category,
+          level: options?.level,
           jobSkills: job.skills,
         })) as AddSkillResponse;
 
