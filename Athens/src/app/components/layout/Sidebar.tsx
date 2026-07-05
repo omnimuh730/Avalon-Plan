@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from "react-router";
-import { LogOut, Plus } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { AppLogo } from "../shared/AppLogo";
 import { useAuth } from "@/context/auth-context";
 import { cn, display } from "../../lib/utils";
@@ -39,16 +39,6 @@ export function Sidebar() {
             <span className="text-xs text-muted-foreground">AI career command center</span>
           </div>
         </NavLink>
-      </div>
-
-      <div className="px-4 py-3">
-        <button
-          type="button"
-          className="w-full flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 transition-colors shadow-sm shadow-violet-500/20 min-h-10"
-        >
-          <Plus className="w-5 h-5" />
-          New Application
-        </button>
       </div>
 
       <nav className="flex-1 px-3 py-2 overflow-y-auto subtle-scroll space-y-5">

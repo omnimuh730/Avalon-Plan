@@ -646,7 +646,7 @@ export function AvalonControllerView({
           <button
             type="button"
             onClick={() => void relay.validateActiveTab()}
-            disabled={!pipeline.opened || !relay.canExecute || relay.validatingTab || pipelineLocked}
+            disabled={false && (!pipeline.opened || !relay.canExecute || relay.validatingTab || pipelineLocked)}
             className={pipelineStepClass(
               3,
               highlightStep,
@@ -698,7 +698,7 @@ export function AvalonControllerView({
           <button
             type="button"
             onClick={() => void relay.fetchActionableTree()}
-            disabled={!pipeline.resumeReady || !relay.canExecute || pipelineLocked}
+            disabled={false && (!pipeline.resumeReady || !relay.canExecute || pipelineLocked)}
             className={pipelineStepClass(
               5,
               highlightStep,

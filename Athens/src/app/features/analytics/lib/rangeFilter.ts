@@ -1,4 +1,4 @@
-import type { DateRange } from "./useAnalyticsFilters";
+import type { DateRange } from "../../../hooks/useAnalyticsFilters";
 
 const RANGE_MONTHS: Record<DateRange, number> = {
   "7d": 1,

@@ -12,12 +12,13 @@ interface DateGroup {
 interface ThreadListProps {
   grouped: DateGroup[];
   loading: boolean;
+  syncing?: boolean;
   threadsLength: number;
   onOpenThread: (id: string) => void;
   onStar: (id: string) => void;
   onArchive: (id: string) => void;
   onTrash: (id: string) => void;
-  onMarkUnread: (id: string) => void;
+  onMarkUnread: (id: string, unread: boolean) => void;
 }
 
 /** Approximate pixel heights for virtual scrolling calculations. */
@@ -32,6 +33,7 @@ const ROW_HEIGHT = 64;
 export function ThreadList({
   grouped,
   loading,
+  syncing = false,
   threadsLength,
   onOpenThread,
   onStar,
@@ -98,10 +100,17 @@ export function ThreadList({
     );
   }
 
+  const syncOverlay = syncing && threadsLength > 0 && (
+    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 backdrop-blur-[1px]">
+      <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+    </div>
+  );
+
   // Empty state
   if (threadsLength === 0) {
     return (
-      <div className="flex-1 overflow-y-auto subtle-scroll min-h-0">
+      <div className="relative flex-1 overflow-y-auto subtle-scroll min-h-0">
+        {syncOverlay}
         <p className="p-6 text-sm text-muted-foreground text-center">No messages</p>
       </div>
     );
@@ -110,7 +119,8 @@ export function ThreadList({
   // Small list — render everything
   if (!useVirtual) {
     return (
-      <div className="flex-1 overflow-y-auto subtle-scroll min-h-0">
+      <div className="relative flex-1 overflow-y-auto subtle-scroll min-h-0">
+        {syncOverlay}
         {grouped.map((group) => (
           <div key={group.section}>
             {group.label && (
@@ -127,7 +137,7 @@ export function ThreadList({
                 onStar={() => onStar(t.id)}
                 onArchive={() => onArchive(t.id)}
                 onTrash={() => onTrash(t.id)}
-                onMarkUnread={() => onMarkUnread(t.id)}
+                onMarkUnread={() => onMarkUnread(t.id, true)}
               />
             ))}
           </div>
@@ -162,7 +172,8 @@ export function ThreadList({
   }
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-y-auto subtle-scroll min-h-0">
+    <div ref={containerRef} className="relative flex-1 overflow-y-auto subtle-scroll min-h-0">
+      {syncOverlay}
       <div style={{ height: totalHeight, position: "relative" }}>
         {visible.map(({ item, y, height }) => (
           <div
@@ -181,7 +192,7 @@ export function ThreadList({
                 onStar={() => onStar(item.thread.id)}
                 onArchive={() => onArchive(item.thread.id)}
                 onTrash={() => onTrash(item.thread.id)}
-                onMarkUnread={() => onMarkUnread(item.thread.id)}
+                onMarkUnread={() => onMarkUnread(item.thread.id, true)}
               />
             )}
           </div>

@@ -46,15 +46,22 @@ export function MailPage() {
     total,
   } = mail;
 
+  const refreshFolderCounts = useCallback(
+    async (force = false) => {
+      if (!applierName) return;
+      try {
+        const counts = await fetchMailFolderCounts(applierName, force);
+        setFolderCounts(counts);
+      } catch (e) {
+        console.error("fetch folder counts failed", e);
+      }
+    },
+    [applierName],
+  );
+
   const loadCurrentPage = useCallback(() => {
     void loadThreads({ folder, labelFilter, search, page, pageSize });
   }, [loadThreads, folder, labelFilter, search, page, pageSize]);
-
-  /** Force-refresh: hit IMAP synchronously (user clicked refresh button). */
-  const forceRefresh = useCallback(() => {
-    void loadThreads({ folder, labelFilter, search, page, pageSize, forceRefresh: true });
-    void reloadLabels();
-  }, [loadThreads, reloadLabels, folder, labelFilter, search, page, pageSize]);
 
   // Delta sync: prepend new messages instead of full page reload when on page 1
   // of inbox with no search/label filter active.
@@ -71,12 +78,23 @@ export function MailPage() {
     [folder, page, labelFilter, search, prependThreads, loadCurrentPage],
   );
 
-  useMailSync({
+  const { runSync, syncing: backgroundSyncing } = useMailSync({
     applierName,
     applierReady,
     enabled: credentialsConfigured === true,
     onNewThreads: handleNewThreads,
+    onSyncComplete: () => void refreshFolderCounts(),
   });
+
+  const isSyncing = mail.syncing || backgroundSyncing;
+
+  /** Force-refresh: hit IMAP synchronously (user clicked refresh button). */
+  const forceRefresh = useCallback(() => {
+    void loadThreads({ folder, labelFilter, search, page, pageSize, forceRefresh: true });
+    void reloadLabels();
+    void refreshFolderCounts(true);
+    void runSync();
+  }, [loadThreads, reloadLabels, refreshFolderCounts, runSync, folder, labelFilter, search, page, pageSize]);
 
   useEffect(() => {
     if (!applierReady || !applierName) return;
@@ -85,8 +103,8 @@ export function MailPage() {
 
   useEffect(() => {
     if (!applierReady || !applierName || credentialsConfigured !== true) return;
-    void fetchMailFolderCounts(applierName).then(setFolderCounts).catch(console.error);
-  }, [applierReady, applierName, credentialsConfigured]);
+    void refreshFolderCounts();
+  }, [applierReady, applierName, credentialsConfigured, refreshFolderCounts]);
 
   useEffect(() => {
     if (!applierReady || !applierName || credentialsConfigured !== true) return;
@@ -126,6 +144,30 @@ export function MailPage() {
   const openThread = (id: string) => {
     navigate(`${PATHS.mail}/${id}`);
     mail.markUnread(id, false);
+    void refreshFolderCounts();
+  };
+
+  const handleMarkUnread = (id: string, unread: boolean) => {
+    mail.markUnread(id, unread);
+    void refreshFolderCounts();
+  };
+
+  const handleArchive = (id: string) => {
+    mail.archive(id);
+    void refreshFolderCounts();
+  };
+
+  const handleTrash = (id: string) => {
+    mail.trash(id);
+    void refreshFolderCounts();
+  };
+
+  const handleSendCompose = async (to: string, subject: string, body: string) => {
+    await mail.sendCompose(to, subject, body);
+    void refreshFolderCounts(true);
+    if (folder === "sent") {
+      void loadThreads({ folder, labelFilter, search, page, pageSize, forceRefresh: true });
+    }
   };
 
   const backToList = () => navigate(PATHS.mail);
@@ -200,19 +242,14 @@ export function MailPage() {
               placeholder="Search mail..."
               className="flex-1 max-w-xl"
             />
-            {mail.syncing && !mail.loading && (
-              <span className="text-xs text-muted-foreground whitespace-nowrap">Syncing…</span>
-            )}
-            {mail.loading && mail.threads.length === 0 && (
-              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-            )}
             <button
               type="button"
               onClick={forceRefresh}
-              className="icon-btn text-muted-foreground hover:text-foreground"
+              disabled={isSyncing}
+              className="icon-btn text-muted-foreground hover:text-foreground disabled:opacity-50"
               aria-label="Refresh mail"
             >
-              <RefreshCw className="w-4 h-4" />
+              <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin" : ""}`} />
             </button>
           </div>
 
@@ -225,12 +262,13 @@ export function MailPage() {
           <ThreadList
             grouped={grouped}
             loading={mail.loading}
+            syncing={isSyncing}
             threadsLength={mail.threads.length}
             onOpenThread={openThread}
             onStar={mail.star}
-            onArchive={mail.archive}
-            onTrash={mail.trash}
-            onMarkUnread={mail.markUnread}
+            onArchive={handleArchive}
+            onTrash={handleTrash}
+            onMarkUnread={handleMarkUnread}
           />
 
           <div className="border-t border-border flex-shrink-0 px-3">
@@ -255,8 +293,8 @@ export function MailPage() {
           fullView
           loading={detailLoading}
           onBack={backToList}
-          onArchive={() => activeThread && mail.archive(activeThread.id)}
-          onTrash={() => activeThread && mail.trash(activeThread.id)}
+          onArchive={() => activeThread && handleArchive(activeThread.id)}
+          onTrash={() => activeThread && handleTrash(activeThread.id)}
           onReply={() => activeThread && mail.openCompose(activeThread)}
         />
       )}
@@ -264,8 +302,8 @@ export function MailPage() {
       <MailComposeSheet
         open={mail.composeOpen}
         onOpenChange={mail.setComposeOpen}
-        onSend={mail.sendCompose}
-        sending={mail.syncing}
+        onSend={handleSendCompose}
+        sending={mail.sending}
         replyTo={mail.replyTo}
       />
     </div>

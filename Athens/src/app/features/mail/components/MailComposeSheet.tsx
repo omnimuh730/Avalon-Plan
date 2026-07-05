@@ -23,9 +23,13 @@ export function MailComposeSheet({
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    setValidationError(null);
+    setSendError(null);
     if (replyTo) {
       setTo(replyTo.fromEmail || replyTo.from.replace(/^.*\(([^)]+)\).*$/, "$1") || "");
       setSubject(replyTo.subj.startsWith("Re:") ? replyTo.subj : `Re: ${replyTo.subj}`);
@@ -38,17 +42,36 @@ export function MailComposeSheet({
   }, [open, replyTo]);
 
   const handleSend = async () => {
-    if (!to.trim() || !subject.trim() || sending) return;
-    await onSend(to, subject, body);
-    setTo("");
-    setSubject("");
-    setBody("");
+    if (sending) return;
+    if (!to.trim()) {
+      setValidationError("Recipient (To) is required.");
+      return;
+    }
+    if (!subject.trim()) {
+      setValidationError("Subject is required.");
+      return;
+    }
+    setValidationError(null);
+    setSendError(null);
+    try {
+      await onSend(to, subject, body);
+      setTo("");
+      setSubject("");
+      setBody("");
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Failed to send mail");
+    }
   };
 
   return (
     <SlidePanel open={open} onOpenChange={onOpenChange} width="md">
       <SlidePanelHeader title={replyTo ? "Reply" : "Compose"} onClose={() => onOpenChange(false)} />
       <div className="p-5 space-y-4 flex-1 overflow-y-auto">
+        {(validationError || sendError) && (
+          <div className="px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-sm">
+            {validationError || sendError}
+          </div>
+        )}
         <FormField label="To">
           <AthensInput value={to} onChange={(e) => setTo(e.target.value)} placeholder="recruiter@company.com" />
         </FormField>

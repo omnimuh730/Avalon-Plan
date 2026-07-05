@@ -101,7 +101,6 @@ export async function loadFolderPage(applierName, folder, page, pageSize, { forc
 		await upsertSyncState(applierName, {
 			[`folderTotal_${folder}`]: total,
 			[lastRefreshKey]: new Date(),
-			folderCountsUpdatedAt: new Date(),
 		});
 
 		const uids = messages.map((m) => m.uid);
@@ -148,7 +147,6 @@ async function refreshFolderInBackground(applierName, folder, pageSize) {
 		await upsertSyncState(applierName, {
 			[`folderTotal_${folder}`]: total,
 			[`folderRefreshedAt_${folder}`]: new Date(),
-			folderCountsUpdatedAt: new Date(),
 		});
 	} catch {
 		// Silently ignore — the UI already has cached data

@@ -17,6 +17,7 @@ import {
 	getMessage,
 	messageToThread,
 	updateMessageFlags,
+	upsertSyncState,
 } from '../services/mail/mailStore.js';
 import { mailMessagesCollection } from '../db/mongo.js';
 import {
@@ -340,7 +341,8 @@ export async function getMailFolderCounts(req, res) {
 		const applierName = await requireApplier(req, res);
 		if (!applierName) return;
 
-		const result = await getFolderCounts(applierName);
+		const force = req.query.force === 'true' || req.query.force === '1';
+		const result = await getFolderCounts(applierName, { force });
 		if (!result.ok) {
 			return res.status(500).json({ success: false, error: result.error });
 		}
@@ -466,6 +468,11 @@ export async function patchMailMessage(req, res) {
 		}
 
 		const updated = await updateMessageFlags(applierName, uid, patch, mailbox);
+
+		if (seen !== undefined || folder !== undefined) {
+			await upsertSyncState(applierName, { folderCountsUpdatedAt: null });
+		}
+
 		return res.json({ success: true, thread: messageToThread(updated) });
 	} catch (err) {
 		console.error('PATCH /api/mail/messages/:uid error', err);

@@ -26,8 +26,10 @@ export function validateScrapedJobInput(raw) {
 	const jobDescription = clean(raw.jobDescription ?? raw.job_description ?? raw.description);
 	const jobLink = clean(raw.jobLink ?? raw.job_link ?? raw.applyLink ?? raw.url);
 	const source = clean(raw.source);
+	const sender = clean(raw.sender ?? raw.Sender);
 
 	if (!companyName) return { ok: false, error: "companyName is required" };
+	if (!sender) return { ok: false, error: "sender is required" };
 	if (!jobTitle) return { ok: false, error: "jobTitle is required" };
 	if (!jobDescription) return { ok: false, error: "jobDescription is required" };
 	if (!jobLink) return { ok: false, error: "jobLink is required" };
@@ -39,6 +41,7 @@ export function validateScrapedJobInput(raw) {
 	return {
 		ok: true,
 		job: {
+			sender,
 			companyName,
 			companyIcon,
 			jobTitle,

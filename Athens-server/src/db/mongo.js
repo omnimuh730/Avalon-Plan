@@ -41,6 +41,7 @@ let externalScrapedJobsCollection;
 async function ensureExternalScrapedJobsIndexes() {
 	if (!externalScrapedJobsCollection) return;
 	await externalScrapedJobsCollection.createIndex({ createdAt: -1 });
+	await externalScrapedJobsCollection.createIndex({ sender: 1, createdAt: -1 });
 	await externalScrapedJobsCollection.createIndex({ source: 1, createdAt: -1 });
 	await externalScrapedJobsCollection.createIndex(
 		{ jobLink: 1 },
