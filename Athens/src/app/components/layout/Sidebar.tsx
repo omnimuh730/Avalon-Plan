@@ -66,9 +66,9 @@ export function Sidebar() {
                 >
                   <item.icon className="w-5 h-5 flex-shrink-0" />
                   <span className="flex-1 text-left">{item.label}</span>
-                  {item.badge && (
-                    <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">
-                      {item.badge}
+                  {item.comingSoon && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-primary/15 text-primary text-[10px] font-bold leading-none whitespace-nowrap">
+                      Coming Soon
                     </span>
                   )}
                 </NavLink>

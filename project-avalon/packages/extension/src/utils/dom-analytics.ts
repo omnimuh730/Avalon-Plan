@@ -400,11 +400,15 @@ export function getComboboxInput(el: Element): HTMLInputElement | null {
   return null;
 }
 
+export function isDocumentRoot(el: Element): boolean {
+  return el === document.body || el === document.documentElement;
+}
+
 export function findFileWidgetRoot(fileInput: Element): Element {
   const candidates: Element[] = [];
   let current: Element | null = fileInput.parentElement;
 
-  while (current && current !== document.body) {
+  while (current && !isDocumentRoot(current)) {
     const filesInCurrent = current.querySelectorAll('input[type="file"]');
     if (filesInCurrent.length === 1 && filesInCurrent[0] === fileInput) {
       candidates.push(current);
@@ -428,7 +432,11 @@ export function findFileWidgetRoot(fileInput: Element): Element {
     return candidates.sort((a, b) => visibleText(a).length - visibleText(b).length)[0]!;
   }
 
-  return fileInput.closest('label') ?? fileInput.parentElement ?? fileInput;
+  const label = fileInput.closest('label');
+  if (label) return label;
+  const parent = fileInput.parentElement;
+  if (parent && !isDocumentRoot(parent)) return parent;
+  return fileInput;
 }
 
 export function fileWidgetLabel(fileInput: HTMLInputElement, widgetRoot?: Element): string | null {

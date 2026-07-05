@@ -23,6 +23,8 @@ Action rules by controlType:
   - Use groupContext + option label together (e.g. "What do you want to work on?" → Check Backend/Frontend for a full-stack engineer)
 - radio → Click (select that option), value = N/A
 - button → Click, value = N/A. Primary in-flow navigation buttons (Apply, Apply for, Submit, Continue, Next, Proceed, Start application, Review and submit) MUST use shouldSkip No — they advance to or through the application; never skip them just because text fields are not on this screen yet.
+  - Exception — final form submit (Submit Application, Send application on a filled form): shouldSkip Yes; the executor auto-clicks submit after all fields are filled.
+  - Exception — exit / reverse navigation (back to jobs/listings/search, cancel application, return, close, previous page): shouldSkip Yes; the goal is to complete and submit this application, never leave it.
 - Single-select option groups (radio options, or Yes/No and segmented <button> options that SHARE the same groupContext): these are ONE question split into multiple option fields. You MUST select EXACTLY ONE option per group — shouldSkip No on the chosen option and shouldSkip Yes on every OTHER option in that same group. Never leave all options in a group skipped, and never mark more than one as shouldSkip No.
   - Choose the option that matches the profile (e.g. sponsorship Yes/No from profile.sponsorship).
   - If the profile has no direct answer, still answer when the question is required (asterisk / "required") or clearly expects a choice: pick the most reasonable, low-risk answer for a qualified applicant from the groupContext (e.g. authorized-to-work → Yes; require-sponsorship → No). Do not skip a required question for "no profile data".
@@ -37,9 +39,16 @@ Resume / CV file upload (TOP PRIORITY — MANDATORY):
 - Autofill-from-resume widgets (upload to autofill other fields): shouldSkip Yes — not the application resume field.
 
 Application navigation (MUST click — shouldSkip No):
-- Any button or link whose label clearly starts or continues the application (Apply, Apply for [job title], Submit, Submit application, Continue, Next, Proceed, Start application, Review and submit). This includes job-posting pages that only show an Apply control before name/email fields appear.
+- Any button or link whose label clearly starts or continues the application (Apply, Apply for [job title], Continue, Next, Proceed, Start application, Review and submit). This includes job-posting pages that only show an Apply control before name/email fields appear.
+
+Exit / reverse navigation (MUST skip — shouldSkip Yes):
+- Any button or link that leaves the application or returns to browsing (back to jobs/listings/search results, cancel, close, return, previous page). Never click these — the purpose is to fill and submit this application.
+
+Form submit (auto-handled — shouldSkip Yes):
+- Submit Application / Send application / Finish on the filled application form: action=Click, shouldSkip=Yes. The executor auto-clicks submit after all fields are filled; include in the plan only for visibility.
 
 ShouldSkip Yes when:
+- Exit / reverse navigation that abandons the application (see above)
 - Informational / disclosure / external links (definitions, OFCCP, dol.gov, learn more, company marketing pages off-site)
 - Optional fields with no profile data and no sensible default (only if truly skippable)
 - The NON-chosen options of a single-select group (exactly one option per group stays shouldSkip No)
@@ -157,7 +166,9 @@ export function buildAnalysisUserMessage(
     "Open-ended / essay / textarea questions (e.g. \"describe…\", \"challenge…\", \"why…\"): write a genuine, complete answer from the profile + job description; never skip them.",
     "EVERY text and textarea field is mandatory: action=Typing, shouldSkip=No, with a real composed value — never Click and never skip a text/textarea.",
     "Resume/CV file uploads are mandatory — must be FileUpload with shouldSkip No (top priority).",
-    "Apply / Submit / Continue / Next buttons and links: action=Click, shouldSkip=No — required to reach or advance the application form.",
+    "Apply / Continue / Next buttons and links: action=Click, shouldSkip=No — required to reach or advance the application form.",
+    "Exit / back navigation (back to jobs/listings, cancel, return, close): action=Click, shouldSkip=Yes — never leave the application.",
+    "Submit Application on the filled form: action=Click, shouldSkip=Yes — auto-submit handles it after all fields are filled.",
     "Multi-select checkbox groups: shouldSkip No per option — Check skills that match profile careers/title.",
     "Combobox / location / autocomplete fields: action must be Typing (never SelectOption) — type profile city or filter text; Enter confirms after typing.",
     skippedCount > 0
