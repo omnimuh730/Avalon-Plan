@@ -1,7 +1,15 @@
 import { Sparkles } from "lucide-react";
+import { cn } from "../../../../lib/utils";
 import { ResumeRadarChart } from "../../components/analysis/ResumeRadarChart";
+import {
+  CATEGORY_META,
+  CATEGORY_RADAR_COLORS,
+  categoryRadarData,
+  categoryRadarHeight,
+  groupSkillsByCategory,
+} from "../../lib/skillCategories";
 import type { FullRun } from "./history-types";
-import { resolveRunSkillProfile, skillRadarData } from "./skill-profile-utils";
+import { resolveRunSkillProfile } from "./skill-profile-utils";
 
 type GenerationSkillAnalysisProps = {
   run: FullRun;
@@ -9,7 +17,7 @@ type GenerationSkillAnalysisProps = {
 
 export function GenerationSkillAnalysis({ run }: GenerationSkillAnalysisProps) {
   const skills = resolveRunSkillProfile(run);
-  const radarData = skillRadarData(skills);
+  const grouped = groupSkillsByCategory(skills);
 
   if (!skills.length) {
     return (
@@ -25,16 +33,16 @@ export function GenerationSkillAnalysis({ run }: GenerationSkillAnalysisProps) {
     );
   }
 
-  const avgStrength = skills.reduce((sum, s) => sum + s.strength, 0) / skills.length;
-  const topSkill = [...skills].sort((a, b) => b.strength - a.strength)[0];
+  const avgLevel = skills.reduce((sum, s) => sum + s.level, 0) / skills.length;
+  const topSkill = [...skills].sort((a, b) => b.level - a.level)[0];
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {[
           { label: "Skills tracked", value: skills.length.toLocaleString() },
-          { label: "Avg strength", value: avgStrength.toFixed(1) },
-          { label: "Top skill", value: topSkill?.name ?? "—" },
+          { label: "Avg level", value: avgLevel.toFixed(1) },
+          { label: "Top skill", value: topSkill ? `${topSkill.name} (L${topSkill.level})` : "—" },
         ].map((row) => (
           <div key={row.label} className="rounded-xl border border-border bg-card p-3">
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{row.label}</div>
@@ -45,45 +53,42 @@ export function GenerationSkillAnalysis({ run }: GenerationSkillAnalysisProps) {
         ))}
       </div>
 
-      {radarData.length >= 3 && (
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <h4 className="text-sm font-semibold text-foreground">Skill strength radar</h4>
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-              Top {radarData.length} · 0–10 scale
-            </span>
-          </div>
-          <ResumeRadarChart
-            data={radarData}
-            series={[{ key: "strength", label: "Strength", color: "#6c5ce7" }]}
-            height={320}
-            domain={[0, 100]}
-          />
-        </div>
-      )}
-
-      <div className="rounded-xl border border-border bg-card p-4">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <h4 className="text-sm font-semibold text-foreground">Weighted skills</h4>
-        </div>
-        <ul className="space-y-2 max-h-[360px] overflow-y-auto subtle-scroll pr-1">
-          {[...skills]
-            .sort((a, b) => b.strength - a.strength)
-            .map((s) => (
-              <li key={s.name}>
-                <div className="flex items-center justify-between gap-3 mb-1">
-                  <span className="text-xs font-semibold text-foreground truncate">{s.name}</span>
-                  <span className="text-xs font-mono text-primary shrink-0 tabular-nums">{s.strength.toFixed(1)}</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-primary transition-all"
-                    style={{ width: `${Math.round((s.strength / 10) * 100)}%` }}
-                  />
-                </div>
-              </li>
-            ))}
-        </ul>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {grouped.map(({ category, items }) => {
+          const radarData = categoryRadarData(items);
+          const color = CATEGORY_RADAR_COLORS[category];
+          return (
+            <div key={category} className="rounded-xl border border-border bg-card p-4">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <h4 className="text-sm font-semibold text-foreground">{CATEGORY_META[category].label}</h4>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                  {items.length} skill{items.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <ResumeRadarChart
+                data={radarData}
+                series={[{ key: "strength", label: "Level", color }]}
+                height={categoryRadarHeight(items.length)}
+                compact={items.length > 6}
+                domain={[0, 100]}
+              />
+              <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-border/60">
+                {items.map((skill) => (
+                  <span
+                    key={`${category}-${skill.name}`}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold text-foreground",
+                      CATEGORY_META[category].chip,
+                    )}
+                  >
+                    {skill.name}
+                    <span className="font-mono text-[10px] text-muted-foreground">L{skill.level}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

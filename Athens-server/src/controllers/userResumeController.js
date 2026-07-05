@@ -5,8 +5,21 @@ import {
   bulkCreateUserResumes,
   setPrimaryUserResume,
   deleteUserResume,
+  clearUserResumeAnalysis,
 } from "../services/userResumeService.js";
 import { analyzeResumeSkills } from "../services/resumeSkillAnalysisService.js";
+import { listUserGraphs } from "../services/userKnowledgeGraph/index.js";
+
+function toGraphResponse(doc) {
+  return {
+    applierName: doc.applierName,
+    resumeId: doc.resumeId,
+    resumeName: doc.resumeName,
+    skills: Array.isArray(doc.skills) ? doc.skills : [],
+    edges: Array.isArray(doc.edges) ? doc.edges : [],
+    updatedAt: doc.updatedAt,
+  };
+}
 
 export async function listUserResumesHandler(req, res) {
   try {
@@ -96,6 +109,35 @@ export async function deleteUserResumeHandler(req, res) {
     console.error("DELETE /api/personal/user-resumes/:id error", err);
     const status = /not found/i.test(err.message) ? 404 : 500;
     return res.status(status).json({ success: false, error: err.message });
+  }
+}
+
+export async function clearUserResumeAnalysisHandler(req, res) {
+  try {
+    const ownerName = String(req.body?.ownerName ?? req.query?.ownerName ?? "").trim();
+    if (!ownerName) {
+      return res.status(400).json({ success: false, error: "ownerName is required" });
+    }
+    const resume = await clearUserResumeAnalysis(req.params.id, ownerName);
+    return res.json({ success: true, resume });
+  } catch (err) {
+    console.error("POST /api/personal/user-resumes/:id/clear-analysis error", err);
+    const status = /not found|required|Invalid/i.test(err.message) ? 400 : 500;
+    return res.status(status).json({ success: false, error: err.message });
+  }
+}
+
+export async function listUserGraphsHandler(req, res) {
+  try {
+    const applierName = String(req.query?.applierName ?? "").trim();
+    if (!applierName) {
+      return res.status(400).json({ success: false, error: "applierName is required" });
+    }
+    const docs = await listUserGraphs(applierName);
+    return res.json({ success: true, graphs: docs.map(toGraphResponse) });
+  } catch (err) {
+    console.error("GET /api/user-graph error", err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 }
 

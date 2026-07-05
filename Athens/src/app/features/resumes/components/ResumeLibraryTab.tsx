@@ -1,9 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2, Sparkles, Eye } from "lucide-react";
+import { Link } from "react-router";
+import { Filter, Upload, Download, Star, Files, BarChart3, Trash2, Loader2, Sparkles, Eye, Eraser } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
+import { resolveProfileDefaultModel } from "../../agents/avalon/ai/model";
+import { PATHS } from "../../../config/routes";
 import { SearchField } from "../../../components/shared/SearchField";
 import { Badge, Pill } from "../../../components/ui";
+import { cn } from "../../../lib/utils";
 import {
   bulkUploadUserResumes,
   deleteUserResume,
@@ -13,6 +17,7 @@ import {
   setPrimaryUserResume,
   uploadUserResume,
   analyzeUserResume,
+  clearUserResumeAnalysis,
 } from "../../../services/resumeApi";
 import type { UserResumeSummary } from "../../../types/resume";
 import {
@@ -26,7 +31,14 @@ import { AthensInput, FormField } from "../../../components/forms";
 import { downloadBlob } from "../lib/buildResumeModel";
 import { ResumePreviewDialog } from "./ResumePreviewDialog";
 import { GeneratedResumesSection } from "./GeneratedResumesSection";
+import { useResumeSelection } from "../hooks/useResumeSelection";
 import type { FullRun } from "../generator/history/history-types";
+
+type AnalyzeProgress = {
+  current: number;
+  total: number;
+  failed: { fileName: string; error: string }[];
+};
 
 type ResumeLibraryTabProps = {
   onOpenAnalysis?: () => void;
@@ -49,7 +61,8 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
   const [techStackInput, setTechStackInput] = useState("");
   const [bulkPending, setBulkPending] = useState<PendingFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+  const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeProgress | null>(null);
+  const [clearingAnalysis, setClearingAnalysis] = useState(false);
   const [previewResume, setPreviewResume] = useState<UserResumeSummary | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bulkRef = useRef<HTMLInputElement>(null);
@@ -87,6 +100,23 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
     const matchStack = stackFilter === "all" || r.techStack === stackFilter;
     return matchQ && matchStack;
   });
+
+  const selectableFiltered = useMemo(
+    () => filtered.filter((r) => r.source !== "generated"),
+    [filtered],
+  );
+
+  const { selectedIds, selectedResumes, selectResume, selectAll, clearSelection } =
+    useResumeSelection(selectableFiltered);
+
+  const profile = applier?.autoBidProfile as Record<string, unknown> | undefined;
+  const defaultModel = resolveProfileDefaultModel(profile);
+  const hasLlmKey = Boolean(profile?.openaiApiKey || profile?.deepseekApiKey);
+  const allFilteredSelected =
+    selectableFiltered.length > 0 && selectableFiltered.every((r) => selectedIds.has(r.id));
+  const someFilteredSelected = selectableFiltered.some((r) => selectedIds.has(r.id));
+  const analyzing = analyzeProgress != null;
+  const selectedAnalyzedCount = selectedResumes.filter((r) => r.analyzed).length;
 
   const handleSingleFilePick = (files: FileList | null) => {
     if (!files?.[0]) return;
@@ -182,27 +212,82 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
     await refresh();
   };
 
-  const handleAnalyze = async (resume: UserResumeSummary) => {
-    if (!ownerName) return;
-    if (resume.source === "generated") {
-      setError("Generated resumes already have skills extracted from the generation pipeline.");
+  const handleBulkAnalyze = async () => {
+    if (!ownerName || !selectedResumes.length || analyzing) return;
+
+    const toAnalyze = selectedResumes.filter((r) => r.source !== "generated");
+    if (!toAnalyze.length) {
+      setError("Generated resumes are analyzed automatically.");
       return;
     }
-    if (resume.analyzed) {
+
+    const alreadyAnalyzed = toAnalyze.filter((r) => r.analyzed);
+    if (alreadyAnalyzed.length) {
       const reanalyze = confirm(
-        `"${resume.fileName}" is already analyzed. Re-analyze with AI? This will replace skill scores.`,
+        `${alreadyAnalyzed.length} selected resume(s) are already analyzed. Re-analyze with AI? This will replace skill scores.`,
       );
       if (!reanalyze) return;
     }
-    setAnalyzingId(resume.id);
+
     setError(null);
-    try {
-      await analyzeUserResume(ownerName, resume.id, { force: resume.analyzed });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
-    } finally {
-      setAnalyzingId(null);
+    const failed: { fileName: string; error: string }[] = [];
+    setAnalyzeProgress({ current: 0, total: toAnalyze.length, failed });
+
+    for (let i = 0; i < toAnalyze.length; i++) {
+      const resume = toAnalyze[i];
+      setAnalyzeProgress({ current: i + 1, total: toAnalyze.length, failed: [...failed] });
+      try {
+        await analyzeUserResume(ownerName, resume.id, { force: resume.analyzed });
+      } catch (err) {
+        failed.push({
+          fileName: resume.fileName,
+          error: err instanceof Error ? err.message : "Analysis failed",
+        });
+        setAnalyzeProgress({ current: i + 1, total: toAnalyze.length, failed: [...failed] });
+      }
+    }
+
+    setAnalyzeProgress(null);
+    await refresh();
+    clearSelection();
+
+    if (failed.length) {
+      setError(`${failed.length} of ${toAnalyze.length} resume(s) failed to analyze.`);
+    }
+  };
+
+  const handleBulkClearAnalysis = async () => {
+    if (!ownerName || clearingAnalysis || analyzing) return;
+
+    const toClear = selectedResumes.filter((r) => r.analyzed);
+    if (!toClear.length) return;
+
+    const confirmed = confirm(
+      `Clear analysis for ${toClear.length} selected resume(s)? Skill data will be removed but the files stay in your library.`,
+    );
+    if (!confirmed) return;
+
+    setError(null);
+    setClearingAnalysis(true);
+    const failed: { fileName: string; error: string }[] = [];
+
+    for (const resume of toClear) {
+      try {
+        await clearUserResumeAnalysis(ownerName, resume.id);
+      } catch (err) {
+        failed.push({
+          fileName: resume.fileName,
+          error: err instanceof Error ? err.message : "Failed to clear analysis",
+        });
+      }
+    }
+
+    setClearingAnalysis(false);
+    await refresh();
+    clearSelection();
+
+    if (failed.length) {
+      setError(`${failed.length} of ${toClear.length} resume(s) failed to clear analysis.`);
     }
   };
 
@@ -278,6 +363,42 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
         >
           <Upload className="w-4 h-4" />Upload Resume
         </button>
+        <div className="flex flex-col items-start gap-0.5">
+          <button
+            type="button"
+            disabled={!hasLlmKey || selectedIds.size === 0 || analyzing || uploading}
+            onClick={() => void handleBulkAnalyze()}
+            className="flex items-center gap-2 bg-secondary border border-primary/30 text-primary px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/5 min-h-10 disabled:opacity-50"
+          >
+            {analyzing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Sparkles className="w-4 h-4" />
+            )}
+            Analyze selected ({selectedIds.size})
+          </button>
+          {hasLlmKey && defaultModel ? (
+            <span className="text-[10px] text-muted-foreground px-1">Model: {defaultModel}</span>
+          ) : (
+            <Link to={`${PATHS.settings}/profile`} className="text-[10px] text-primary hover:underline px-1">
+              Add API key in Settings → Profile
+            </Link>
+          )}
+        </div>
+        <button
+          type="button"
+          disabled={selectedAnalyzedCount === 0 || clearingAnalysis || analyzing || uploading}
+          onClick={() => void handleBulkClearAnalysis()}
+          className="flex items-center gap-2 bg-secondary border border-border text-muted-foreground px-4 py-2.5 rounded-xl text-sm font-semibold hover:text-foreground min-h-10 disabled:opacity-50"
+          title="Remove skill analysis only — keeps the resume file"
+        >
+          {clearingAnalysis ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Eraser className="w-4 h-4" />
+          )}
+          Clear analysis ({selectedAnalyzedCount})
+        </button>
         {onOpenAnalysis && (
           <button type="button" onClick={onOpenAnalysis} className="flex items-center gap-2 text-sm font-bold text-primary hover:underline">
             <BarChart3 className="w-4 h-4" />Analysis
@@ -285,6 +406,66 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
         )}
         <span className="text-sm text-muted-foreground ml-auto">{filtered.length} files</span>
       </div>
+
+      {someFilteredSelected && (
+        <div className="flex items-center gap-3 mb-4 py-2 px-3 rounded-xl border border-border/60 bg-secondary/20 text-sm flex-wrap">
+          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              ref={(el) => {
+                if (el) el.indeterminate = someFilteredSelected && !allFilteredSelected;
+              }}
+              onChange={() =>
+                selectAll(
+                  selectableFiltered.map((r) => r.id),
+                  allFilteredSelected,
+                )
+              }
+              className="size-3.5 rounded border-border text-primary focus:ring-primary/30"
+            />
+            <span className="text-xs text-muted-foreground">
+              {selectedIds.size} selected · click cards to toggle · shift-click for range
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="text-xs font-semibold text-muted-foreground hover:text-foreground"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {analyzeProgress && (
+        <div className="mb-4 rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-2 mb-2 text-sm">
+            <span className="font-semibold text-foreground flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              Analyzing resumes…
+            </span>
+            <span className="text-muted-foreground tabular-nums">
+              {analyzeProgress.current}/{analyzeProgress.total}
+            </span>
+          </div>
+          <div className="h-2 rounded-full bg-secondary overflow-hidden">
+            <div
+              className="h-full rounded-full bg-primary transition-all"
+              style={{ width: `${(analyzeProgress.current / analyzeProgress.total) * 100}%` }}
+            />
+          </div>
+          {analyzeProgress.failed.length > 0 && (
+            <ul className="mt-2 text-xs text-destructive space-y-0.5">
+              {analyzeProgress.failed.map((f) => (
+                <li key={f.fileName}>
+                  {f.fileName}: {f.error}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {error && <p className="text-sm text-destructive mb-4">{error}</p>}
 
@@ -299,13 +480,46 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {filtered.map((r) => (
-            <div key={r.id} className="bg-card border border-border rounded-xl p-5 hover:shadow-md transition-all group shadow-sm">
+          {filtered.map((r) => {
+            const selectable = r.source !== "generated";
+            const selected = selectable && selectedIds.has(r.id);
+            return (
+            <div
+              key={r.id}
+              role={selectable ? "button" : undefined}
+              tabIndex={selectable ? 0 : undefined}
+              onClick={
+                selectable
+                  ? (e) => {
+                      if ((e.target as HTMLElement).closest("button")) return;
+                      selectResume(r.id, e.shiftKey);
+                    }
+                  : undefined
+              }
+              onKeyDown={
+                selectable
+                  ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        selectResume(r.id, e.shiftKey);
+                      }
+                    }
+                  : undefined
+              }
+              className={cn(
+                "bg-card border rounded-xl p-5 hover:shadow-md transition-all group shadow-sm",
+                selected
+                  ? "border-primary ring-2 ring-primary/30 bg-primary/5"
+                  : "border-border",
+                selectable && "cursor-pointer",
+              )}
+            >
               <div className="flex items-start justify-between mb-4">
                 <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
                   <Star className="w-6 h-6 text-primary" />
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
+                  {selected && <Badge v="violet">Selected</Badge>}
                   {r.isPrimary && <Badge v="violet">Primary</Badge>}
                   {r.source === "generated" ? (
                     <Badge v="violet">Generated</Badge>
@@ -322,37 +536,55 @@ export function ResumeLibraryTab({ onOpenAnalysis, onLoadIntoEditor }: ResumeLib
                 {(r.sizeBytes / 1024).toFixed(0)} KB · {formatDistanceToNow(new Date(r.uploadedAt), { addSuffix: true })}
                 {r.analyzed && r.skillCount != null ? ` · ${r.skillCount} skills` : ""}
               </p>
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-end gap-1">
                 <button
                   type="button"
-                  disabled={analyzingId === r.id || r.source === "generated"}
-                  onClick={() => void handleAnalyze(r)}
-                  className="flex items-center gap-1.5 text-xs font-bold text-primary hover:underline disabled:opacity-50"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPreviewResume(r);
+                  }}
+                  className="icon-btn w-9 h-9 text-muted-foreground hover:text-primary"
+                  title="Preview"
                 >
-                  {analyzingId === r.id ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-3.5 h-3.5" />
-                  )}
-                  {r.source === "generated" ? "Auto-analyzed" : r.analyzed ? "Re-analyze" : "Analyze"}
-                </button>
-                <div className="flex items-center gap-1">
-                <button type="button" onClick={() => setPreviewResume(r)} className="icon-btn w-9 h-9 text-muted-foreground hover:text-primary" title="Preview">
                   <Eye className="w-4 h-4" />
                 </button>
-                <button type="button" onClick={() => void handleDownload(r.id, r.fileName)} className="icon-btn w-9 h-9 text-muted-foreground hover:text-foreground" title="Download">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDownload(r.id, r.fileName);
+                  }}
+                  className="icon-btn w-9 h-9 text-muted-foreground hover:text-foreground"
+                  title="Download"
+                >
                   <Download className="w-4 h-4" />
                 </button>
-                <button type="button" onClick={() => void handleSetPrimary(r.id)} className="icon-btn w-9 h-9 text-muted-foreground hover:text-amber-500" title="Set primary">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleSetPrimary(r.id);
+                  }}
+                  className="icon-btn w-9 h-9 text-muted-foreground hover:text-amber-500"
+                  title="Set primary"
+                >
                   <Star className="w-4 h-4" />
                 </button>
-                <button type="button" onClick={() => void handleDelete(r.id)} className="icon-btn w-9 h-9 text-muted-foreground hover:text-destructive" title="Delete">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDelete(r.id);
+                  }}
+                  className="icon-btn w-9 h-9 text-muted-foreground hover:text-destructive"
+                  title="Delete"
+                >
                   <Trash2 className="w-4 h-4" />
                 </button>
-                </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

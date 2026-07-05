@@ -4,6 +4,11 @@ import {
 	personalInfoCollection,
 	userResumesCollection,
 } from '../../db/mongo.js';
+import {
+	normalizeResumeSkillEntry,
+	compareResumeSkills,
+	legacyStrengthToLevel,
+} from '../resumeSkillEntry.js';
 
 export const PROFILE_GRAPH_ID = '__profile__';
 
@@ -11,26 +16,37 @@ function normalizeSkillInputs(skills = []) {
 	const out = [];
 	const seen = new Set();
 	for (const item of skills) {
-		let name;
-		let strength;
+		let entry;
 		if (typeof item === 'string') {
-			name = item.trim();
-			strength = 8.5;
+			entry = normalizeResumeSkillEntry({ name: item.trim(), category: 'hard', level: 4 });
 		} else if (item && typeof item === 'object') {
-			name = String(item.name || item.skill || '').trim();
-			strength = Number(item.strength);
-			if (!Number.isFinite(strength)) strength = 8.5;
-			strength = Math.max(0, Math.min(10, strength));
+			entry = normalizeResumeSkillEntry(item);
 		} else {
 			continue;
 		}
-		if (!name) continue;
-		const key = toCanonical(name);
+		if (!entry) continue;
+		const key = toCanonical(entry.name);
 		if (!key || seen.has(key)) continue;
 		seen.add(key);
-		out.push({ name, strength });
+		out.push(entry);
 	}
 	return out.slice(0, 200);
+}
+
+function graphSkillFromEntry({ name: raw, category, level }) {
+	const canonical = toCanonical(raw);
+	const legacyStrength = level * 2;
+	return {
+		surfaceForm: raw,
+		name: raw,
+		normalizedKey: canonical,
+		canonicalId: canonical,
+		category,
+		level,
+		strength: legacyStrength,
+		proficiency: level / 5,
+		sources: ['resume'],
+	};
 }
 
 /**
@@ -49,18 +65,7 @@ export async function buildUserGraphFromResume({
 	if (!name) throw new Error('applierName is required');
 
 	const normalizedInputs = normalizeSkillInputs(skills);
-	const resolvedSkills = normalizedInputs.map(({ name: raw, strength }) => {
-		const canonical = toCanonical(raw);
-		return {
-			surfaceForm: raw,
-			name: raw,
-			normalizedKey: canonical,
-			canonicalId: canonical,
-			strength,
-			proficiency: strength / 10,
-			sources: ['resume'],
-		};
-	});
+	const resolvedSkills = normalizedInputs.map(graphSkillFromEntry);
 
 	const now = new Date().toISOString();
 	const doc = {
@@ -125,24 +130,21 @@ export async function rebuildProfileGraph(applierName) {
 		.find({ ownerName: name, analyzed: true })
 		.toArray();
 
-	const strengthByKey = new Map();
+	const skillByKey = new Map();
 	for (const resume of analyzedResumes) {
-		for (const entry of resume.skillProfile || []) {
-			const skillName = String(entry.name || '').trim();
-			let strength = Number(entry.strength);
-			if (!Number.isFinite(strength)) strength = 5;
-			strength = Math.max(0, Math.min(10, strength));
-			if (!skillName || strength <= 0) continue;
-			const key = toCanonical(skillName);
+		for (const raw of resume.skillProfile || []) {
+			const entry = normalizeResumeSkillEntry(raw);
+			if (!entry) continue;
+			const key = toCanonical(entry.name);
 			if (!key) continue;
-			const prev = strengthByKey.get(key);
-			if (!prev || strength > prev.strength) {
-				strengthByKey.set(key, { name: skillName, strength });
+			const prev = skillByKey.get(key);
+			if (!prev || entry.level > prev.level) {
+				skillByKey.set(key, entry);
 			}
 		}
 	}
 
-	const aggregatedSkills = [...strengthByKey.values()];
+	const aggregatedSkills = [...skillByKey.values()].sort(compareResumeSkills);
 	if (!aggregatedSkills.length) {
 		await userKnowledgeGraphsCollection.deleteOne({
 			applierName: name,
@@ -169,3 +171,5 @@ export function extractSeedCanonicalIds(graphs = []) {
 	}
 	return [...ids];
 }
+
+export { legacyStrengthToLevel };

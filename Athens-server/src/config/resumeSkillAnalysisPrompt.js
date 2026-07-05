@@ -1,53 +1,71 @@
 export const RESUME_SKILL_ANALYSIS_PROMPT = `You are an expert technical recruiter analyzing a candidate resume.
 
-Extract skills from the resume and assign each a strength score from 0 to 10 reflecting how central that skill is to THIS candidate's profile.
+Extract a **curated shortlist** of skills that truly define this candidate. For each skill assign a **category** and **proficiency level (1–5)**.
+
+Your output must be small enough to plot every skill on a radar chart per category — quality over quantity.
 
 ---
 
-## Mandatory rules
+## Categories (choose exactly one per skill)
 
-1. **Skills section is exhaustive.** When the resume has a "Skills" section (often grouped by category like Languages, Backend, Cloud), you MUST include **every technical tool, language, framework, platform, and database** listed there. Do not skip items to shorten the list. Score them even if they only appear in Skills (use 2–5) vs heavily in experience (use 7–10).
-
-2. **Experience and summary.** Also include technologies clearly used in job bullets and the summary, even if not repeated in Skills.
-
-3. **Do not cap the list at 20.** Long Skills sections may produce 40–80 entries. That is expected.
-
-4. **Primary languages must appear.** If Golang/Go, Ruby, Python, Java, etc. appear in summary or multiple jobs, include them with high scores (typically 8–10 for the resume's main stack).
-
-5. **Use standard skill names:** "Golang" (preferred over "Go"), "Ruby on Rails", "PostgreSQL", "Kubernetes", "OpenTelemetry", etc.
-
-6. **Soft skills** (Communication, Ownership, Collaboration) may be omitted unless the Skills section is otherwise sparse.
-
-7. **Never invent** skills with no evidence in the resume text.
-
-8. **Never include** job titles, employer names, dates, locations, bullet sentences, or generic section labels as skills. Only technical/professional competencies (languages, frameworks, cloud services, tools, methodologies).
+- **hard** — languages, frameworks, libraries, databases (e.g. C#, .NET, Vue.js, PostgreSQL).
+- **devops** — cloud, infra, CI/CD, containers, observability (e.g. Azure, Docker, Kubernetes).
+- **tools** — platforms, testing tools, methodologies (e.g. Cypress, REST APIs, Agile).
+- **domain** — industry / business / architecture knowledge (e.g. Fintech, Microservices).
+- **soft** — interpersonal skills (e.g. Mentoring, Communication, Leadership).
 
 ---
 
-## Scoring scale
+## Proficiency level (1–5)
 
-- **10** = defining skill for this candidate (summary + repeated senior-level use)
-- **8–9** = core day-to-day stack with strong bullet evidence
-- **6–7** = important but secondary or moderate use
-- **3–5** = listed in Skills section or mentioned briefly
-- **1–2** = weak / passing mention only
-- **0** = omit (non-technical fluff only)
+- **5** — defining skill: summary + repeated senior use across roles
+- **4** — core day-to-day with strong bullet evidence
+- **3** — clearly used in at least one role or prominent in Skills section
+- **2** — secondary; omit unless it helps fill a sparse category
+- **1** — omit (do not output level 1)
 
-Use a differentiated curve: a few skills at 9–10, several at 6–8, many Skills-section-only items at 3–5.
+---
+
+## Strict output limits (do not exceed)
+
+| Category | Max skills |
+|----------|------------|
+| hard     | 10         |
+| devops   | 6          |
+| tools    | 6          |
+| domain   | 5          |
+| soft     | 4          |
+
+**Total: 15–25 skills.** If the resume lists 50+ technologies, pick only what recruiters would care about for matching.
+
+---
+
+## Selection rules
+
+1. **Consolidate duplicates** — one entry per technology (Vue 3 + Vue.js → Vue.js; .NET 6 + .NET 8 → .NET).
+2. **Prioritize evidence** — summary, job titles, and repeated bullets beat a long Skills-section dump.
+3. **Skip filler** — generic patterns (Dependency Injection, Form Validation, API Validation), minor libraries, and buzzwords with no substance.
+4. **Include primary stack** — main language/framework/cloud at level 4–5.
+5. **Include soft skills** only when clearly evidenced (max 3–4).
+6. **Never invent** skills absent from the resume.
+7. **Never include** job titles, employers, dates, or section labels.
 
 ---
 
 ## Output rules
 
 - Output **ONLY** valid JSON — no markdown, no commentary.
-- Sort by strength descending.
-- strength must be a number (integer or decimal) from 0.1 to 10.
+- Sort by level descending, then name.
+- \`level\` integer 2–5 only.
+- \`category\` one of: hard, devops, tools, domain, soft.
 
 Output format:
 
 [
-  { "name": "Golang", "strength": 9.5 },
-  { "name": "Ruby on Rails", "strength": 9.0 },
-  { "name": "Gin", "strength": 3.5 }
+  { "name": "C#", "category": "hard", "level": 5 },
+  { "name": "Vue.js", "category": "hard", "level": 5 },
+  { "name": "Azure", "category": "devops", "level": 4 },
+  { "name": "Cypress", "category": "tools", "level": 4 },
+  { "name": "Communication", "category": "soft", "level": 4 }
 ]
 `;

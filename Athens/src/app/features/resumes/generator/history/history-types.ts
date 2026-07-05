@@ -19,7 +19,7 @@ export type FullRun = RunSummary & {
   sections?: Record<string, unknown>;
   identity?: Identity | null;
   config?: Record<string, unknown>;
-  skillProfile?: { name: string; strength: number }[];
+  skillProfile?: { name: string; category?: string; level?: number; strength?: number }[];
   techStack?: string;
   analyzed?: boolean;
   analyzedAt?: string;

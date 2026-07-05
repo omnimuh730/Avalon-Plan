@@ -6,6 +6,11 @@ import { useApplier } from "@/context/applier-context";
 import { DEFAULT_PARAMS } from "../lib/activation";
 import type { GraphRenderData } from "../lib/graphAdapter";
 import type { UseSkillGraphResult } from "./useSkillGraph";
+import {
+  normalizeSkillCategory,
+  resolveSkillLevel,
+  type CategorizedSkill,
+} from "../../resumes/lib/skillCategories";
 
 export interface ProfileOption {
   id: string;
@@ -29,8 +34,9 @@ function graphProfileId(g: UserKnowledgeGraph): string {
 function buildSkillStrengthList(
   active: Set<string>,
   profiles: ProfileOption[],
-): { id: string; label: string; strength: number }[] {
+): { id: string; label: string; strength: number; category: CategorizedSkill["category"]; level: number }[] {
   const strengthByNodeId: Record<string, number> = {};
+  const metaByNodeId: Record<string, { label: string; category: CategorizedSkill["category"]; level: number }> = {};
 
   for (const profile of profiles) {
     if (!active.has(profile.id)) continue;
@@ -39,36 +45,40 @@ function buildSkillStrengthList(
         s.canonicalId ||
         (s.normalizedKey ? `local:${s.normalizedKey}` : null);
       if (!id) continue;
+      const level =
+        typeof s.level === "number"
+          ? Math.max(1, Math.min(5, Math.round(s.level)))
+          : resolveSkillLevel({ strength: s.strength });
+      const category = normalizeSkillCategory(s.category);
       const strength =
-        typeof s.strength === "number"
+        typeof s.strength === "number" && s.strength <= 10
           ? s.strength
-          : typeof s.proficiency === "number"
-            ? s.proficiency * 10
-            : undefined;
-      if (strength == null) continue;
+          : level * 2;
       const prev = strengthByNodeId[id];
-      if (prev == null || strength > prev) {
+      if (prev == null || level > (metaByNodeId[id]?.level ?? 0)) {
         strengthByNodeId[id] = strength;
+        metaByNodeId[id] = {
+          label: s.surfaceForm ?? id.replace(/^local:/, ""),
+          category,
+          level,
+        };
       }
     }
   }
 
-  const skillStrengthList: { id: string; label: string; strength: number }[] = [];
+  const skillStrengthList: { id: string; label: string; strength: number; category: CategorizedSkill["category"]; level: number }[] = [];
   for (const [id, strength] of Object.entries(strengthByNodeId)) {
-    const fromProfile = profiles
-      .flatMap((p) => p.graph.skills)
-      .find(
-        (s) =>
-          s.canonicalId === id ||
-          (s.normalizedKey && `local:${s.normalizedKey}` === id),
-      );
+    const meta = metaByNodeId[id];
+    if (!meta) continue;
     skillStrengthList.push({
       id,
-      label: fromProfile?.surfaceForm ?? id.replace(/^local:/, ""),
+      label: meta.label,
       strength,
+      category: meta.category,
+      level: meta.level,
     });
   }
-  skillStrengthList.sort((a, b) => b.strength - a.strength);
+  skillStrengthList.sort((a, b) => b.level - a.level || a.label.localeCompare(b.label));
   return skillStrengthList;
 }
 

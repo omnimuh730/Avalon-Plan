@@ -129,7 +129,10 @@ export interface RefinementStep {
 
 export interface ResumeSkillEntry {
   name: string;
-  strength: number;
+  category: "hard" | "soft" | "devops" | "tools" | "domain";
+  level: number;
+  /** @deprecated legacy 0.1–10 scale from older analyses */
+  strength?: number;
 }
 
 export interface UserResumeSummary {

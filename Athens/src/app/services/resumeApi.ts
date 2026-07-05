@@ -126,6 +126,21 @@ export async function analyzeUserResume(
   return data;
 }
 
+export async function clearUserResumeAnalysis(
+  ownerName: string,
+  resumeId: string,
+): Promise<UserResumeSummary> {
+  const data = await apiFetch<{ resume: UserResumeSummary }>(
+    `/personal/user-resumes/${encodeURIComponent(resumeId)}/clear-analysis`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ownerName }),
+    },
+  );
+  return data.resume;
+}
+
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

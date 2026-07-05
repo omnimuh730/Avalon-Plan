@@ -2,6 +2,7 @@ import { ObjectId, GridFSBucket } from "mongodb";
 import { userResumesCollection, userKnowledgeGraphsCollection } from "../db/mongo.js";
 import { rebuildProfileGraph } from "./userKnowledgeGraph/index.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
+import { removeResumeEmbedding } from "./embeddings/embeddingIngest.js";
 
 const INLINE_MAX_BYTES = 8 * 1024 * 1024; // 8MB
 
@@ -296,6 +297,57 @@ export async function deleteUserResume(id, ownerName) {
   }
 
   return { deleted: true, id: String(objectId) };
+}
+
+export async function clearUserResumeAnalysis(id, ownerName) {
+  if (!userResumesCollection) throw new Error("Database not ready");
+  const name = cleanString(ownerName);
+  if (!name) throw new Error("ownerName is required");
+
+  let objectId;
+  try {
+    objectId = new ObjectId(id);
+  } catch {
+    throw new Error("Invalid resume id");
+  }
+
+  const doc = await userResumesCollection.findOne({ _id: objectId, ownerName: name });
+  if (!doc) throw new Error("Resume not found");
+
+  const now = new Date().toISOString();
+  await userResumesCollection.updateOne(
+    { _id: objectId },
+    {
+      $set: {
+        analyzed: false,
+        analyzedAt: null,
+        skillProfile: [],
+        analysisError: null,
+        updatedAt: now,
+      },
+      $unset: { embedding: "" },
+    },
+  );
+
+  if (userKnowledgeGraphsCollection) {
+    await userKnowledgeGraphsCollection.deleteOne({
+      applierName: name,
+      resumeId: String(objectId),
+    });
+    await rebuildProfileGraph(name);
+  }
+
+  void removeResumeEmbedding(String(objectId)).catch(() => {});
+  invalidateRecommendationCache(name);
+
+  return toSummary({
+    ...doc,
+    analyzed: false,
+    analyzedAt: null,
+    skillProfile: [],
+    analysisError: null,
+    updatedAt: now,
+  });
 }
 
 export async function listUserResumesForOwner(ownerName) {

@@ -1,4 +1,12 @@
 import { toCanonical } from "./skillNormalize.js";
+import {
+	normalizeResumeSkillEntry,
+	compareResumeSkills,
+	capResumeSkillProfile,
+	normalizeSkillCategory,
+	normalizeSkillLevel,
+	legacyStrengthToLevel,
+} from "./resumeSkillEntry.js";
 
 const SKILL_ALIASES = [
 	["go", "golang"],
@@ -26,12 +34,12 @@ function applyAliasMerges(map) {
 		const canon = map.get(canonKey);
 
 		if (alias && canon) {
-			if (alias.strength > canon.strength) {
-				map.set(canonKey, { name: canonicalName, strength: alias.strength });
+			if (alias.level > canon.level) {
+				map.set(canonKey, { ...alias, name: canonicalName });
 			}
 			map.delete(aliasKey);
 		} else if (alias && !canon) {
-			map.set(canonKey, { name: canonicalName, strength: alias.strength });
+			map.set(canonKey, { ...alias, name: canonicalName });
 			map.delete(aliasKey);
 		}
 	}
@@ -43,22 +51,19 @@ function parseSkillArray(parsed) {
 	const out = [];
 	const seen = new Set();
 	for (const item of parsed) {
-		const name = String(item?.name ?? item?.skill ?? "").trim();
-		if (!name) continue;
-		const key = skillKey(name);
+		const entry = normalizeResumeSkillEntry(item);
+		if (!entry) continue;
+		const key = skillKey(entry.name);
 		if (seen.has(key)) continue;
 		seen.add(key);
-		let strength = Number(item?.strength ?? item?.score ?? 0);
-		if (!Number.isFinite(strength)) strength = 5;
-		strength = Math.max(0.1, Math.min(10, strength));
-		out.push({ name, strength });
+		out.push(entry);
 	}
 
 	if (!out.length) throw new Error("LLM returned no usable skills");
-	return out;
+	return out.sort(compareResumeSkills);
 }
 
-/** Parse LLM JSON array of { name, strength } entries (uploaded resume analysis). */
+/** Parse LLM JSON array of { name, category, level } entries (uploaded resume analysis). */
 export function parseSkillProfileJson(content) {
 	const raw = String(content || "").trim();
 	const jsonMatch = raw.match(/\[[\s\S]*\]/);
@@ -114,7 +119,7 @@ export function sanitizeTechStackLabel(label) {
 
 /** Build a short label from top weighted skills when LLM omits techStack. */
 export function fallbackTechStackLabel(skillProfile) {
-	const top = [...(skillProfile || [])].sort((a, b) => b.strength - a.strength);
+	const top = [...(skillProfile || [])].sort(compareResumeSkills);
 	const names = top
 		.map((s) => cleanString(s.name))
 		.filter((n) => n && !GENERIC_STACK_RE.test(n))
@@ -130,8 +135,9 @@ export function matchCatalogTechStack(skillProfile, catalog) {
 	const weights = new Map();
 	for (const s of skillProfile || []) {
 		const key = skillKey(s.name);
+		const score = Number(s.level) || legacyStrengthToLevel(s.strength);
 		const prev = weights.get(key) ?? 0;
-		weights.set(key, Math.max(prev, Number(s.strength) || 0));
+		weights.set(key, Math.max(prev, score * 2));
 	}
 	if (!weights.size) return null;
 
@@ -173,17 +179,16 @@ export function resolveTechStackLabel({ llmLabel, skillProfile, catalog, jobDesc
 export function finalizeLlmSkillProfile(llmSkills) {
 	const map = new Map();
 	for (const item of llmSkills || []) {
-		const name = String(item?.name ?? "").trim();
-		if (!name) continue;
-		let strength = Number(item?.strength ?? 0);
-		if (!Number.isFinite(strength)) strength = 5;
-		strength = Math.max(0.1, Math.min(10, strength));
-		const key = skillKey(name);
+		const entry = normalizeResumeSkillEntry(item);
+		if (!entry) continue;
+		const key = skillKey(entry.name);
 		const prev = map.get(key);
-		if (!prev || strength > prev.strength) {
-			map.set(key, { name, strength });
+		if (!prev || entry.level > prev.level) {
+			map.set(key, entry);
 		}
 	}
 	applyAliasMerges(map);
-	return [...map.values()].sort((a, b) => b.strength - a.strength).slice(0, 100);
+	return capResumeSkillProfile([...map.values()].sort(compareResumeSkills));
 }
+
+export { normalizeSkillCategory, normalizeSkillLevel, legacyStrengthToLevel };

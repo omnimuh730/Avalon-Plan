@@ -48,6 +48,8 @@ import {
 	setPrimaryUserResumeHandler,
 	deleteUserResumeHandler,
 	analyzeUserResumeHandler,
+	listUserGraphsHandler,
+	clearUserResumeAnalysisHandler,
 } from "../controllers/userResumeController.js";
 import { analyzeResumeMatch } from "../controllers/resumeAnalysisController.js";
 import { listChromeProfiles, importChromeSession, chromeProfileAvatar } from "../controllers/chromeProfilesController.js";
@@ -92,12 +94,15 @@ router.post('/personal/llm-key-check', checkLlmKey);
 router.post('/personal/resume-pdf', renderResumePdf);
 router.post('/personal/resume-docx', renderResumeDocx);
 
+router.get('/user-graph', listUserGraphsHandler);
+
 router.get('/personal/user-resumes', listUserResumesHandler);
 router.get('/personal/user-resumes/:id', getUserResumeHandler);
 router.post('/personal/user-resumes', createUserResumeHandler);
 router.post('/personal/user-resumes/bulk', bulkCreateUserResumesHandler);
 router.put('/personal/user-resumes/:id/primary', setPrimaryUserResumeHandler);
 router.post('/personal/user-resumes/:id/analyze', analyzeUserResumeHandler);
+router.post('/personal/user-resumes/:id/clear-analysis', clearUserResumeAnalysisHandler);
 router.delete('/personal/user-resumes/:id', deleteUserResumeHandler);
 router.post('/personal/resume-analysis', analyzeResumeMatch);
 router.get('/personal/chrome-profiles', listChromeProfiles);
