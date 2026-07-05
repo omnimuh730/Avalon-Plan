@@ -36,6 +36,23 @@
     border-radius: 999px;
   }
 
+  .scroll-x-only {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
+  }
+
+  .scroll-x-only::-webkit-scrollbar {
+    height: 6px;
+    width: 0;
+  }
+
+  .scroll-x-only::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 999px;
+  }
+
   .dot-grid {
     background-image: radial-gradient(circle, rgba(0, 0, 0, 0.08) 1px, transparent 1px);
     background-size: 20px 20px;

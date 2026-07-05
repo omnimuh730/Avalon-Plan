@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { LayoutGrid, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { removeJobs } from "../../api/jobs";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
@@ -11,14 +11,14 @@ import {
   downloadJobsCsv,
   type JobSearchFilterState,
 } from "../../hooks/useJobSearchFilters";
-import { JobBulkActionsBar } from "./components/JobBulkActionsBar";
+import { JobExportDialog } from "./components/JobExportDialog";
+import { JobListStickyBar } from "./components/JobListStickyBar";
 import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
 import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
-import { cn } from "../../lib/utils";
 
 export function JobSearchPage() {
   const jobNav = useJobSearchNavigationOptional();
@@ -34,6 +34,8 @@ export function JobSearchPage() {
   });
 
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
 
   const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts } =
     useJobsList(filters, removedIds);
@@ -64,12 +66,28 @@ export function JobSearchPage() {
     selectAllOnPage(pageIds, allOnPageSelected);
   };
 
-  const handleApplyAll = () => {
-    void Promise.all(selectedJobs.map((job) => applyToJob(job)));
+  const handleApplyAll = async (jobs = selectedJobs) => {
+    await Promise.all(jobs.map((job) => applyToJob(job, { openUrl: false })));
   };
 
-  const handleDownload = () => {
+  const downloadSelected = () => {
     downloadJobsCsv(selectedJobs, `jobs-${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
+  const handleExportWithApply = async () => {
+    setExportBusy(true);
+    try {
+      await handleApplyAll();
+      downloadSelected();
+      setExportOpen(false);
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const handleExportOnly = () => {
+    downloadSelected();
+    setExportOpen(false);
   };
 
   const handleRemove = async () => {
@@ -108,6 +126,18 @@ export function JobSearchPage() {
     });
   };
 
+  const matchScoreHint =
+    filters.sort === "matchScore"
+      ? recommendationFallback
+        ? recommendationFallbackMessage(recommendationReason)
+        : recommendationWarming
+          ? "Match scores are being recalculated for your profile — ranking will sharpen shortly."
+          : "Best match ranks the most relevant jobs first; remaining jobs follow sorted by date."
+      : null;
+
+  const matchScoreHintVariant =
+    filters.sort === "matchScore" && recommendationFallback ? "warning" : "info";
+
   return (
     <PageShell>
       <JobSearchFilterPanel
@@ -116,60 +146,39 @@ export function JobSearchPage() {
         statusCounts={statusCounts}
         showScoresOnCards={showScoresOnCards}
         onShowScoresOnCardsChange={setShowScoresOnCards}
+        matchScoreHint={matchScoreHint}
+        matchScoreHintVariant={matchScoreHintVariant}
       />
 
-      {recommendationFallback && filters.sort === "matchScore" && (
-        <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-900 dark:text-amber-100">
-          {recommendationFallbackMessage(recommendationReason)}
-        </div>
-      )}
-
-      {!recommendationFallback && filters.sort === "matchScore" ? (
-        <div className="mb-3 rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground">
-          {recommendationWarming
-            ? "Match scores are being recalculated for your profile — ranking will sharpen shortly."
-            : "Best match ranks the most relevant jobs first; remaining jobs follow sorted by date."}
-        </div>
-      ) : null}
-
-      <JobBulkActionsBar
+      <JobListStickyBar
         selectedOnPage={selectedOnPage}
         pageCount={jobs.length}
         totalSelected={selectedIds.size}
         allOnPageSelected={allOnPageSelected}
         onToggleSelectAll={toggleSelectAllOnPage}
-        onApplyAll={handleApplyAll}
-        onDownload={handleDownload}
+        onExport={() => setExportOpen(true)}
         onRemove={handleRemove}
         onGenerateResumes={() => void generateBulk(selectedJobs)}
         onStopGenerateResumes={cancelBulk}
         resumeGenerating={bulkRunning}
         resumeProgress={bulkProgress ?? undefined}
-        className="mb-3"
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        showGrid={showGrid}
+        onToggleGrid={() => setShowGrid((g) => !g)}
       />
 
-      <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-        <PaginationBar
-          page={page}
-          pageSize={pageSize}
-          total={total}
-          onPageChange={setPage}
-          onPageSizeChange={setPageSize}
-          pageSizeOptions={[10, 25, 50, 100, 250, 500]}
-          detailed
-        />
-        <button
-          type="button"
-          onClick={() => setShowGrid((g) => !g)}
-          className={cn(
-            "icon-btn border border-border",
-            showGrid ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary",
-          )}
-          title="Toggle grid view"
-        >
-          <LayoutGrid className="w-5 h-5" />
-        </button>
-      </div>
+      <JobExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        count={selectedIds.size}
+        onExportWithApply={() => void handleExportWithApply()}
+        onExportOnly={handleExportOnly}
+        busy={exportBusy}
+      />
 
       {loading && jobs.length === 0 ? (
         <div className="py-16 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
