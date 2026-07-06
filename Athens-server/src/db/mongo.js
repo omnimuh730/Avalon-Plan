@@ -27,6 +27,7 @@ let mailMessagesCollection;
 let mailSyncStateCollection;
 let mailUserLabelsCollection;
 let userResumesCollection;
+let resumeTemplatesCollection;
 let avalonRunsCollection;
 // Materialized per-user job match scores (fan-out on write) + rescore state.
 let jobMatchScoresCollection;
@@ -94,6 +95,9 @@ async function ensureSkillCollectionsIndexes() {
 		await userResumesCollection.createIndex({ ownerName: 1, uploadedAt: -1 });
 		await userResumesCollection.createIndex({ ownerName: 1, analyzed: 1 });
 	}
+	if (resumeTemplatesCollection) {
+		await resumeTemplatesCollection.createIndex({ ownerName: 1, uploadedAt: -1 });
+	}
 	if (jobsCollection) {
 		await jobsCollection.createIndex({ 'skillAnalysis.status': 1, 'skillAnalysis.queuedAt': 1 });
 	}
@@ -155,6 +159,7 @@ async function initMongo() {
 	mailSyncStateCollection = db.collection('mail_sync_state');
 	mailUserLabelsCollection = db.collection('mail_user_labels');
 	userResumesCollection = db.collection('user_resumes');
+	resumeTemplatesCollection = db.collection('resume_templates');
 	avalonRunsCollection = db.collection('avalon_apply_runs');
 	jobMatchScoresCollection = db.collection('job_match_scores');
 	matchProfileStateCollection = db.collection('match_profile_state');
@@ -297,6 +302,7 @@ export {
 	mailSyncStateCollection,
 	mailUserLabelsCollection,
 	userResumesCollection,
+	resumeTemplatesCollection,
 	avalonRunsCollection,
 	jobMatchScoresCollection,
 	matchProfileStateCollection,

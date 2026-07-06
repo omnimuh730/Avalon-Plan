@@ -61,4 +61,15 @@
   .resume-scale {
     zoom: var(--resume-zoom, 1);
   }
+
+  .uploaded-template-docx-preview .docx-wrapper {
+    background: transparent !important;
+    padding: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  .uploaded-template-docx-preview .docx-wrapper > section.docx {
+    box-shadow: 0 16px 44px rgba(15, 23, 42, 0.18) !important;
+    margin-bottom: 18px !important;
+  }
 }

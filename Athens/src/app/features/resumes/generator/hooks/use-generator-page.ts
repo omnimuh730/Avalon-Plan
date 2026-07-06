@@ -19,6 +19,13 @@ import { JOB_DESC_TOKEN } from "../constants/tokens";
 import { normalizeGenerated, mergeGeneratedSection } from "../utils/content";
 import { identityFromProfile, isValidJson, storageKey } from "../utils/identity";
 import { streamSSE } from "../utils/sse";
+import {
+  deleteResumeTemplate,
+  fetchResumeTemplates,
+  fillResumeTemplateDocx,
+  fileToBase64,
+  uploadResumeTemplate,
+} from "@/app/services/resumeApi";
 import type {
   GenProgress,
   GeneratedContent,
@@ -30,9 +37,10 @@ import type {
   Purpose,
   ResumeTheme,
   StepKind,
+  UploadedTemplateManifest,
   UsageBreakdown,
 } from "../types";
-import { PURPOSES, SECTION_LABEL } from "../types";
+import { isUploadedTemplateId, PURPOSES, SECTION_LABEL, uploadedTemplateMongoId } from "../types";
 import { applyHistoryRun } from "./load-history-run";
 import type { FullRun } from "../history/history-types";
 
@@ -59,7 +67,12 @@ export function useGeneratorPage() {
   const [previewStep, setPreviewStep] = useState<number | null>(null);
 
   const { theme, layout, steps } = config;
-  const template = templateById(config.templateId);
+  const usingUploadedTemplate = isUploadedTemplateId(config.templateId);
+  const template = usingUploadedTemplate
+    ? templateById("classic")
+    : templateById(config.templateId);
+  const [uploadedTemplates, setUploadedTemplates] = useState<UploadedTemplateManifest[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
   const [exporting, setExporting] = useState<null | "pdf" | "docx">(null);
 
   // True once a history run has been explicitly loaded into the editor. The
@@ -102,6 +115,58 @@ export function useGeneratorPage() {
   // HTML so the document styling stays consistent across formats.
   const exportResume = async (format: "pdf" | "docx") => {
     const fileName = `${(identity?.fullName || "resume").replace(/\s+/g, "_")}.${format}`;
+
+    if (usingUploadedTemplate) {
+      if (format === "pdf") {
+        notify({
+          title: "PDF not available",
+          description: "Uploaded templates export to Word only so your original formatting is preserved.",
+          tone: "warning",
+        });
+        return;
+      }
+      if (!generated) {
+        notify({ title: "Nothing to export", description: "Generate resume content first.", tone: "warning" });
+        return;
+      }
+      const applierName = applier?.name;
+      if (!applierName) {
+        notify({ title: "Select an applier", description: "Choose an applier in the sidebar first.", tone: "warning" });
+        return;
+      }
+      setExporting("docx");
+      try {
+        const sections = {
+          summary: { summary: generated.summary },
+          skills: { skills: generated.skills },
+          experience: { experiences: generated.experience },
+        };
+        const blob = await fillResumeTemplateDocx({
+          templateId: config.templateId,
+          ownerName: applierName,
+          sections,
+          fileName,
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        notify({
+          title: "Export Word failed",
+          description: e instanceof Error ? e.message : String(e),
+          tone: "error",
+        });
+      } finally {
+        setExporting(null);
+      }
+      return;
+    }
+
     let payload: Record<string, unknown>;
     if (format === "pdf") {
       // PDF renders the live DOM via puppeteer (pixel-exact with the preview).
@@ -165,16 +230,105 @@ export function useGeneratorPage() {
       return {
         ...c,
         templateId: id,
+        uploadedTemplate: undefined,
         theme: {
           ...c.theme,
           headerAlign: t.defaultHeaderAlign,
           font: t.defaults?.font ?? c.theme.font,
           accent: nextAccent,
         },
-        // Recolor section titles that were following the old accent.
         layout: c.layout.map((s) => (s.titleColor === c.theme.accent ? { ...s, titleColor: nextAccent } : s)),
       };
     });
+
+  const selectUploadedTemplate = (manifest: UploadedTemplateManifest) =>
+    setConfig((c) => ({
+      ...c,
+      templateId: `upload:${manifest.id}`,
+      uploadedTemplate: manifest,
+    }));
+
+  const refreshUploadedTemplates = useCallback(async () => {
+    const applierName = applier?.name;
+    if (!applierName) {
+      setUploadedTemplates([]);
+      return;
+    }
+    setTemplatesLoading(true);
+    try {
+      const templates = await fetchResumeTemplates(applierName);
+      setUploadedTemplates(templates);
+      setConfig((c) => {
+        if (!isUploadedTemplateId(c.templateId)) return c;
+        const id = uploadedTemplateMongoId(c.templateId);
+        const match = templates.find((t) => t.id === id);
+        return match ? { ...c, uploadedTemplate: match } : c;
+      });
+    } catch {
+      setUploadedTemplates([]);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [applier?.name]);
+
+  const uploadTemplateFile = async (file: File) => {
+    const applierName = applier?.name;
+    if (!applierName) {
+      notify({ title: "Select an applier", description: "Choose an applier in the sidebar first.", tone: "warning" });
+      return;
+    }
+    if (!/\.docx$/i.test(file.name)) {
+      notify({ title: "DOCX only", description: "Upload a Word .docx template with {} placeholders.", tone: "warning" });
+      return;
+    }
+    try {
+      const contentBase64 = await fileToBase64(file);
+      const template = await uploadResumeTemplate({
+        ownerName: applierName,
+        fileName: file.name,
+        contentBase64,
+        identity: identity ?? undefined,
+      });
+      setUploadedTemplates((prev) => [template, ...prev.filter((t) => t.id !== template.id)]);
+      selectUploadedTemplate(template);
+      if (template.warnings?.length) {
+        notify({
+          title: "Template uploaded with warnings",
+          description: template.warnings.slice(0, 2).join(" "),
+          tone: "warning",
+        });
+      } else {
+        notify({
+          title: "Template uploaded",
+          description: `${template.slotCount} placeholder(s) found.`,
+          tone: "success",
+        });
+      }
+    } catch (e) {
+      notify({
+        title: "Upload failed",
+        description: e instanceof Error ? e.message : String(e),
+        tone: "error",
+      });
+    }
+  };
+
+  const removeUploadedTemplate = async (id: string) => {
+    const applierName = applier?.name;
+    if (!applierName) return;
+    try {
+      await deleteResumeTemplate(id, applierName);
+      setUploadedTemplates((prev) => prev.filter((t) => t.id !== id));
+      setConfig((c) => (c.templateId === `upload:${id}` ? { ...c, templateId: "classic", uploadedTemplate: undefined } : c));
+      notify({ title: "Template deleted", tone: "success" });
+    } catch (e) {
+      notify({
+        title: "Delete failed",
+        description: e instanceof Error ? e.message : String(e),
+        tone: "error",
+      });
+    }
+  };
 
   // Restore saved config: localStorage first, then MongoDB (authoritative).
   useEffect(() => {
@@ -216,6 +370,10 @@ export function useGeneratorPage() {
       cancelled = true;
     };
   }, [applier?.name, get]);
+
+  useEffect(() => {
+    void refreshUploadedTemplates();
+  }, [refreshUploadedTemplates]);
 
   // Persist config: localStorage immediately + MongoDB (debounced) after hydration.
   useEffect(() => {
@@ -583,11 +741,19 @@ export function useGeneratorPage() {
     layout,
     steps,
     template,
+    usingUploadedTemplate,
+    uploadedTemplate: config.uploadedTemplate,
+    uploadedTemplates,
+    templatesLoading,
     exporting,
     tokenValues,
     setTheme,
     exportResume,
     selectTemplate,
+    selectUploadedTemplate,
+    uploadTemplateFile,
+    removeUploadedTemplate,
+    refreshUploadedTemplates,
     loadIdentity,
     loadModels,
     modelOptions,

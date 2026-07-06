@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 export function DesignModal({
   open,
@@ -17,9 +18,22 @@ export function DesignModal({
   children: ReactNode;
   wide?: boolean;
 }) {
-  if (!open) return null;
+  const [mounted, setMounted] = useState(false);
 
-  return (
+  useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open || !mounted) return null;
+
+  return createPortal(
     <div
       className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm grid place-items-center p-4 sm:p-6 animate-in fade-in duration-200"
       onClick={onClose}
@@ -48,6 +62,7 @@ export function DesignModal({
         </div>
         <div className="overflow-y-auto p-5 md:p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

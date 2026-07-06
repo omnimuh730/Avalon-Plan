@@ -351,3 +351,96 @@ export async function analyzeResumeMatch(
 }
 
 export type { GeneratorIdentity, ResumeSkillEntry };
+
+// --- Uploaded resume templates ---
+
+export type ResumeTemplateSlot = {
+  index: number;
+  paragraphIndex: number;
+  section: "summary" | "skills" | "experience";
+  companyHint?: string;
+  isBullet: boolean;
+  experienceIndex?: number;
+};
+
+export type UploadedResumeTemplate = {
+  id: string;
+  name: string;
+  source: "uploaded";
+  format: "docx";
+  fileName?: string;
+  slotCount: number;
+  sectionsFound: ("summary" | "skills" | "experience")[];
+  slots: ResumeTemplateSlot[];
+  warnings: string[];
+  uploadedAt?: string;
+};
+
+export async function fetchResumeTemplates(ownerName: string): Promise<UploadedResumeTemplate[]> {
+  const data = await apiFetch<{ templates: UploadedResumeTemplate[] }>(
+    `/personal/resume-templates?ownerName=${encodeURIComponent(ownerName)}`,
+  );
+  return data.templates ?? [];
+}
+
+export async function uploadResumeTemplate(payload: {
+  ownerName: string;
+  fileName: string;
+  contentBase64: string;
+  name?: string;
+  identity?: GeneratorIdentity;
+}): Promise<UploadedResumeTemplate> {
+  const data = await apiFetch<{ template: UploadedResumeTemplate }>("/personal/resume-templates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return data.template;
+}
+
+export async function deleteResumeTemplate(id: string, ownerName: string): Promise<void> {
+  await apiFetch(`/personal/resume-templates/${encodeURIComponent(id)}?ownerName=${encodeURIComponent(ownerName)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function fillResumeTemplateDocx(payload: {
+  templateId: string;
+  ownerName: string;
+  sections: Record<string, unknown>;
+  fileName?: string;
+}): Promise<Blob> {
+  const url = `${base()}/personal/resume-template-fill`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let msg = `Export failed (${res.status})`;
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j?.error) msg = j.error;
+    } catch {
+      /* non-JSON */
+    }
+    throw new Error(msg);
+  }
+  return res.blob();
+}
+
+export async function fetchResumeTemplatePreview(payload: {
+  templateId: string;
+  ownerName: string;
+  sections?: Record<string, unknown>;
+}): Promise<{ html: string; warnings?: string[]; templateName?: string }> {
+  const data = await apiFetch<{ html: string; warnings?: string[]; templateName?: string }>(
+    "/personal/resume-template-preview",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  return { html: data.html ?? "", warnings: data.warnings, templateName: data.templateName };
+}

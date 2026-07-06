@@ -55,6 +55,7 @@ export function mergeStoredConfig(parsed: Partial<GeneratorConfig> | null | unde
     model: resolveModelForProvider(provider, parsed.model ?? base.model),
     reasoningEffort: parsed.reasoningEffort ?? base.reasoningEffort,
     templateId: parsed.templateId ?? base.templateId,
+    uploadedTemplate: parsed.uploadedTemplate ?? base.uploadedTemplate,
     theme: { ...base.theme, ...(parsed.theme ?? {}) },
     layout: Array.isArray(parsed.layout) && parsed.layout.length ? (parsed.layout as LayoutSection[]) : base.layout,
     systemInstruction: parsed.systemInstruction ?? base.systemInstruction,
