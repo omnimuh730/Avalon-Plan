@@ -115,6 +115,7 @@ function loadSessions(): AgentSessionMeta[] {
 export function AgentSessionsProvider({ children }: { children: ReactNode }) {
   const { applier } = useApplier();
   const applierName = applier?.name ?? "";
+  const accountTier = applier?.tier ?? null;
   const applicantContext = useMemo(
     () => formatApplierProfile(applier?.autoBidProfile as Record<string, unknown> | undefined),
     [applier?.autoBidProfile],
@@ -284,6 +285,7 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
           slotEl={slotEl}
           applicantContext={applicantContext}
           applierName={applierName}
+          accountTier={accountTier}
           registerEngine={registerEngine}
           unregisterEngine={unregisterEngine}
           publishStatus={publishStatus}
@@ -309,6 +311,7 @@ function AgentSessionEngine({
   slotEl,
   applicantContext,
   applierName,
+  accountTier,
   registerEngine,
   unregisterEngine,
   publishStatus,
@@ -320,6 +323,7 @@ function AgentSessionEngine({
   slotEl: HTMLElement | null;
   applicantContext: string;
   applierName: string;
+  accountTier: string | null;
   registerEngine: (id: string, relay: Relay) => void;
   unregisterEngine: (id: string) => void;
   publishStatus: (id: string, status: AgentSessionStatus) => void;
@@ -330,6 +334,7 @@ function AgentSessionEngine({
     sessionId: meta.sessionId,
     persist: false,
     persistKey: meta.id,
+    accountTier,
   });
 
   // Expose the latest relay for imperative provider actions (enqueue/stop). Writing

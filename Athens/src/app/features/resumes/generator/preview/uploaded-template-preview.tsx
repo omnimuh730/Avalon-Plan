@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { renderAsync } from "docx-preview";
-import { fillResumeTemplateDocx } from "@/app/services/resumeApi";
+import { fetchResumeTemplatePreviewImages, type ResumeTemplatePreviewPage } from "@/app/services/resumeApi";
 import type { GeneratedContent } from "../types";
 import { uploadedTemplateMongoId } from "../types";
 
@@ -22,10 +21,10 @@ export function UploadedTemplatePreview({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fitRef = useRef<HTMLDivElement>(null);
-  const renderRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
-  const [docSize, setDocSize] = useState({ width: LETTER_WIDTH_PX, height: LETTER_HEIGHT_PX });
-  const [rendered, setRendered] = useState(false);
+  const [pages, setPages] = useState<ResumeTemplatePreviewPage[]>([]);
+
+  const pageWidth = pages[0]?.width || LETTER_WIDTH_PX;
 
   const sections = useMemo(() => {
     if (!generated) return {};
@@ -41,62 +40,37 @@ export function UploadedTemplatePreview({
   useEffect(() => {
     const el = fitRef.current;
     if (!el) return;
-    const update = () => setScale(Math.min(1, Math.max(0.1, el.clientWidth / docSize.width)));
+    const update = () => setScale(Math.min(1, Math.max(0.1, el.clientWidth / pageWidth)));
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [docSize.width]);
+  }, [pageWidth]);
 
   useEffect(() => {
-    const target = renderRef.current;
     if (!ownerName || !templateId) {
-      if (target) target.innerHTML = "";
-      setRendered(false);
+      setPages([]);
       return;
     }
-    if (!target) return;
 
     let cancelled = false;
     const timer = setTimeout(() => {
       setLoading(true);
       setError(null);
-      setRendered(false);
-      target.innerHTML = "";
-      void fillResumeTemplateDocx({
+      setPages([]);
+      void fetchResumeTemplatePreviewImages({
         templateId,
         ownerName,
         sections: sectionsKey === "{}" ? {} : JSON.parse(sectionsKey),
-        fileName: "template-preview.docx",
       })
-        .then(async (blob) => {
+        .then((res) => {
           if (cancelled) return;
-          target.innerHTML = "";
-          await renderAsync(blob, target, target, {
-            breakPages: true,
-            experimental: true,
-            ignoreFonts: false,
-            ignoreHeight: false,
-            ignoreWidth: false,
-            inWrapper: true,
-            renderFooters: true,
-            renderHeaders: true,
-            useBase64URL: true,
-          });
-          if (cancelled) return;
-          const wrapper = target.querySelector<HTMLElement>(".docx-wrapper") ?? target;
-          const pages = Array.from(target.querySelectorAll<HTMLElement>("section.docx"));
-          const firstPage = pages[0];
-          const width = firstPage?.offsetWidth || wrapper.scrollWidth || LETTER_WIDTH_PX;
-          const height = wrapper.scrollHeight || firstPage?.offsetHeight || LETTER_HEIGHT_PX;
-          setDocSize({ width, height });
-          setRendered(true);
+          setPages(res.pages);
         })
         .catch((e) => {
           if (cancelled) return;
           setError(e instanceof Error ? e.message : String(e));
-          target.innerHTML = "";
-          setRendered(false);
+          setPages([]);
         })
         .finally(() => {
           if (!cancelled) setLoading(false);
@@ -110,6 +84,10 @@ export function UploadedTemplatePreview({
   }, [ownerName, templateId, sectionsKey]);
 
   const mongoId = uploadedTemplateMongoId(templateId);
+  const docHeight = pages.reduce((sum, page, index) => {
+    const gap = index === 0 ? 0 : 16;
+    return sum + gap + (page.height || LETTER_HEIGHT_PX) * scale;
+  }, 0);
 
   return (
     <div className="rounded-xl bg-neutral-200/70 dark:bg-black/40 p-4 overflow-auto max-h-[80vh] w-full">
@@ -126,23 +104,32 @@ export function UploadedTemplatePreview({
           </div>
         )}
         <div
-          className={rendered && !error ? "block" : "hidden"}
+          className={pages.length && !error ? "block" : "hidden"}
           style={{
-            width: Math.ceil(docSize.width * scale),
-            minHeight: Math.ceil(docSize.height * scale),
+            width: Math.ceil(pageWidth * scale),
+            minHeight: Math.ceil(docHeight || LETTER_HEIGHT_PX * scale),
           }}
         >
-          <div
-            ref={renderRef}
-            className="uploaded-template-docx-preview origin-top-left"
-            style={{
-              transform: `scale(${scale})`,
-              transformOrigin: "top left",
-              width: docSize.width,
-            }}
-          />
+          <div className="flex flex-col gap-4">
+            {pages.map((page, index) => {
+              const width = page.width || LETTER_WIDTH_PX;
+              const height = page.height || LETTER_HEIGHT_PX;
+              return (
+                <img
+                  key={index}
+                  alt={`Resume preview page ${index + 1}`}
+                  className="block bg-white shadow-[0_16px_44px_rgba(15,23,42,0.18)]"
+                  src={`data:${page.mimeType || "image/png"};base64,${page.dataBase64}`}
+                  style={{
+                    width: Math.ceil(width * scale),
+                    height: Math.ceil(height * scale),
+                  }}
+                />
+              );
+            })}
+          </div>
         </div>
-        {!loading && !error && !rendered && (
+        {!loading && !error && !pages.length && (
           <div className="text-sm text-neutral-500 dark:text-white/50 py-16">
             {generating ? "Generating content…" : "Template preview will appear here."}
           </div>

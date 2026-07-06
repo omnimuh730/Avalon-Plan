@@ -26,7 +26,14 @@ import {
   persistAvalonSessionId,
   storedAvalonSessionId,
 } from "../../../services/agentApi";
-import { applyToJob, fetchJobDescription, generateJobResumeStream, type ResumeSectionPurpose } from "../../../api/jobs";
+import {
+  applyToJob,
+  fetchJobDescription,
+  fetchSubmissionKitResume,
+  generateJobResumeStream,
+  type ResumeSectionPurpose,
+} from "../../../api/jobs";
+import { isProTier } from "../../../lib/pro";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { clampJobBudgetUsd, loadJobBudgetUsd, saveJobBudgetUsd } from "../lib/agentBudget";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
@@ -101,6 +108,19 @@ export interface JobResume {
   reused: boolean;
   generationId: string | null;
   resumePdfPath?: string | null;
+}
+
+export interface SubmissionKitPrompt {
+  jobTitle: string;
+  company: string;
+  generatedFileName: string;
+  kitFileName: string;
+}
+
+interface SubmissionKitCache {
+  applierName: string;
+  resumeId: string;
+  file: AttachedFile;
 }
 
 /** Manual/link-only jobs have no Mongo id or JD, so no tailored résumé is generated. */
@@ -204,6 +224,7 @@ export interface AvalonRelayOptions {
    * this UI-facing queue state.
    */
   persistKey?: string;
+  accountTier?: string | null;
 }
 
 export const QUEUE_STORAGE_PREFIX = "athens-agent-queue-";
@@ -236,6 +257,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const persistKey = options?.persistKey;
   const initialPersisted = useMemo(() => (persistKey ? loadPersistedQueue(persistKey) : null), [persistKey]);
   const persistSession = options?.persist !== false;
+  const accountIsPro = isProTier(options?.accountTier);
   const [serverUrl, setServerUrl] = useState(() => avalonRelayUrl());
   const [sessionId, setSessionId] = useState(() => options?.sessionId ?? storedAvalonSessionId());
   const [connected, setConnected] = useState(false);
@@ -275,6 +297,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     () => initialPersisted?.pipelineByJobId ?? {},
   );
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const [submissionKitPrompt, setSubmissionKitPrompt] = useState<SubmissionKitPrompt | null>(null);
   const [verifyResult, setVerifyResult] = useState<ManualVerifyResult | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [tabValidity, setTabValidity] = useState<PageValidityResult | null>(null);
@@ -305,6 +328,9 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     Map<string, { resolve: (result: ActionResult) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>
   >(new Map());
   const resumeGenByJobIdRef = useRef<Map<string, Promise<AttachedFile>>>(new Map());
+  const submissionKitCacheRef = useRef<SubmissionKitCache | null>(null);
+  const submissionKitApprovedJobIdsRef = useRef<Set<string>>(new Set());
+  const submissionKitPromptResolveRef = useRef<((approved: boolean) => void) | null>(null);
   // Debug run-logging: current run id, its job, a buffered event list + flush timer.
   const runIdRef = useRef<string | null>(null);
   const runJobRef = useRef<QueuedJob | null>(null);
@@ -928,6 +954,98 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     [resumesByJobId],
   );
 
+  const resolveSubmissionKitPrompt = useCallback((approved: boolean) => {
+    const resolve = submissionKitPromptResolveRef.current;
+    submissionKitPromptResolveRef.current = null;
+    setSubmissionKitPrompt(null);
+    resolve?.(approved);
+  }, []);
+
+  useEffect(() => {
+    submissionKitCacheRef.current = null;
+    submissionKitApprovedJobIdsRef.current.clear();
+    resolveSubmissionKitPrompt(false);
+  }, [applierName, accountIsPro, resolveSubmissionKitPrompt]);
+
+  const requestSubmissionKitApproval = useCallback(
+    (prompt: SubmissionKitPrompt, signal?: AbortSignal): Promise<boolean> =>
+      new Promise((resolve) => {
+        if (signal?.aborted) {
+          resolve(false);
+          return;
+        }
+
+        submissionKitPromptResolveRef.current?.(false);
+        let settled = false;
+        const finish = (approved: boolean) => {
+          if (settled) return;
+          settled = true;
+          if (signal) signal.removeEventListener("abort", onAbort);
+          if (submissionKitPromptResolveRef.current === finish) {
+            submissionKitPromptResolveRef.current = null;
+            setSubmissionKitPrompt(null);
+          }
+          resolve(approved);
+        };
+        const onAbort = () => finish(false);
+        if (signal) signal.addEventListener("abort", onAbort, { once: true });
+        submissionKitPromptResolveRef.current = finish;
+        setSubmissionKitPrompt(prompt);
+      }),
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      submissionKitPromptResolveRef.current?.(false);
+      submissionKitPromptResolveRef.current = null;
+    },
+    [],
+  );
+
+  const loadSubmissionKitFile = useCallback(async (): Promise<AttachedFile> => {
+    if (!applierName) throw new Error("Select an applier profile before applying");
+    const cached = submissionKitCacheRef.current;
+    if (cached?.applierName === applierName && cached.file.base64) return cached.file;
+
+    const kit = await fetchSubmissionKitResume(applierName, runSignal());
+    const fileName = kit.fileName.toLowerCase().endsWith(".pdf") ? kit.fileName : `${kit.fileName}.pdf`;
+    const file: AttachedFile = {
+      name: fileName,
+      mimeType: "application/pdf",
+      base64: kit.contentBase64,
+    };
+    submissionKitCacheRef.current = {
+      applierName,
+      resumeId: kit.resumeId,
+      file,
+    };
+    return file;
+  }, [applierName, runSignal]);
+
+  const resolveResumeForSubmission = useCallback(
+    async (job: QueuedJob, generatedFile: AttachedFile): Promise<AttachedFile> => {
+      if (accountIsPro) return generatedFile;
+      const kitFile = await loadSubmissionKitFile();
+      if (!submissionKitApprovedJobIdsRef.current.has(job.id)) {
+        const approved = await requestSubmissionKitApproval(
+          {
+            jobTitle: job.title,
+            company: job.company,
+            generatedFileName: generatedFile.name,
+            kitFileName: kitFile.name,
+          },
+          runSignal(),
+        );
+        if (!approved) throw new Error("Submission canceled");
+        submissionKitApprovedJobIdsRef.current.add(job.id);
+      }
+      pushLog(`Resume Generator Kit PDF selected for "${job.title}" (${kitFile.name})`, true);
+      return kitFile;
+    },
+    [accountIsPro, loadSubmissionKitFile, pushLog, requestSubmissionKitApproval, runSignal],
+  );
+
   const analyzeTree = useCallback(async () => {
     if (!actionableTree?.length) {
       pushLog("Fetch an actionable tree first", false);
@@ -1134,14 +1252,15 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       return;
     }
 
-    const resumeFile = getResumeForJob(job);
-    if (!resumeFile) {
+    const generatedResumeFile = getResumeForJob(job);
+    if (!generatedResumeFile) {
       pushLog("Generate tailored résumé first (step 1) — preview the PDF before applying", false);
       return;
     }
 
     try {
-      await runApplyWithPlan(plan, treePage, resumeFile);
+      const submissionFile = await resolveResumeForSubmission(job, generatedResumeFile);
+      await runApplyWithPlan(plan, treePage, submissionFile);
       setApplyDone(true);
       markPipeline(job.id, { applied: true });
     } catch (error) {
@@ -1158,6 +1277,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     injectionPlan,
     markPipeline,
     pushLog,
+    resolveResumeForSubmission,
     runApplyWithPlan,
     treePage,
   ]);
@@ -1735,7 +1855,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         return false;
       }
       try {
-        await runApplyWithPlan(plan, pageCtx, resumeFile);
+        const submissionFile = job ? await resolveResumeForSubmission(job, resumeFile) : resumeFile;
+        await runApplyWithPlan(plan, pageCtx, submissionFile);
         setApplyDone(true);
         if (job) markPipeline(job.id, { applied: true });
       } catch (error) {
@@ -1752,6 +1873,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       probeComboboxes,
       pushLog,
       recordUsage,
+      resolveResumeForSubmission,
       runApplyWithPlan,
       runSignal,
     ],
@@ -2177,7 +2299,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
             return;
           }
           try {
-            await runApplyWithPlan(plan, pageCtx, resumeFile);
+            const submissionFile = await resolveResumeForSubmission(job, resumeFile);
+            await runApplyWithPlan(plan, pageCtx, submissionFile);
             setApplyDone(true);
             markPipeline(job.id, { applied: true });
           } catch (error) {
@@ -2321,6 +2444,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     recordUsage,
     resetJobRunCost,
     resetJobUsage,
+    resolveResumeForSubmission,
     rescanAnalyzeApply,
     runApplyWithPlan,
     runSignal,
@@ -2644,7 +2768,18 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           fileSteps: built.plan.steps.filter((s) => s.op === "attachFile").length,
         });
 
-        const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, { autoSubmit: true, resumeFile });
+        const submissionFile = await resolveResumeForSubmission(job, resumeFile);
+        logRunData("submission-file", {
+          fileName: submissionFile.name,
+          mimeType: submissionFile.mimeType,
+          base64Bytes: submissionFile.base64?.length ?? 0,
+          generatedFileName: resumeFile.name,
+          submissionKit: submissionFile.name !== resumeFile.name,
+        });
+        const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, {
+          autoSubmit: true,
+          resumeFile: submissionFile,
+        });
         const applyRes = await emitActionAsync(
           {
             id: createActionId(),
@@ -2726,7 +2861,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
             firstState: pageState,
             firstReason: verdict.reason || verdict.status,
             firstResults,
-            resumeFile,
+            resumeFile: submissionFile,
             pageCtx,
           });
           if (checkBudgetExceeded()) {
@@ -2748,7 +2883,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         endRunLog(finalStatus);
       }
     },
-    [abortForBudget, applicantContext, canExecute, checkBudgetExceeded, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, recordUsage, resetJobRunCost, resetJobUsage, runRecoveryLoop, runSignal, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
+    [abortForBudget, applicantContext, canExecute, checkBudgetExceeded, emitActionAsync, getResumeForJob, startResumeForJob, executeDisabledReason, handleGreenhouseOtpFlow, markJobApplied, probeComboboxes, pushLog, recordUsage, resetJobRunCost, resetJobUsage, resolveResumeForSubmission, runRecoveryLoop, runSignal, verifyAfterSubmit, startRunLog, logRunData, endRunLog, resumesByJobId, validateOpenedTab, closeTab],
   );
 
   /**
@@ -2840,6 +2975,8 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     resumeGenerateStep,
     resumeGeneratedSections,
     resumeError,
+    submissionKitPrompt,
+    resolveSubmissionKitPrompt,
     applyPhase,
     verifyResult,
     verifying,

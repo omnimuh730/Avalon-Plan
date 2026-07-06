@@ -1,8 +1,10 @@
 import { NavLink, useNavigate } from "react-router";
-import { LogOut } from "lucide-react";
+import { Crown, LogOut } from "lucide-react";
 import { AppLogo } from "../shared/AppLogo";
 import { useAuth } from "@/context/auth-context";
+import { useApplier } from "@/context/applier-context";
 import { cn, display } from "../../lib/utils";
+import { formatTierLabel, isProTier } from "../../lib/pro";
 import { pathForView, PATHS } from "../../config/routes";
 import { NAV_GROUPS, NAV_ITEMS } from "../../config/navigation";
 
@@ -17,7 +19,10 @@ function initials(name: string) {
 
 export function Sidebar() {
   const { user, signout } = useAuth();
+  const { applier } = useApplier();
   const navigate = useNavigate();
+  const account = applier ?? user;
+  const pro = isProTier(account?.tier);
 
   const handleSignOut = () => {
     signout();
@@ -50,7 +55,7 @@ export function Sidebar() {
               </p>
             )}
             <div className="space-y-1">
-              {NAV_ITEMS.filter((n) => g.ids.includes(n.id)).map((item) => (
+              {NAV_ITEMS.filter((n) => g.ids.includes(n.id) && (pro || !n.pro)).map((item) => (
                 <NavLink
                   key={item.id}
                   to={pathForView(item.id)}
@@ -66,6 +71,12 @@ export function Sidebar() {
                 >
                   <item.icon className="w-5 h-5 flex-shrink-0" />
                   <span className="flex-1 text-left">{item.label}</span>
+                  {item.pro && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold leading-none whitespace-nowrap">
+                      <Crown className="w-3 h-3" />
+                      Pro
+                    </span>
+                  )}
                   {item.comingSoon && (
                     <span className="px-1.5 py-0.5 rounded-full bg-primary/15 text-primary text-[10px] font-bold leading-none whitespace-nowrap">
                       Coming Soon
@@ -85,7 +96,14 @@ export function Sidebar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-foreground truncate">{user?.name ?? "Signed out"}</p>
-            <p className="text-xs text-muted-foreground truncate">{user?.tier ?? "Job seeker"}</p>
+            {pro ? (
+              <p className="mt-0.5 inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                <Crown className="w-3 h-3" />
+                Pro
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground truncate">{formatTierLabel(account?.tier)}</p>
+            )}
           </div>
           <button
             type="button"

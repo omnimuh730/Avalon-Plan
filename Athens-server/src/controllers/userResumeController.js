@@ -127,6 +127,33 @@ export async function clearUserResumeAnalysisHandler(req, res) {
   }
 }
 
+export async function getSubmissionKitResumeHandler(req, res) {
+  try {
+    const ownerName = String(req.query?.ownerName ?? "").trim();
+    if (!ownerName) {
+      return res.status(400).json({ success: false, error: "ownerName is required" });
+    }
+
+    const { resolveSubmissionKitPdf } = await import("../services/agentResumeGenService.js");
+    const kit = await resolveSubmissionKitPdf({ applierName: ownerName });
+    return res.json({
+      success: true,
+      resume: {
+        resumeId: "resume-generator-kit",
+        fileName: kit.fileName,
+        mimeType: "application/pdf",
+        contentBase64: Buffer.from(kit.buffer).toString("base64"),
+        resumePdfPath: kit.resumePdfPath,
+        source: kit.source,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/personal/submission-kit-resume error", err);
+    const status = /required|not found|No autoBidProfile/i.test(err.message) ? 400 : 500;
+    return res.status(status).json({ success: false, error: err.message });
+  }
+}
+
 export async function listUserGraphsHandler(req, res) {
   try {
     const applierName = String(req.query?.applierName ?? "").trim();

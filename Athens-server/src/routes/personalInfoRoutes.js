@@ -50,6 +50,7 @@ import {
 	analyzeUserResumeHandler,
 	listUserGraphsHandler,
 	clearUserResumeAnalysisHandler,
+	getSubmissionKitResumeHandler,
 } from "../controllers/userResumeController.js";
 import {
 	listResumeTemplatesHandler,
@@ -58,6 +59,7 @@ import {
 	deleteResumeTemplateHandler,
 	fillResumeTemplateHandler,
 	previewResumeTemplateHandler,
+	previewResumeTemplateImagesHandler,
 } from "../controllers/resumeTemplateController.js";
 import { analyzeResumeMatch } from "../controllers/resumeAnalysisController.js";
 import { listChromeProfiles, importChromeSession, chromeProfileAvatar } from "../controllers/chromeProfilesController.js";
@@ -108,9 +110,11 @@ router.post('/personal/resume-templates', createResumeTemplateHandler);
 router.delete('/personal/resume-templates/:id', deleteResumeTemplateHandler);
 router.post('/personal/resume-template-fill', fillResumeTemplateHandler);
 router.post('/personal/resume-template-preview', previewResumeTemplateHandler);
+router.post('/personal/resume-template-preview-images', previewResumeTemplateImagesHandler);
 
 router.get('/user-graph', listUserGraphsHandler);
 
+router.get('/personal/submission-kit-resume', getSubmissionKitResumeHandler);
 router.get('/personal/user-resumes', listUserResumesHandler);
 router.get('/personal/user-resumes/:id', getUserResumeHandler);
 router.post('/personal/user-resumes', createUserResumeHandler);

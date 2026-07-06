@@ -444,3 +444,26 @@ export async function fetchResumeTemplatePreview(payload: {
   );
   return { html: data.html ?? "", warnings: data.warnings, templateName: data.templateName };
 }
+
+export type ResumeTemplatePreviewPage = {
+  mimeType: string;
+  dataBase64: string;
+  width: number;
+  height: number;
+};
+
+export async function fetchResumeTemplatePreviewImages(payload: {
+  templateId: string;
+  ownerName: string;
+  sections?: Record<string, unknown>;
+}): Promise<{ pages: ResumeTemplatePreviewPage[]; warnings?: string[]; templateName?: string }> {
+  const data = await apiFetch<{ pages?: ResumeTemplatePreviewPage[]; warnings?: string[]; templateName?: string }>(
+    "/personal/resume-template-preview-images",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  return { pages: data.pages ?? [], warnings: data.warnings, templateName: data.templateName };
+}

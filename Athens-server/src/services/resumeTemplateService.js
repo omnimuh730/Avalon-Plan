@@ -2,6 +2,7 @@ import { ObjectId, GridFSBucket } from "mongodb";
 import { resumeTemplatesCollection } from "../db/mongo.js";
 import { parseTemplateDocx } from "./parseTemplateDocx.js";
 import { fillTemplateDocx } from "./fillTemplateDocx.js";
+import { renderDocxPreviewImages } from "./renderDocxPreviewImages.js";
 
 const INLINE_MAX_BYTES = 8 * 1024 * 1024;
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -201,6 +202,16 @@ export async function previewResumeTemplate({ templateId, ownerName, sections })
   return {
     html: htmlResult.value || "",
     warnings: [...(fillResult.warnings || []), ...(htmlResult.messages || []).map((m) => m.message).filter(Boolean)],
+    templateName: fillResult.templateName,
+  };
+}
+
+export async function previewResumeTemplateImages({ templateId, ownerName, sections }) {
+  const fillResult = await fillResumeTemplate({ templateId, ownerName, sections: sections ?? {} });
+  const pages = await renderDocxPreviewImages(fillResult.buffer);
+  return {
+    pages,
+    warnings: fillResult.warnings || [],
     templateName: fillResult.templateName,
   };
 }

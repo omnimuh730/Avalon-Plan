@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import {
   accountInfoCollection,
   jobsCollection,
+  resumeGeneratorConfigCollection,
   resumeGenerationsCollection,
   userResumesCollection,
 } from "../db/mongo.js";
@@ -51,6 +52,139 @@ async function findProfile(applierNameRaw) {
     acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, proj);
   }
   return acc?.autoBidProfile || null;
+}
+
+async function findAccountForKit(applierNameRaw) {
+  const name = cleanString(applierNameRaw);
+  if (!name || !accountInfoCollection) return null;
+  const projection = { autoBidProfile: 1, resumeCatalog: 1 };
+  let acc = await accountInfoCollection.findOne({ name }, { projection });
+  if (!acc) {
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, { projection });
+  }
+  return acc || null;
+}
+
+async function loadRawGeneratorConfig(applierName) {
+  const name = cleanString(applierName);
+  if (!name || !resumeGeneratorConfigCollection) return null;
+  const doc = await resumeGeneratorConfigCollection.findOne({ applierName: name });
+  return doc?.config && typeof doc.config === "object" ? doc.config : null;
+}
+
+function normalizeKitRenderConfig(savedConfig) {
+  const config = savedConfig && typeof savedConfig === "object" ? savedConfig : {};
+  const theme = config.theme && typeof config.theme === "object" ? config.theme : {};
+  const baseTheme = {
+    font: theme.font,
+    baseSize: Number(theme.baseSize ?? theme.bodySizePt) || undefined,
+    nameSize: Number(theme.nameSize ?? theme.nameSizePt) || undefined,
+    titleSize: Number(theme.titleSize) || undefined,
+    accent: theme.accent ?? theme.accentColor,
+    text: theme.text ?? theme.textColor,
+    headerAlign: theme.headerAlign,
+    paper: theme.paper ?? theme.paperSize,
+    margin: Number(theme.margin ?? theme.marginIn) || undefined,
+  };
+
+  const layout = Array.isArray(config.layout) && config.layout.length
+    ? config.layout
+    : Array.isArray(config.sections)
+      ? [...config.sections]
+          .sort((a, b) => (Number(a?.order) || 0) - (Number(b?.order) || 0))
+          .map((s) => ({
+            type: s?.type ?? s?.id,
+            title: s?.title,
+            titleSize: s?.titleSize ?? s?.titleSizePt,
+            bodySize: s?.bodySize ?? s?.bodySizePt,
+            titleColor: s?.titleColor ?? s?.color,
+          }))
+      : undefined;
+
+  return {
+    ...config,
+    theme: baseTheme,
+    layout,
+  };
+}
+
+function editorDocumentToSections(document) {
+  if (!document || typeof document !== "object") return null;
+  const skills = document.skills && typeof document.skills === "object" ? document.skills : {};
+  const skillGroups = [
+    ["Languages", skills.languages],
+    ["Frameworks", skills.frameworks],
+    ["Databases", skills.databases],
+    ["Cloud & DevOps", skills.cloudDevOps],
+  ]
+    .map(([category, items]) => ({
+      category,
+      items: Array.isArray(items) ? items.map(cleanString).filter(Boolean) : [],
+    }))
+    .filter((g) => g.items.length);
+
+  const experiences = Array.isArray(document.experiences)
+    ? document.experiences.map((exp) => ({
+        company: cleanString(exp?.company),
+        title: cleanString(exp?.role ?? exp?.title),
+        location: cleanString(exp?.location),
+        period: [cleanString(exp?.startDate), cleanString(exp?.endDate)].filter(Boolean).join(" - "),
+        bullets: Array.isArray(exp?.bullets) ? exp.bullets.map(cleanString).filter(Boolean) : [],
+      }))
+    : [];
+
+  const education = Array.isArray(document.education)
+    ? document.education.map((edu) => ({
+        school: cleanString(edu?.school),
+        degree: cleanString(edu?.degree),
+        period: cleanString(edu?.graduationDate),
+      }))
+    : [];
+
+  return {
+    summary: { summary: cleanString(document.summary) },
+    skills: { skills: skillGroups },
+    experience: { experiences },
+    education: { education },
+  };
+}
+
+function profileToKitSections(identity, account) {
+  const careers = Array.isArray(identity?.careers) ? identity.careers : [];
+  const companies = careers.map((c) => cleanString(c?.company)).filter(Boolean);
+  const latestTitle = cleanString(careers[0]?.title);
+  const summaryParts = [
+    latestTitle ? `${latestTitle} with a documented career history` : "Candidate with a documented career history",
+    companies.length ? `across ${companies.slice(0, 3).join(", ")}` : "",
+  ].filter(Boolean);
+  const catalogSkills = new Set();
+  const catalog = account?.resumeCatalog && typeof account.resumeCatalog === "object" ? account.resumeCatalog : {};
+  for (const stack of Object.values(catalog)) {
+    if (!stack || typeof stack !== "object") continue;
+    for (const skill of Object.keys(stack)) {
+      const clean = cleanString(skill);
+      if (clean) catalogSkills.add(clean);
+    }
+  }
+
+  return {
+    summary: {
+      summary: summaryParts.length ? `${summaryParts.join(" ")}.` : "Candidate profile prepared for recruiter review.",
+    },
+    skills: {
+      skills: catalogSkills.size ? [{ category: "Skills", items: [...catalogSkills].slice(0, 24) }] : [],
+    },
+    experience: {
+      experiences: careers.map((career) => ({
+        company: cleanString(career?.company),
+        title: cleanString(career?.title),
+        period: cleanString(career?.period),
+        bullets: [],
+      })),
+    },
+    education: { education: Array.isArray(identity?.education) ? identity.education : [] },
+  };
 }
 
 /**
@@ -246,6 +380,38 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
   });
   if (!buffer?.length) return null;
   return { buffer, draftPath: savedPath };
+}
+
+/** Render the saved Resume Generator kit/config as the non-job-tailored submission PDF. */
+export async function resolveSubmissionKitPdf({ applierName }) {
+  const name = cleanString(applierName);
+  if (!name) throw new Error("applierName is required");
+
+  const account = await findAccountForKit(name);
+  const profile = account?.autoBidProfile || null;
+  if (!profile) throw new Error(`No autoBidProfile found for ${name}`);
+
+  const identity = identityFromProfile(profile);
+  const rawConfig = await loadRawGeneratorConfig(name);
+  const savedConfig = normalizeKitRenderConfig(rawConfig ?? (await loadGeneratorConfig(name)));
+  const sections = editorDocumentToSections(rawConfig?.document) ?? profileToKitSections(identity, account);
+
+  const { buffer, savedPath } = await renderAgentResumePdf({
+    sections,
+    identity,
+    applierName: name,
+    jobId: "submission-kit",
+    config: savedConfig,
+  });
+  if (!buffer?.length) throw new Error("Submission Kit PDF render returned empty buffer");
+
+  const fileName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_") || "resume"}-submission-kit.pdf`;
+  return {
+    buffer,
+    fileName,
+    resumePdfPath: savedPath,
+    source: rawConfig?.document ? "editor-document" : "generator-config",
+  };
 }
 
 /**

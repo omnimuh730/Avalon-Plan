@@ -20,19 +20,20 @@ export type NavItem = {
   label: string;
   icon: ElementType;
   comingSoon?: boolean;
+  pro?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, comingSoon: true },
   { id: "job-board", label: "Job Search", icon: Briefcase },
   { id: "resumes", label: "My Resumes", icon: FileText },
-  { id: "ats", label: "My Applications", icon: Share2, comingSoon: true },
-  { id: "copilot", label: "Career Copilot", icon: Wand2, comingSoon: true },
+  { id: "ats", label: "My Applications", icon: Share2, comingSoon: true},
+  { id: "copilot", label: "Career Copilot", icon: Wand2, comingSoon: true},
   { id: "agents", label: "Agents", icon: Bot },
   { id: "mail", label: "Mail", icon: Mail },
-  { id: "calendar", label: "Calendar", icon: Calendar },
+  { id: "calendar", label: "Calendar", icon: Calendar, comingSoon: true },
   { id: "interviews", label: "Interview Prep", icon: Video, comingSoon: true },
-  { id: "vendor-monitor", label: "Vendor Monitor", icon: Activity },
+  { id: "vendor-monitor", label: "Vendor Monitor", icon: Activity, pro: true },
   { id: "reports", label: "Analytics", icon: BarChart2, comingSoon: true },
   { id: "settings", label: "Settings", icon: Settings },
 ];

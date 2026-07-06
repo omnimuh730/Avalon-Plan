@@ -118,6 +118,35 @@ export interface GeneratedJobResume {
   usage?: GeneratedResumeUsage;
 }
 
+export interface SubmissionKitResume {
+  resumeId: string;
+  fileName: string;
+  mimeType: "application/pdf";
+  contentBase64: string;
+  resumePdfPath?: string | null;
+  source?: string | null;
+  updatedAt?: string | null;
+}
+
+export async function fetchSubmissionKitResume(
+  ownerName: string,
+  signal?: AbortSignal,
+): Promise<SubmissionKitResume> {
+  const res = await fetch(
+    `${API_BASE}/personal/submission-kit-resume?ownerName=${encodeURIComponent(ownerName)}`,
+    { signal },
+  );
+  const data = (await res.json()) as {
+    success?: boolean;
+    error?: string;
+    resume?: SubmissionKitResume;
+  };
+  if (!res.ok || !data.success || !data.resume) {
+    throw new Error(data.error || "Resume Generator Kit PDF is not available");
+  }
+  return data.resume;
+}
+
 export type ResumeSectionPurpose = "summary" | "skills" | "experience";
 
 export interface ResumeGenerationProgress {

@@ -5,6 +5,7 @@ import {
   deleteResumeTemplate,
   fillResumeTemplate,
   previewResumeTemplate,
+  previewResumeTemplateImages,
 } from "../services/resumeTemplateService.js";
 
 export async function listResumeTemplatesHandler(req, res) {
@@ -100,6 +101,26 @@ export async function previewResumeTemplateHandler(req, res) {
     return res.json({ success: true, ...result });
   } catch (err) {
     console.error("POST /api/personal/resume-template-preview error", err);
+    const status = /required|Invalid|not found|missing/i.test(err.message) ? 400 : 500;
+    return res.status(status).json({ success: false, error: err.message });
+  }
+}
+
+export async function previewResumeTemplateImagesHandler(req, res) {
+  try {
+    const { templateId, ownerName, sections } = req.body || {};
+    const id = String(templateId ?? "").replace(/^upload:/, "");
+    if (!id) return res.status(400).json({ success: false, error: "templateId is required" });
+    if (!ownerName) return res.status(400).json({ success: false, error: "ownerName is required" });
+
+    const result = await previewResumeTemplateImages({
+      templateId: id,
+      ownerName,
+      sections: sections && typeof sections === "object" ? sections : {},
+    });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("POST /api/personal/resume-template-preview-images error", err);
     const status = /required|Invalid|not found|missing/i.test(err.message) ? 400 : 500;
     return res.status(status).json({ success: false, error: err.message });
   }
