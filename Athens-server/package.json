@@ -7,6 +7,7 @@
 	"scripts": {
 		"start": "nodemon index.js",
 		"test:matching": "node --test ../packages/shared/src/pricing.test.mjs ../packages/shared/src/matching.test.mjs",
+		"test:resume-templates": "node --test src/services/resumeTemplate.test.mjs",
 		"migrate": "node src/db/migration.js",
 		"migrate-passwords": "node src/db/migratePasswords.js",
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
@@ -30,6 +31,7 @@
 		"mongodb": "^6.19.0",
 		"nodemailer": "^9.0.1",
 		"pdf-parse": "^1.1.4",
+		"pizzip": "^3.2.0",
 		"puppeteer": "^25.1.0",
 		"redis": "^4.7.0",
 		"socket.io": "^4.8.1"

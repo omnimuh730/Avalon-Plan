@@ -468,7 +468,7 @@ export async function fetchMailboxPage(email, password, folder, page, pageSize, 
 }
 
 /**
- * Live folder totals from Gmail (total + unread for inbox).
+ * Live folder totals from Gmail (total + unread per folder).
  */
 export async function fetchFolderCounts(email, password) {
 	// Use the pool directly without a pre-selected mailbox — we need to
@@ -479,15 +479,12 @@ export async function fetchFolderCounts(email, password) {
 			const lock = await client.getMailboxLock(path);
 			try {
 				const total = client.mailbox.exists ?? 0;
-				let unread = 0;
-				if (folder === 'inbox') {
-					const unseen = await client.search({ unseen: true });
-					unread = Array.isArray(unseen) ? unseen.length : 0;
-				}
+				const unseen = await client.search({ unseen: true });
+				const unread = Array.isArray(unseen) ? unseen.length : 0;
 				counts[folder] = {
 					total,
 					unread,
-					badge: folder === 'inbox' ? unread : total,
+					badge: unread,
 				};
 			} finally {
 				lock.release();

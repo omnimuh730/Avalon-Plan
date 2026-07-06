@@ -51,6 +51,21 @@ function describeStep(step: InjectionStep, index: number): string {
   return `${head} = ${step.value ?? ""}`;
 }
 
+/** Final form submit — scanned for visibility but clicked by auto-submit after fill. */
+const FORM_SUBMIT_LABEL =
+  /\b(submit(\s+(application|my\s+application))?|send application|finish|complete)\b/i;
+
+function isDeferredFormSubmit(entry: {
+  target: string;
+  controlType: ControlType;
+  control: InjectionStep["control"];
+}): boolean {
+  if (entry.controlType !== "button") return false;
+  const label = entry.target.trim();
+  if (label && FORM_SUBMIT_LABEL.test(label)) return true;
+  return entry.control.properties?.some((p) => p.attribute === "type" && p.pattern === "submit") ?? false;
+}
+
 /** Only create attachFile when Analyze chose FileUpload with shouldSkip No (tailored PDF). */
 function fileUploadStep(
   id: string,
@@ -85,6 +100,7 @@ export function buildFormInjectionPlan(options: BuildInjectionPlanOptions): Inje
 
       const op = deriveOp(field.action, entry.controlType);
       if (!op || op === "attachFile") return;
+      if (op === "click" && isDeferredFormSubmit(entry)) return;
 
       const step: InjectionStep = {
         id,

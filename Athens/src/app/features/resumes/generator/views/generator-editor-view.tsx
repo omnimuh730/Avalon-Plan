@@ -23,6 +23,7 @@ import { SectionTitle } from "../components/editor-ui";
 import { JobRefField } from "../components/job-ref-field";
 import { StepCard } from "../components/step-card";
 import { ResumePreview } from "../preview/resume-preview";
+import { UploadedTemplatePreview } from "../preview/uploaded-template-preview";
 import { PAGE } from "../preview/utils";
 import { JOB_DESC_TOKEN } from "../constants/tokens";
 import { FALLBACK_MODELS, PROVIDER_OPTIONS, REASONING_OPTIONS } from "../constants/defaults";
@@ -63,6 +64,13 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
     requestPayload,
     setTheme,
     selectTemplate,
+    selectUploadedTemplate,
+    uploadTemplateFile,
+    removeUploadedTemplate,
+    uploadedTemplates,
+    templatesLoading,
+    usingUploadedTemplate,
+    uploadedTemplate,
     patchSection,
     moveSection,
     applyPalette,
@@ -116,24 +124,51 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
                 exporting={exporting}
                 onExportPdf={() => void exportResume("pdf")}
                 onExportDocx={() => void exportResume("docx")}
+                disablePdf={usingUploadedTemplate}
+                disableThemeLayout={usingUploadedTemplate}
               />
             </div>
 
-            <ResumePreview
-              template={template}
-              theme={theme}
-              layout={layout}
-              identity={identity}
-              generated={generated}
-              generating={generating}
-              onEdit={handlePreviewEdit}
-              onTitleChange={(id, title) => patchSection(id, { title })}
-            />
+            {usingUploadedTemplate && uploadedTemplate && (
+              <div className="mb-3 rounded-xl border border-sky-200/70 dark:border-sky-500/30 bg-sky-50/60 dark:bg-sky-500/10 px-3 py-2 text-[11px] text-sky-800 dark:text-sky-200">
+                Using uploaded template <strong>{uploadedTemplate.name}</strong> ({uploadedTemplate.slotCount} placeholders).
+                Preview is rendered from your DOCX template; Word export uses the same fill pipeline.
+              </div>
+            )}
+
+            {usingUploadedTemplate ? (
+              <UploadedTemplatePreview
+                templateId={config.templateId}
+                ownerName={applier?.name}
+                generated={generated}
+                generating={generating}
+              />
+            ) : (
+              <ResumePreview
+                template={template}
+                theme={theme}
+                layout={layout}
+                identity={identity}
+                generated={generated}
+                generating={generating}
+                onEdit={handlePreviewEdit}
+                onTitleChange={(id, title) => patchSection(id, { title })}
+              />
+            )}
             <p className="text-[11px] text-neutral-400 dark:text-white/40 mt-2">
-              Rendered at true {theme.paper === "letter" ? "Letter" : "A4"} size — export produces an exact copy.{" "}
-              {generated
-                ? "Click the summary or any bullet to edit (⌘/Ctrl+B toggles bold)."
-                : "Sample text until you Generate."}
+              {usingUploadedTemplate ? (
+                <>
+                  Preview approximates your uploaded Word layout. Export Word for the exact document.
+                  {generated ? " Generate to fill {} placeholders." : " Generate to fill {} placeholders."}
+                </>
+              ) : (
+                <>
+                  Rendered at true {theme.paper === "letter" ? "Letter" : "A4"} size — export produces an exact copy.{" "}
+                  {generated
+                    ? "Click the summary or any bullet to edit (⌘/Ctrl+B toggles bold)."
+                    : "Sample text until you Generate."}
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -449,12 +484,20 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
       </div>
 
       <DesignModal open={designPanel === "template"} title="Template" icon={LayoutTemplate} onClose={closeDesignPanel} wide>
-        <TemplatePanel templateId={config.templateId} onSelect={selectTemplate} />
+        <TemplatePanel
+          templateId={config.templateId}
+          onSelect={selectTemplate}
+          uploadedTemplates={uploadedTemplates}
+          templatesLoading={templatesLoading}
+          onUpload={uploadTemplateFile}
+          onSelectUploaded={selectUploadedTemplate}
+          onDeleteUploaded={removeUploadedTemplate}
+        />
       </DesignModal>
-      <DesignModal open={designPanel === "theme"} title="Theme" icon={Palette} onClose={closeDesignPanel}>
+      <DesignModal open={designPanel === "theme" && !usingUploadedTemplate} title="Theme" icon={Palette} onClose={closeDesignPanel}>
         <ThemePanel theme={theme} onChange={setTheme} onApplyPalette={applyPalette} />
       </DesignModal>
-      <DesignModal open={designPanel === "layout"} title="Section layout" icon={ListChecks} onClose={closeDesignPanel}>
+      <DesignModal open={designPanel === "layout" && !usingUploadedTemplate} title="Section layout" icon={ListChecks} onClose={closeDesignPanel}>
         <SectionLayoutPanel layout={layout} onPatch={patchSection} onMove={moveSection} />
       </DesignModal>
     </>

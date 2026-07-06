@@ -41,6 +41,7 @@ export function useMailThreads(applierName: string | undefined) {
   const [replyTo, setReplyTo] = useState<MailThread | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -213,7 +214,7 @@ export function useMailThreads(applierName: string | undefined) {
   const sendCompose = useCallback(
     async (to: string, subject: string, body: string) => {
       if (!applierName) return;
-      setSyncing(true);
+      setSending(true);
       try {
         await sendMailMessage(applierName, {
           to,
@@ -227,7 +228,7 @@ export function useMailThreads(applierName: string | undefined) {
         setError(e instanceof Error ? e.message : "Failed to send mail");
         throw e;
       } finally {
-        setSyncing(false);
+        setSending(false);
       }
     },
     [applierName, replyTo],
@@ -241,6 +242,7 @@ export function useMailThreads(applierName: string | undefined) {
     openCompose,
     loading,
     syncing,
+    sending,
     error,
     total,
     page,

@@ -32,7 +32,23 @@ export function checkTokenBudget(runId: string | undefined, projectedTokens: num
 }
 
 export async function proxyJson(url: string, init: RequestInit) {
+  let model = '';
+  try {
+    const parsed = typeof init.body === 'string' ? JSON.parse(init.body) : null;
+    if (parsed?.model) model = String(parsed.model);
+  } catch {
+    /* body isn't JSON-parseable — skip model label */
+  }
+  const modelLabel = model ? ` model=${model}` : '';
+  const startedAt = Date.now();
+  console.log(`[llm] → ${init.method || 'GET'} ${url}${modelLabel}`);
+
   const res = await fetch(url, init);
   const data = await res.json().catch(() => ({}));
+  const elapsedMs = Date.now() - startedAt;
+  const line = `[llm] ← ${res.status} ${url}${modelLabel} (${elapsedMs}ms)`;
+  if (!res.ok) console.error(`${line} — ${data?.error?.message || 'upstream error'}`);
+  else console.log(line);
+
   return { res, data };
 }

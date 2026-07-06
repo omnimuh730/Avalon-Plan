@@ -1,3 +1,7 @@
+import { installTerminalLogger, requestLogger } from '@nextoffer/shared/terminal-log';
+
+installTerminalLogger('unified-ai');
+
 import express from 'express';
 import cors from 'cors';
 import { CONFIG } from './config.js';
@@ -12,6 +16,7 @@ import { usageHandler } from './routes/usageRoute.js';
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
+app.use(requestLogger('api'));
 
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'unified-ai-server' }));
 

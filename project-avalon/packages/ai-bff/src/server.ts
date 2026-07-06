@@ -1,5 +1,6 @@
 import cors from 'cors';
 import express from 'express';
+import { requestLogger } from '@nextoffer/shared/terminal-log';
 import { loadConfigFromEnv, serverConfig } from './config.js';
 import { createAiKit } from './kit.js';
 import { errorMiddleware } from './middleware/error.js';
@@ -11,6 +12,7 @@ export function createAiBffApp(config = loadConfigFromEnv()) {
 
   app.use(cors({ origin: serverConfig.corsOrigin }));
   app.use(express.json({ limit: '20mb' }));
+  app.use(requestLogger('api'));
   app.use(createRoutes(kit));
   app.use(errorMiddleware);
 

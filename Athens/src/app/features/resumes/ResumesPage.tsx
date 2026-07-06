@@ -8,6 +8,7 @@ import { DEFAULT_TABS, normalizeTab, PATHS, type ResumesTab } from "../../config
 import { useResumeNavigationOptional } from "../../context/ResumeNavigationContext";
 import { initResumeStorage } from "../../services/resumeStorage";
 import { ResumeLibraryTab } from "./components/ResumeLibraryTab";
+import { ResumeAnalysisTab } from "./components/ResumeAnalysisTab";
 import { ResumeGeneratorPanel } from "./generator/ResumeGeneratorPanel";
 import type { FullRun } from "./generator/history/history-types";
 
@@ -108,6 +109,9 @@ export function ResumesPage() {
               onPendingRunConsumed={() => setPendingRun(null)}
               onGenerated={() => setHistoryKey((k) => k + 1)}
             />
+          )}
+          {tab === "analysis" && (
+            <ResumeAnalysisTab onOpenLibrary={() => setTab("library")} />
           )}
         </TabTransition>
       </div>

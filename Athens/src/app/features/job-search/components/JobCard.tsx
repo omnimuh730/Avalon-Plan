@@ -139,7 +139,7 @@ export function JobCard({
         aria-pressed={onSelect ? selected : undefined}
         className={cn(
           "group bg-card border-2 rounded-xl p-5 shadow-sm flex flex-col gap-4 transition-all duration-150",
-          onSelect && "cursor-pointer",
+          onSelect && "cursor-pointer select-none",
           selected
             ? "border-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.25)] bg-primary/[0.03]"
             : "border-transparent ring-1 ring-border hover:shadow-md hover:ring-primary/20",
@@ -157,7 +157,7 @@ export function JobCard({
                     href={job.companyUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline truncate"
+                    className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline truncate select-text"
                     data-no-select
                   >
                     <Building2 className="w-3.5 h-3.5 shrink-0" />
@@ -265,7 +265,11 @@ export function JobCard({
                 ) : (
                   <Sparkles className="w-4 h-4" />
                 )}
-                {resumeReady ? "View résumé" : "Resume"}
+                {resumeState?.status === "generating"
+                  ? "Generating…"
+                  : resumeReady
+                    ? "View résumé"
+                    : "Generate résumé"}
               </Button>
             ) : null}
             <Button

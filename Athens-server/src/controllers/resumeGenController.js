@@ -1,7 +1,6 @@
 import { ObjectId } from "mongodb";
 import { accountInfoCollection, resumeGeneratorConfigCollection, resumeGenerationsCollection } from "../db/mongo.js";
 import { syncGeneratedResumeAfterRun, deleteGenerationRun } from "../services/generatedResumeService.js";
-import { analyzeGeneratedResumeSkills } from "../services/generatedResumeSkillAnalysis.js";
 import { renderAgentResumePdf } from "../services/agentResumePdf.js";
 import {
   PROVIDERS,
@@ -27,20 +26,6 @@ async function findProfile(applierNameRaw) {
     acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, proj);
   }
   return acc?.autoBidProfile || null;
-}
-
-/** Load resume catalog for techStack matching. */
-async function findResumeCatalog(applierNameRaw) {
-  const name = cleanString(applierNameRaw);
-  if (!name || !accountInfoCollection) return null;
-  const proj = { projection: { resumeCatalog: 1 } };
-  let acc = await accountInfoCollection.findOne({ name }, proj);
-  if (!acc) {
-    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, proj);
-  }
-  const catalog = acc?.resumeCatalog;
-  return catalog && typeof catalog === "object" && !Array.isArray(catalog) ? catalog : null;
 }
 
 function apiKeyFor(profile, providerId) {
@@ -102,12 +87,15 @@ const PURPOSES = new Set(["summary", "skills", "experience", "education"]);
 // Resolve the reference tokens a prompt may use into concrete strings, derived
 // from the candidate profile + JD. `{career}` is a newline-joined summary of all
 // roles; `{companyN_*}` expose each role's fields (N is 1-based, by recency order
-// as stored on the profile).
-function buildTokenMap(identity, jobDescription) {
+// as stored on the profile). `{job_skills}` are the skills already extracted for
+// a structured (MongoDB) job — empty for free-text generation.
+function buildTokenMap(identity, jobDescription, jobSkills) {
   const careers = Array.isArray(identity?.careers) ? identity.careers : [];
   const field = (v) => cleanString(v);
+  const skills = Array.isArray(jobSkills) ? jobSkills.map(field).filter(Boolean) : [];
   const map = {
     job_description: cleanString(jobDescription),
+    job_skills: skills.join(", "),
     career: careers
       .map((c) => [field(c?.title), field(c?.company), field(c?.period)].filter(Boolean).join(" | "))
       .filter(Boolean)
@@ -166,12 +154,13 @@ export async function prepareGeneration(body) {
  * cacheKey), each step appends a turn, and final steps return JSON for a section.
  * `onStep` is invoked after every step for live progress streaming.
  */
-export async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, reasoningEffort }, onStep) {
+export async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, jobSkills, reasoningEffort }, onStep) {
   // Substitute reference tokens in any prompt with real values:
   //   {job_description}                          → the JD text the user typed
+  //   {job_skills}                               → skills pre-fetched for a structured job
   //   {career}                                   → all roles, one per line
   //   {companyN_name|title|duration} (N = 1,2,…) → fields of the Nth career
-  const tokenMap = buildTokenMap(identity, jobDescription);
+  const tokenMap = buildTokenMap(identity, jobDescription, jobSkills);
   const applyTokens = (text) =>
     String(text ?? "").replace(/\{[a-z0-9_]+\}/gi, (match) => {
       const key = match.slice(1, -1).toLowerCase();
@@ -229,36 +218,13 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
   return { sections, perStep, usage };
 }
 
-/** Run structured LLM skill analysis after section generation, then sync library. */
-async function finalizeGenerationRun({ prep, body, result, startedAt, onStep }) {
-  let skillProfile = [];
-  let techStack = null;
-  let skillAnalysisError = null;
-
-  const catalog = await findResumeCatalog(body.applierName);
-
-  try {
-    const skillResult = await analyzeGeneratedResumeSkills({
-      sections: result.sections,
-      identity: body.identity,
-      jobDescription: body.jobDescription,
-      catalog,
-      providerId: prep.providerId,
-      apiKey: prep.apiKey,
-      model: prep.model,
-      onProgress: onStep,
-    });
-    skillProfile = skillResult.skillProfile;
-    techStack = skillResult.techStack;
-    result.perStep.push({
-      index: result.perStep.length + 1,
-      ...skillResult.perStep,
-    });
-    result.usage = addUsage(result.usage, skillResult.usage);
-  } catch (err) {
-    skillAnalysisError = err.message;
-    console.warn("[resume-generate] skill analysis failed:", err.message);
-  }
+/** Persist the finished run and sync it into the résumé library. */
+async function finalizeGenerationRun({ prep, body, result, startedAt }) {
+  // Skill proficiency is derived by the scoring logic downstream, so no separate
+  // LLM analysis pass runs here — the generation ends at the section steps.
+  const skillProfile = [];
+  const techStack = null;
+  const skillAnalysisError = null;
 
   const generationId = await saveGenerationRun({
     applierName: cleanString(body.applierName) || null,

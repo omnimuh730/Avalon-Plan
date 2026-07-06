@@ -134,6 +134,7 @@ async function fetchRetry(url, init, { timeoutMs = 120000, retries = 4, baseDela
       // A caller-requested abort is terminal — never retry through a Stop.
       if (signal?.aborted) throw err;
       if (attempt >= retries) throw err;
+      console.warn(`[llm] fetch error (attempt ${attempt + 1}/${retries + 1}) ${url} — ${err.message}, retrying...`);
       await sleep(baseDelayMs * 2 ** attempt);
       continue;
     }
@@ -141,6 +142,7 @@ async function fetchRetry(url, init, { timeoutMs = 120000, retries = 4, baseDela
     if (attempt >= retries) return response;
     const retryAfter = Number(response.headers.get('retry-after'));
     const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : baseDelayMs * 2 ** attempt;
+    console.warn(`[llm] status ${response.status} (attempt ${attempt + 1}/${retries + 1}) ${url} — retrying in ${Math.min(delay, 15000)}ms`);
     await sleep(Math.min(delay, 15000));
   }
 }
@@ -175,6 +177,14 @@ export async function chatCompletion({
     body.reasoning_effort = reasoningEffort;
   }
 
+  const promptChars = messages.reduce((sum, m) => sum + String(m?.content || '').length, 0);
+  const startedAt = Date.now();
+  if (process.env.LLM_LOG !== 'off') {
+    console.log(
+      `[llm] → ${feature} · ${p.id}/${model} — ${messages.length} msg (${promptChars} chars)${jsonMode ? ' json' : ''}${runId ? ` run=${runId}` : ''}`,
+    );
+  }
+
   const response = await fetchRetry(
     `${AI_BASE}/v1/chat/completions`,
     {
@@ -191,21 +201,26 @@ export async function chatCompletion({
   );
 
   const data = await response.json().catch(() => ({}));
+  const elapsedMs = Date.now() - startedAt;
   if (!response.ok) {
     const err = new Error(data?.error?.message || `${p.label} request failed (${response.status})`);
     err.status = response.status;
     err.provider = p.id;
+    console.error(`[llm] ✖ ${feature} · ${p.id}/${model} — ${response.status} after ${elapsedMs}ms: ${err.message}`);
     throw err;
   }
   const content = data?.choices?.[0]?.message?.content;
-  if (content == null) throw new Error(`${p.label} returned an empty response.`);
+  if (content == null) {
+    console.error(`[llm] ✖ ${feature} · ${p.id}/${model} — empty response after ${elapsedMs}ms`);
+    throw new Error(`${p.label} returned an empty response.`);
+  }
   const usage = summarizeUsage(data?.usage, model);
   if (process.env.LLM_LOG !== 'off') {
     const cost = usage.cost != null ? formatCostUsd(usage.cost) : 'n/a';
     const cached = usage.cachedTokens ? ` (+${usage.cachedTokens} cached)` : '';
-    // one line per call: purpose · provider/model · tokens · cost
+    // one line per call: purpose · provider/model · tokens · cost · duration
     console.log(
-      `[llm] ${feature} · ${p.id}/${model} — in ${usage.inputTokens}${cached} out ${usage.outputTokens} · ${cost}`,
+      `[llm] ← ${feature} · ${p.id}/${model} — in ${usage.inputTokens}${cached} out ${usage.outputTokens} · ${cost} · ${elapsedMs}ms`,
     );
   }
   return { content, usage };

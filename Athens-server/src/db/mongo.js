@@ -27,6 +27,7 @@ let mailMessagesCollection;
 let mailSyncStateCollection;
 let mailUserLabelsCollection;
 let userResumesCollection;
+let resumeTemplatesCollection;
 let avalonRunsCollection;
 // Materialized per-user job match scores (fan-out on write) + rescore state.
 let jobMatchScoresCollection;
@@ -35,6 +36,19 @@ let matchProfileStateCollection;
 let userSkillsCollection;
 // Deduped global dictionary of every skill seen in a job description (AI-categorized).
 let skillDictionaryCollection;
+// 3rd-party scraped jobs ingested via the expose API (separate from job_market).
+let externalScrapedJobsCollection;
+
+async function ensureExternalScrapedJobsIndexes() {
+	if (!externalScrapedJobsCollection) return;
+	await externalScrapedJobsCollection.createIndex({ createdAt: -1 });
+	await externalScrapedJobsCollection.createIndex({ sender: 1, createdAt: -1 });
+	await externalScrapedJobsCollection.createIndex({ source: 1, createdAt: -1 });
+	await externalScrapedJobsCollection.createIndex(
+		{ jobLink: 1 },
+		{ unique: true, partialFilterExpression: { jobLink: { $type: "string" } } },
+	);
+}
 
 async function ensureMailCollectionsIndexes() {
 	if (mailMessagesCollection) {
@@ -80,6 +94,9 @@ async function ensureSkillCollectionsIndexes() {
 		await userResumesCollection.createIndex({ ownerId: 1, techStack: 1 });
 		await userResumesCollection.createIndex({ ownerName: 1, uploadedAt: -1 });
 		await userResumesCollection.createIndex({ ownerName: 1, analyzed: 1 });
+	}
+	if (resumeTemplatesCollection) {
+		await resumeTemplatesCollection.createIndex({ ownerName: 1, uploadedAt: -1 });
 	}
 	if (jobsCollection) {
 		await jobsCollection.createIndex({ 'skillAnalysis.status': 1, 'skillAnalysis.queuedAt': 1 });
@@ -142,11 +159,13 @@ async function initMongo() {
 	mailSyncStateCollection = db.collection('mail_sync_state');
 	mailUserLabelsCollection = db.collection('mail_user_labels');
 	userResumesCollection = db.collection('user_resumes');
+	resumeTemplatesCollection = db.collection('resume_templates');
 	avalonRunsCollection = db.collection('avalon_apply_runs');
 	jobMatchScoresCollection = db.collection('job_match_scores');
 	matchProfileStateCollection = db.collection('match_profile_state');
 	userSkillsCollection = db.collection('user_skills');
 	skillDictionaryCollection = db.collection('skill_dictionary');
+	externalScrapedJobsCollection = db.collection('external_scraped_jobs');
 	try {
 		await avalonRunsCollection.createIndex({ runId: 1 }, { unique: true });
 		await avalonRunsCollection.createIndex({ applierName: 1, startedAt: -1 });
@@ -158,6 +177,7 @@ async function initMongo() {
 	await ensureSkillCollectionsIndexes();
 	await ensureMailCollectionsIndexes();
 	await ensureMatchScoreIndexes();
+	await ensureExternalScrapedJobsIndexes();
 	// Remove pre-existing duplicate applyLink jobs, then enforce uniqueness so
 	// no duplicate links can be inserted afterward. Index creation must run only
 	// after the cleanup completes, otherwise it would fail on existing dupes.
@@ -223,7 +243,7 @@ function getBidRecordsCollection(source = 'cloud') {
 			collection: null,
 			error:
 				normalized === 'cloud'
-					? cloudMirrorConnectError || 'Cloud MongoDB is not connected. Set MONGO_CLOUD_URL and restart lancer-backend.'
+					? cloudMirrorConnectError || 'Cloud MongoDB is not connected. Set MONGO_CLOUD_URL and restart athens-server.'
 					: 'Local MongoDB is not connected.',
 		};
 	}
@@ -282,10 +302,12 @@ export {
 	mailSyncStateCollection,
 	mailUserLabelsCollection,
 	userResumesCollection,
+	resumeTemplatesCollection,
 	avalonRunsCollection,
 	jobMatchScoresCollection,
 	matchProfileStateCollection,
 	userSkillsCollection,
 	skillDictionaryCollection,
+	externalScrapedJobsCollection,
 	closeMongo
 };

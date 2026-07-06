@@ -67,9 +67,9 @@ export async function removeJobs(ids: string[]): Promise<{ success?: boolean; de
 }
 
 /** Fetch a job's full detail (incl. description) by Mongo id. Returns "" if unavailable. */
-export async function fetchJobDescription(jobId: string): Promise<string> {
+export async function fetchJobDescription(jobId: string, signal?: AbortSignal): Promise<string> {
   try {
-    const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`);
+    const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`, { signal });
     if (!res.ok) return "";
     const data = (await res.json()) as { data?: { description?: string; jobDescription?: string } };
     return String(data.data?.description ?? data.data?.jobDescription ?? "").trim();
@@ -116,6 +116,35 @@ export interface GeneratedJobResume {
   model?: string | null;
   provider?: string | null;
   usage?: GeneratedResumeUsage;
+}
+
+export interface SubmissionKitResume {
+  resumeId: string;
+  fileName: string;
+  mimeType: "application/pdf";
+  contentBase64: string;
+  resumePdfPath?: string | null;
+  source?: string | null;
+  updatedAt?: string | null;
+}
+
+export async function fetchSubmissionKitResume(
+  ownerName: string,
+  signal?: AbortSignal,
+): Promise<SubmissionKitResume> {
+  const res = await fetch(
+    `${API_BASE}/personal/submission-kit-resume?ownerName=${encodeURIComponent(ownerName)}`,
+    { signal },
+  );
+  const data = (await res.json()) as {
+    success?: boolean;
+    error?: string;
+    resume?: SubmissionKitResume;
+  };
+  if (!res.ok || !data.success || !data.resume) {
+    throw new Error(data.error || "Resume Generator Kit PDF is not available");
+  }
+  return data.resume;
 }
 
 export type ResumeSectionPurpose = "summary" | "skills" | "experience";
@@ -176,6 +205,7 @@ export async function generateJobResumeStream(
     forceRegenerate?: boolean;
   },
   onProgress?: (progress: ResumeGenerationProgress) => void,
+  signal?: AbortSignal,
 ): Promise<GeneratedJobResume> {
   let donePayload: Record<string, unknown> | null = null;
   await streamSSE(
@@ -214,6 +244,7 @@ export async function generateJobResumeStream(
       if (event === "done") donePayload = data;
       if (event === "error") throw new Error(String(data.error ?? "Résumé generation failed"));
     },
+    signal,
   );
   if (!donePayload) throw new Error("Résumé generation ended without a result");
   return parseGeneratedJobResume(donePayload, params.applierName);

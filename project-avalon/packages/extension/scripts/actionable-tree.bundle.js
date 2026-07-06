@@ -349,10 +349,13 @@ var AvalonActionable = (() => {
     }
     return null;
   }
+  function isDocumentRoot(el) {
+    return el === document.body || el === document.documentElement;
+  }
   function findFileWidgetRoot(fileInput) {
     const candidates = [];
     let current = fileInput.parentElement;
-    while (current && current !== document.body) {
+    while (current && !isDocumentRoot(current)) {
       const filesInCurrent = current.querySelectorAll('input[type="file"]');
       if (filesInCurrent.length === 1 && filesInCurrent[0] === fileInput) {
         candidates.push(current);
@@ -372,7 +375,11 @@ var AvalonActionable = (() => {
     if (candidates.length > 0) {
       return candidates.sort((a, b) => visibleText(a).length - visibleText(b).length)[0];
     }
-    return fileInput.closest("label") ?? fileInput.parentElement ?? fileInput;
+    const label = fileInput.closest("label");
+    if (label) return label;
+    const parent = fileInput.parentElement;
+    if (parent && !isDocumentRoot(parent)) return parent;
+    return fileInput;
   }
   function fileWidgetLabel(fileInput, widgetRoot) {
     const root = widgetRoot ?? findFileWidgetRoot(fileInput);
@@ -733,6 +740,15 @@ var AvalonActionable = (() => {
     if (options.length === 0) return null;
     return { options, source: "probed" };
   }
+  function isNonComboboxCodeInput(input) {
+    if (input.getAttribute("role") === "combobox" || input.getAttribute("aria-autocomplete") === "list" || input.getAttribute("aria-haspopup") === "listbox" || input.hasAttribute("aria-controls")) {
+      return false;
+    }
+    const autocomplete = (input.getAttribute("autocomplete") ?? "").toLowerCase();
+    if (autocomplete === "one-time-code") return true;
+    if (input.maxLength > 0 && input.maxLength <= 2) return true;
+    return false;
+  }
   function collectFocusProbeCandidates(scope, skipElements = /* @__PURE__ */ new Set()) {
     const candidates = [];
     const seen = /* @__PURE__ */ new Set();
@@ -742,6 +758,7 @@ var AvalonActionable = (() => {
       if (!(el instanceof HTMLInputElement)) continue;
       if (skipElements.has(el) || seen.has(el)) continue;
       if (isListboxInternalNoise(el)) continue;
+      if (isNonComboboxCodeInput(el)) continue;
       if (!isEffectivelyVisible(el)) continue;
       seen.add(el);
       candidates.push(el);
@@ -948,7 +965,7 @@ var AvalonActionable = (() => {
   function isAlternateUploadAction(seed) {
     return seed.tagName === "BUTTON" && !isFileUploadTriggerButton(seed);
   }
-  function dedupeSmallestUnits(children, childToSeed) {
+  function dedupeSmallestUnits(children, childToSeed, scope) {
     const unique = [...new Set(children)];
     return unique.filter((child) => {
       const childSeed = childToSeed.get(child);
@@ -967,6 +984,9 @@ var AvalonActionable = (() => {
         const otherSeed = childToSeed.get(other);
         if (!otherSeed) continue;
         if (otherSeed instanceof HTMLInputElement && otherSeed.type === "file" && isAlternateUploadAction(childSeed)) {
+          continue;
+        }
+        if (other === scope && otherSeed instanceof HTMLInputElement && otherSeed.type === "file" && childSeed !== otherSeed && !otherSeed.contains(childSeed)) {
           continue;
         }
         if (seedPriority(otherSeed) > seedPriority(childSeed)) return false;
@@ -1272,14 +1292,19 @@ var AvalonActionable = (() => {
     for (const widget of fileWidgets) {
       const { fileInput, widgetRoot, groupLabel, suppressedSeeds: widgetSuppressed } = widget;
       const fieldRoot = findFieldRoot(fileInput);
-      const childUnit = fieldRoot && widgetRoot.contains(fieldRoot) ? fieldRoot : widgetRoot;
+      let childUnit = fieldRoot && widgetRoot.contains(fieldRoot) ? fieldRoot : widgetRoot;
+      if (isDocumentRoot(childUnit)) childUnit = fileInput;
+      let parent = widgetRoot;
+      if (isDocumentRoot(parent)) parent = fileInput;
       childUnitBySeed.set(fileInput, childUnit);
-      parentBySeed.set(fileInput, widgetRoot);
+      parentBySeed.set(fileInput, parent);
       if (groupLabel) targetLabelBySeed.set(fileInput, groupLabel);
       for (const el of widgetSuppressed) suppressedSeeds.add(el);
-      for (const btn of widgetRoot.querySelectorAll("button")) {
-        if (widgetSuppressed.has(btn)) continue;
-        parentBySeed.set(btn, widgetRoot);
+      if (!isDocumentRoot(widgetRoot)) {
+        for (const btn of widgetRoot.querySelectorAll("button")) {
+          if (widgetSuppressed.has(btn)) continue;
+          parentBySeed.set(btn, widgetRoot);
+        }
       }
     }
     const phoneOverrides = buildPhoneOverrides(phoneFields);
@@ -1410,7 +1435,7 @@ var AvalonActionable = (() => {
       if (countrySeed && !seeds.includes(countrySeed)) seeds.push(countrySeed);
     }
     const childToSeed = buildChildToSeed(seeds, scope, overrides);
-    const childUnits = dedupeSmallestUnits([...childToSeed.keys()], childToSeed);
+    const childUnits = dedupeSmallestUnits([...childToSeed.keys()], childToSeed, scope);
     const childSet = new Set(childUnits);
     const parentToChildren = /* @__PURE__ */ new Map();
     const parentOrder = [];

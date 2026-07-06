@@ -1,6 +1,9 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import { installTerminalLogger, requestLogger } from "@nextoffer/shared/terminal-log";
+installTerminalLogger("athens");
+
 import http from "http";
 import express from "express";
 import cors from 'cors';
@@ -22,6 +25,7 @@ import vendorMonitorRoutes from "./src/routes/vendorMonitorRoutes.js";
 import mailRoutes from "./src/routes/mailRoutes.js";
 import settingsRoutes from "./src/routes/settingsRoutes.js";
 import agentRoutes from "./src/routes/agentRoutes.js";
+import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
 import {
 	getAutoBidProfile,
@@ -37,6 +41,7 @@ const host = process.env.HOST !== undefined && process.env.HOST !== "" ? process
 
 app.use(express.json({ limit: '50mb' }));
 app.use(cors({ origin: '*' }));
+app.use(requestLogger('api'));
 
 async function bootstrap() {
 	// Mongo-only startup — no Redis/Qdrant/Ollama/Docker. Matching is served from
@@ -63,6 +68,7 @@ app.use('/api', vendorMonitorRoutes);
 app.use('/api', mailRoutes);
 app.use('/api', settingsRoutes);
 app.use('/api/agents', agentRoutes);
+app.use('/api', scrapedJobIngestRoutes);
 
 app.get("/personal/auto-bid-profile", getAutoBidProfile);
 app.put("/personal/auto-bid-profile", upsertAutoBidProfile);

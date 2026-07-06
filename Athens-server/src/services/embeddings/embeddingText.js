@@ -1,23 +1,35 @@
 const MAX_RESUME_TEXT = 8000;
 const MAX_SKILL_LINES = 80;
 
+function resolveEntryLevel(item) {
+	if (item?.level != null) {
+		const n = Number.parseInt(String(item.level), 10);
+		if (Number.isFinite(n)) return Math.max(1, Math.min(5, n));
+	}
+	const strength = Number(item?.strength ?? item?.score ?? 0);
+	if (Number.isFinite(strength) && strength > 0) {
+		if (strength <= 5) return Math.max(1, Math.min(5, Math.round(strength)));
+		return Math.max(1, Math.min(5, Math.round(strength / 2)));
+	}
+	return 0;
+}
+
 function sortSkillProfile(skillProfile = []) {
 	return [...skillProfile]
 		.map((item) => {
 			const name = String(item?.name ?? item?.skill ?? '').trim();
-			let strength = Number(item?.strength ?? item?.score ?? 0);
-			if (!Number.isFinite(strength)) strength = 5;
-			strength = Math.max(0, Math.min(10, strength));
-			return { name, strength };
+			const level = resolveEntryLevel(item);
+			const category = String(item?.category ?? 'hard').trim().toLowerCase();
+			return { name, category, level };
 		})
-		.filter((item) => item.name && item.strength > 0)
-		.sort((a, b) => b.strength - a.strength);
+		.filter((item) => item.name && item.level > 0)
+		.sort((a, b) => b.level - a.level || a.name.localeCompare(b.name));
 }
 
 function formatSkillProfile(skillProfile = []) {
 	const lines = [];
 	for (const item of sortSkillProfile(skillProfile).slice(0, MAX_SKILL_LINES)) {
-		lines.push(`${item.name} (${item.strength}/10)`);
+		lines.push(`${item.name} L${item.level} (${item.category})`);
 	}
 	return lines.join(', ');
 }
@@ -77,3 +89,5 @@ export function buildJobEmbeddingText(jobDoc) {
 	if (truncatedDescription) parts.push(`Description: ${truncatedDescription}`);
 	return parts.join('\n\n').trim();
 }
+
+export { resolveEntryLevel };

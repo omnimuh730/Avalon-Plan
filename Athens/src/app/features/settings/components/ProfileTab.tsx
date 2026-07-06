@@ -20,7 +20,7 @@ import { CareerTimeline } from "./CareerTimeline";
 import { DefaultModelCard } from "./DefaultModelCard";
 
 export function ProfileTab() {
-  const { applier, applierReady } = useApplier();
+  const { applier, applierReady, setApplier } = useApplier();
   const [profile, setProfile] = useState<UserProfile>(() => emptyProfile());
   const [vendorAllowed, setVendorAllowed] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -154,7 +154,7 @@ export function ProfileTab() {
         </div>
       ) : (
         <>
-          <ProfileBanner profile={profile} />
+          <ProfileBanner profile={profile} tier={applier.tier} />
           <VendorAccessRow enabled={vendorAllowed} onChange={setVendorAllowed} disabled={saving} />
 
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)] gap-4 items-start">
@@ -174,7 +174,22 @@ export function ProfileTab() {
                     applierName={applier.name}
                     currentProvider={profile.defaultProvider}
                     currentModel={profile.defaultModel}
-                    onSaved={(defaultProvider, defaultModel) => patch({ defaultProvider, defaultModel })}
+                    onSaved={(defaultProvider, defaultModel) => {
+                      patch({ defaultProvider, defaultModel });
+                      setApplier((prev) => {
+                        if (!prev) return prev;
+                        return {
+                          ...prev,
+                          autoBidProfile: {
+                            ...(typeof prev.autoBidProfile === "object" && prev.autoBidProfile
+                              ? prev.autoBidProfile
+                              : {}),
+                            defaultProvider,
+                            defaultModel,
+                          },
+                        };
+                      });
+                    }}
                   />
                 ) : null}
               </div>

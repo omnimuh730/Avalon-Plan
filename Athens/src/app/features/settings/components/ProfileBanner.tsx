@@ -1,22 +1,32 @@
 import React from "react";
-import { Linkedin, Github, Globe } from "lucide-react";
+import { Crown, Linkedin, Github, Globe } from "lucide-react";
 import { Av } from "../../../components/ui";
 import { computeProfileCompletion } from "../../../data/settings/profileCompletion";
 import type { UserProfile } from "../../../data/settings/profile";
+import { isProTier } from "../../../lib/pro";
 
-export function ProfileBanner({ profile }: { profile: UserProfile }) {
+export function ProfileBanner({ profile, tier }: { profile: UserProfile; tier?: string | null }) {
   const pct = computeProfileCompletion(profile);
   const circumference = 2 * Math.PI * 36;
   const offset = circumference - (pct / 100) * circumference;
   const displayName =
     profile.fullName.trim() || `${profile.firstName} ${profile.lastName}`.trim() || "Your profile";
+  const pro = isProTier(tier);
 
   return (
     <div className="bg-gradient-to-br from-primary/10 via-card to-violet-500/5 border border-border rounded-2xl p-5 shadow-sm mb-4">
       <div className="flex flex-col md:flex-row md:items-center gap-5">
         <Av name={displayName} size="lg" />
         <div className="flex-1 min-w-0">
-          <h2 className="text-xl font-bold text-foreground truncate">{displayName}</h2>
+          <div className="flex items-center gap-2 min-w-0 flex-wrap">
+            <h2 className="text-xl font-bold text-foreground truncate">{displayName}</h2>
+            {pro && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-700">
+                <Crown className="w-3.5 h-3.5" />
+                Pro
+              </span>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground mt-1 truncate">
             {[profile.city, profile.state, profile.country].filter(Boolean).join(", ") || "Add your location"}
           </p>

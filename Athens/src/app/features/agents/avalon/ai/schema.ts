@@ -21,7 +21,7 @@ export const FORM_ACTION_PLAN_SCHEMA: JsonSchemaDefinition = {
             value: { type: "string", description: "Text to type, exact option label, or N/A for Click / skip" },
             notes: { type: "string", description: "Brief rationale (profile source, why skip, etc.)" },
           },
-          required: ["id", "action", "shouldSkip", "value"],
+          required: ["id", "action", "shouldSkip", "value", "notes"],
           additionalProperties: false,
         },
       },

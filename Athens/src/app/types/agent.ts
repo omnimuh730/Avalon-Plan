@@ -117,6 +117,10 @@ export interface DeployOptions {
   source: string;
   jobIds?: string[];
   jobs?: Array<{ id: string; title: string; company: string; url: string; source: string }>;
+  /** When set, deploy creates a brand-new tabbed session instead of queuing into the active one. */
+  createNewSession?: boolean;
+  /** Avalon relay session id the new session's extension must match (createNewSession only). */
+  avalonSessionId?: string;
 }
 
 export interface ModelOption {

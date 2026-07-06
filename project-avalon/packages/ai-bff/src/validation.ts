@@ -50,6 +50,12 @@ export const chatRequestSchema = z.object({
     .optional(),
   responseSchema: jsonSchemaDefinitionSchema.optional(),
   stream: z.boolean().optional(),
+  apiKeys: z
+    .object({
+      openai: z.string().optional(),
+      deepseek: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type ParsedChatRequest = z.infer<typeof chatRequestSchema>;

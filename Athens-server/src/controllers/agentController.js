@@ -3,6 +3,10 @@ import { jobsCollection, accountInfoCollection } from "../db/mongo.js";
 import { JobSource } from "../config/jobSources.js";
 import { DEEPSEEK_MODELS, listOpenAiModels } from "@nextoffer/shared/models";
 import { createAsyncHandler } from "../utils/http.js";
+import { findAccountByApplierName } from "../services/mail/credentials.js";
+import { resolveDefaultModel } from "../services/llm/llmService.js";
+
+const AI_BFF_URL = (process.env.AI_BFF_URL || "http://127.0.0.1:3920").replace(/\/$/, "");
 
 function toOid(id) {
   if (!id || !ObjectId.isValid(id)) return null;
@@ -129,4 +133,62 @@ export const postAgentDeploy = createAsyncHandler(async (_req, res) => {
   res.status(410).json({
     error: "Agent deploy moved to Avalon. Queue jobs in the Agents Controller tab.",
   });
+});
+
+/**
+ * POST /api/agents/chat — Avalon agent LLM proxy.
+ * Uses the applier profile's API keys (Settings → Profile), not ai-bff env keys.
+ */
+export const postAgentChat = createAsyncHandler(async (req, res) => {
+  const applierName = String(req.body?.applierName || "").trim();
+  if (!applierName) {
+    return res.status(400).json({ error: "applierName required" });
+  }
+
+  const acc = await findAccountByApplierName(applierName);
+  if (!acc) {
+    return res.status(404).json({ error: `No account named "${applierName}".` });
+  }
+
+  const profile = acc.autoBidProfile || {};
+  const { model: profileModel } = resolveDefaultModel(profile);
+  const model = String(req.body?.model || "").trim() || profileModel;
+
+  const openaiApiKey = String(profile.openaiApiKey || "").trim();
+  const deepseekApiKey = String(profile.deepseekApiKey || "").trim();
+  if (!openaiApiKey && !deepseekApiKey) {
+    return res.status(400).json({
+      error: "No OpenAI or DeepSeek API key in profile. Add one under Settings → Profile.",
+    });
+  }
+
+  const { messages, system, temperature, maxTokens, responseSchema } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: "messages required" });
+  }
+
+  const upstream = await fetch(`${AI_BFF_URL}/v1/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      system,
+      messages,
+      temperature,
+      maxTokens,
+      responseSchema,
+      apiKeys: {
+        ...(openaiApiKey ? { openai: openaiApiKey } : {}),
+        ...(deepseekApiKey ? { deepseek: deepseekApiKey } : {}),
+      },
+    }),
+  });
+
+  const data = await upstream.json().catch(() => ({}));
+  if (!upstream.ok) {
+    const message = data?.error || data?.message || `AI request failed (${upstream.status})`;
+    return res.status(upstream.status).json({ error: message });
+  }
+
+  return res.json(data);
 });

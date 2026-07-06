@@ -1,0 +1,23 @@
+{
+  "name": "vender-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prebridge": "node scripts/generate-mongo-secrets.mjs",
+    "bridge": "node scripts/bridge.mjs",
+    "build": "node scripts/generate-mongo-secrets.mjs && node scripts/build.mjs",
+    "prestart": "node scripts/generate-mongo-secrets.mjs",
+    "start": "node scripts/bridge.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "imapflow": "^1.0.186",
+    "mailparser": "^3.7.2",
+    "mongodb": "^6.19.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "javascript-obfuscator": "^5.4.3"
+  }
+}

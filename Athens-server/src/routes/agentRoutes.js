@@ -6,6 +6,7 @@ import {
   getAgentJobSources,
   getAgentModels,
   getAgentRuns,
+  postAgentChat,
   postAgentDeploy,
 } from "../controllers/agentController.js";
 import {
@@ -22,6 +23,7 @@ router.get("/runs", getAgentRuns);
 router.get("/activity", getAgentActivity);
 router.get("/job-sources", getAgentJobSources);
 router.get("/models", getAgentModels);
+router.post("/chat", postAgentChat);
 router.post("/deploy", postAgentDeploy);
 
 // Avalon apply-run debug logging (local JSONL file + MongoDB history).

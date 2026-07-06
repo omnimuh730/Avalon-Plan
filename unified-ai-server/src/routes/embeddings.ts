@@ -8,6 +8,7 @@ export async function embeddingsHandler(req: Request, res: Response) {
     if (provider === 'ollama') {
       const model = String(req.body?.model || CONFIG.embeddingModel);
       const input = req.body?.input;
+      console.log(`[llm] route → feature=embeddings provider=ollama model=${model}`);
       const { res: upstream, data } = await proxyJson(`${CONFIG.ollamaUrl}/api/embeddings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -24,6 +25,7 @@ export async function embeddingsHandler(req: Request, res: Response) {
     }
 
     const auth = req.headers.authorization?.replace(/^Bearer\s+/i, '') || CONFIG.defaultOpenAiKey;
+    console.log(`[llm] route → feature=embeddings provider=openai model=${String(req.body?.model || '')}`);
     const { res: upstream, data } = await proxyJson('https://api.openai.com/v1/embeddings', {
       method: 'POST',
       headers: {

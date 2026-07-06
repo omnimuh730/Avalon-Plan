@@ -135,9 +135,24 @@ export function StepCard({
           onChange={(prompt) => onChange({ prompt })}
           tokenValues={tokenValues}
           rows={3}
-          placeholder="User-turn prompt… use {job_description}, {career}, {company1_title}…"
+          placeholder="User-turn prompt… use {job_description}, {job_skills}, {career}, {company1_title}…"
         />
       </Field>
+
+      <label className="flex items-start gap-2.5 cursor-pointer select-none rounded-xl border border-neutral-200 dark:border-white/10 bg-white/60 dark:bg-neutral-900/40 px-3 py-2.5">
+        <input
+          type="checkbox"
+          checked={Boolean(step.skipForStructuredJobs)}
+          onChange={(e) => onChange({ skipForStructuredJobs: e.target.checked })}
+          className="mt-0.5 h-4 w-4 shrink-0 accent-sky-500"
+        />
+        <span className="text-[11px] leading-snug text-neutral-500 dark:text-white/60">
+          <span className="font-medium text-neutral-700 dark:text-white/80">Skip for structured jobs</span> — don't
+          run this step for Job Search / Agent runs, where the job already carries fetched skills. Reference them in a
+          later prompt via <code className="text-sky-600 dark:text-sky-300">{"{job_skills}"}</code>. Free-text
+          generation on this page always runs the step.
+        </span>
+      </label>
 
       {isFinal ? (
         <>

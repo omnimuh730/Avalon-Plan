@@ -15,6 +15,8 @@ export function PreviewToolbar({
   exporting,
   onExportPdf,
   onExportDocx,
+  disablePdf,
+  disableThemeLayout,
 }: {
   activePanel: DesignPanel | null;
   onOpenPanel: (panel: DesignPanel) => void;
@@ -23,6 +25,8 @@ export function PreviewToolbar({
   exporting: "pdf" | "docx" | null;
   onExportPdf: () => void;
   onExportDocx: () => void;
+  disablePdf?: boolean;
+  disableThemeLayout?: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -37,18 +41,20 @@ export function PreviewToolbar({
       </button>
       <button
         type="button"
-        onClick={() => onOpenPanel("theme")}
+        onClick={() => !disableThemeLayout && onOpenPanel("theme")}
+        disabled={disableThemeLayout}
         className={activePanel === "theme" ? activeBtn : btn}
-        title="Font, colors, paper size"
+        title={disableThemeLayout ? "Theme not available for uploaded templates" : "Font, colors, paper size"}
       >
         <Palette className="w-3.5 h-3.5" />
         Theme
       </button>
       <button
         type="button"
-        onClick={() => onOpenPanel("layout")}
+        onClick={() => !disableThemeLayout && onOpenPanel("layout")}
+        disabled={disableThemeLayout}
         className={activePanel === "layout" ? activeBtn : btn}
-        title="Section order and sizing"
+        title={disableThemeLayout ? "Layout not available for uploaded templates" : "Section order and sizing"}
       >
         <ListChecks className="w-3.5 h-3.5" />
         Layout
@@ -65,9 +71,9 @@ export function PreviewToolbar({
       <button
         type="button"
         onClick={onExportPdf}
-        disabled={exporting !== null}
+        disabled={exporting !== null || disablePdf}
         className={btn}
-        title="Export PDF"
+        title={disablePdf ? "PDF export not available for uploaded templates" : "Export PDF"}
       >
         <Download className="w-3.5 h-3.5" />
         {exporting === "pdf" ? "Exporting…" : "PDF"}

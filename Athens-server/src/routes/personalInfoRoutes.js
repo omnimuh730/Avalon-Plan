@@ -48,7 +48,19 @@ import {
 	setPrimaryUserResumeHandler,
 	deleteUserResumeHandler,
 	analyzeUserResumeHandler,
+	listUserGraphsHandler,
+	clearUserResumeAnalysisHandler,
+	getSubmissionKitResumeHandler,
 } from "../controllers/userResumeController.js";
+import {
+	listResumeTemplatesHandler,
+	getResumeTemplateHandler,
+	createResumeTemplateHandler,
+	deleteResumeTemplateHandler,
+	fillResumeTemplateHandler,
+	previewResumeTemplateHandler,
+	previewResumeTemplateImagesHandler,
+} from "../controllers/resumeTemplateController.js";
 import { analyzeResumeMatch } from "../controllers/resumeAnalysisController.js";
 import { listChromeProfiles, importChromeSession, chromeProfileAvatar } from "../controllers/chromeProfilesController.js";
 
@@ -92,12 +104,24 @@ router.post('/personal/llm-key-check', checkLlmKey);
 router.post('/personal/resume-pdf', renderResumePdf);
 router.post('/personal/resume-docx', renderResumeDocx);
 
+router.get('/personal/resume-templates', listResumeTemplatesHandler);
+router.get('/personal/resume-templates/:id', getResumeTemplateHandler);
+router.post('/personal/resume-templates', createResumeTemplateHandler);
+router.delete('/personal/resume-templates/:id', deleteResumeTemplateHandler);
+router.post('/personal/resume-template-fill', fillResumeTemplateHandler);
+router.post('/personal/resume-template-preview', previewResumeTemplateHandler);
+router.post('/personal/resume-template-preview-images', previewResumeTemplateImagesHandler);
+
+router.get('/user-graph', listUserGraphsHandler);
+
+router.get('/personal/submission-kit-resume', getSubmissionKitResumeHandler);
 router.get('/personal/user-resumes', listUserResumesHandler);
 router.get('/personal/user-resumes/:id', getUserResumeHandler);
 router.post('/personal/user-resumes', createUserResumeHandler);
 router.post('/personal/user-resumes/bulk', bulkCreateUserResumesHandler);
 router.put('/personal/user-resumes/:id/primary', setPrimaryUserResumeHandler);
 router.post('/personal/user-resumes/:id/analyze', analyzeUserResumeHandler);
+router.post('/personal/user-resumes/:id/clear-analysis', clearUserResumeAnalysisHandler);
 router.delete('/personal/user-resumes/:id', deleteUserResumeHandler);
 router.post('/personal/resume-analysis', analyzeResumeMatch);
 router.get('/personal/chrome-profiles', listChromeProfiles);

@@ -70,8 +70,10 @@ export async function fetchMailThreads(
 
 export type FolderCounts = Record<string, { total: number; unread: number; badge: number }>;
 
-export async function fetchMailFolderCounts(applierName: string) {
-  const data = await mailFetch<{ counts: FolderCounts }>(`mail/folder-counts${qs({ applierName })}`);
+export async function fetchMailFolderCounts(applierName: string, force = false) {
+  const data = await mailFetch<{ counts: FolderCounts }>(
+    `mail/folder-counts${qs({ applierName, force: force ? "true" : undefined })}`,
+  );
   return data.counts;
 }
 

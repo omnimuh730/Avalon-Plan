@@ -1,30 +1,19 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { Bot, Loader2, Plus } from "lucide-react";
 import { useApplier } from "@/context/applier-context";
 import { PageShell } from "../../components/layout/PageShell";
-import type { DeployOptions } from "../../types/agent";
-import { AvalonControllerView } from "./components/AvalonControllerView";
-import { DeployAgentModal } from "./components/DeployAgentModal";
-import type { QueuedJob } from "./hooks/useAvalonRelay";
+import { useAgentSessions } from "./context/AgentSessionsContext";
+import { RunHistoryPanel } from "./components/RunHistoryPanel";
+import { SessionTabs } from "./components/SessionTabs";
 
 export function AgentsPage() {
-  const { applierReady } = useApplier();
-  const [showDeploy, setShowDeploy] = useState(false);
-  const [queuedJobs, setQueuedJobs] = useState<QueuedJob[]>([]);
-  const [sessionKey, setSessionKey] = useState(0);
+  const { applier, applierReady } = useApplier();
+  const { sessions, openDeploy, registerSlot } = useAgentSessions();
 
-  const startSession = useCallback(async (opts: DeployOptions) => {
-    const jobs: QueuedJob[] = (opts.jobs ?? []).map((j) => ({
-      id: j.id,
-      title: j.title,
-      company: j.company,
-      url: j.url,
-      source: j.source,
-    }));
-    setQueuedJobs(jobs);
-    setSessionKey((k) => k + 1);
-    setShowDeploy(false);
-  }, []);
+  const slotRef = useCallback(
+    (el: HTMLDivElement | null) => registerSlot(el),
+    [registerSlot],
+  );
 
   return (
     <PageShell fullWidth className="bg-gradient-to-b from-violet-500/[0.03] via-background to-background">
@@ -47,7 +36,7 @@ export function AgentsPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              onClick={() => setShowDeploy(true)}
+              onClick={openDeploy}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-sm font-bold shadow-md shadow-violet-500/25 hover:shadow-lg hover:shadow-violet-500/30 transition-shadow"
             >
               <Plus className="w-4 h-4" />
@@ -62,15 +51,15 @@ export function AgentsPage() {
             <p className="text-sm font-medium">Loading your profile…</p>
           </div>
         ) : (
-          <AvalonControllerView
-            key={sessionKey}
-            initialJobs={queuedJobs.length ? queuedJobs : undefined}
-            onQueueJobs={() => setShowDeploy(true)}
-          />
+          <>
+            <SessionTabs />
+            <div className="flex items-start gap-4 min-w-0">
+              <div ref={slotRef} className="flex-1 min-w-0" />
+              <RunHistoryPanel applierName={applier?.name ?? ""} sessions={sessions} />
+            </div>
+          </>
         )}
       </div>
-
-      {showDeploy && <DeployAgentModal onClose={() => setShowDeploy(false)} onDeploy={startSession} />}
     </PageShell>
   );
 }

@@ -10,6 +10,7 @@ export default defineConfig({
       'tabs',
       'activeTab',
       'scripting',
+      'webRequest',
       'sidePanel',
       'storage',
       'downloads',

@@ -10,6 +10,7 @@ import {
   Calendar,
   Video,
   BarChart2,
+  Activity,
   Settings,
 } from "lucide-react";
 import type { View } from "../types";
@@ -18,27 +19,29 @@ export type NavItem = {
   id: View;
   label: string;
   icon: ElementType;
-  badge?: number;
+  comingSoon?: boolean;
+  pro?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, comingSoon: true },
   { id: "job-board", label: "Job Search", icon: Briefcase },
   { id: "resumes", label: "My Resumes", icon: FileText },
-  { id: "ats", label: "My Applications", icon: Share2 },
-  { id: "copilot", label: "Career Copilot", icon: Wand2 },
-  { id: "agents", label: "Agents", icon: Bot, badge: 3 },
-  { id: "mail", label: "Mail", icon: Mail, badge: 2 },
-  { id: "calendar", label: "Calendar", icon: Calendar },
-  { id: "interviews", label: "Interview Prep", icon: Video },
-  { id: "reports", label: "Analytics", icon: BarChart2 },
+  { id: "ats", label: "My Applications", icon: Share2, comingSoon: true},
+  { id: "copilot", label: "Career Copilot", icon: Wand2, comingSoon: true},
+  { id: "agents", label: "Agents", icon: Bot },
+  { id: "mail", label: "Mail", icon: Mail },
+  { id: "calendar", label: "Calendar", icon: Calendar, comingSoon: true },
+  { id: "interviews", label: "Interview Prep", icon: Video, comingSoon: true },
+  { id: "vendor-monitor", label: "Vendor Monitor", icon: Activity, pro: true },
+  { id: "reports", label: "Analytics", icon: BarChart2, comingSoon: true },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
 export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
   { label: "WORKSPACE", ids: ["dashboard", "job-board", "resumes"] },
   { label: "PIPELINE", ids: ["ats", "copilot"] },
-  { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews"] },
+  { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews", "vendor-monitor"] },
   { label: "INSIGHTS", ids: ["reports"] },
   { label: null, ids: ["settings"] },
 ];
@@ -54,5 +57,6 @@ export const VIEW_TITLES: Record<View, string> = {
   calendar: "Calendar",
   interviews: "Interview Prep",
   reports: "Job Search Analytics",
+  "vendor-monitor": "Vendor Monitor",
   settings: "Settings",
 };

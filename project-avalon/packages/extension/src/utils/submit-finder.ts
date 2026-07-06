@@ -15,6 +15,7 @@ function controlLabel(el: Element): string {
   return (
     elementText(el) ||
     visibleText(el) ||
+    el.getAttribute('text')?.trim() ||
     (el as HTMLInputElement).value?.trim() ||
     getAccessibleName(el) ||
     ''

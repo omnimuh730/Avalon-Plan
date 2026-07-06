@@ -261,6 +261,34 @@ const MULTI_FIELD_BUTTON_GROUP_HTML = `
 </body>
 `;
 
+/** Rippling/HiringThing: Dropzone appends hidden file input as direct child of body. */
+const RIPPLING_DROPZONE_HTML = `
+<body id="openyield">
+<div class="content"><div class="jobs-content"><div id="careers-page-job">
+<div class="job-content-header"><button class="ob button job-back-button">Back to Jobs</button></div>
+<div id="application-form-container"><form id="job-application-form">
+<div class="ob deprecated-form-group vertical"><label for="user.first_name">First Name (required)</label>
+<input id="user.first_name" name="user.first_name" type="text" class="MuiInputBase-input"></div>
+<div class="ob deprecated-form-group vertical"><label for="user.last_name">Last Name (required)</label>
+<input id="user.last_name" name="user.last_name" type="text" class="MuiInputBase-input"></div>
+<div class="ob deprecated-form-group vertical"><label for="user.email">Email Address (required)</label>
+<input id="user.email" name="user.email" type="text" class="MuiInputBase-input"></div>
+<div class="ob deprecated-form-group vertical"><label for="user.linkedin_url">LinkedIn URL</label>
+<input id="user.linkedin_url" name="user.linkedin_url" type="text" class="MuiInputBase-input"></div>
+<div class="ob form-group"><label id="files.Resume.file_label">Resume: (Word/PDF) (required)</label>
+<div class="filepicker dropzone dz-clickable"><span>Click or drag files here</span></div></div>
+<div class="ob deprecated-form-group vertical"><label for="job_assessment.question_9066558.response">How many years of professional development experience do you have? (required)</label>
+<textarea id="job_assessment.question_9066558.response" name="q1" class="ob form-control textarea"></textarea></div>
+<div class="ob deprecated-form-group vertical"><label for="app.where_from">Where did you hear about us? (required)</label>
+<div class="Select"><input id="app.where_from" role="combobox" aria-autocomplete="list" value="" style="width:5px"></div></div>
+<div class="ob form-control checkbox"><label><input type="checkbox" id="subscribe" name="subscribe"><span>Subscribe</span></label></div>
+<button type="submit">Submit Application</button>
+</form></div></div></div></div>
+<div class="footer"><form><input type="email" class="email-input" name="user[email]"></form></div>
+<input type="file" class="dz-hidden-input" style="visibility:hidden;height:0;width:0">
+</body>
+`;
+
 function withDom(html: string, run: (body: HTMLElement) => void | Promise<void>) {
   const dom = new JSDOM(html, { pretendToBeVisual: true });
   const { window } = dom;
@@ -489,7 +517,8 @@ const PLAIN_TEXT_HTML = `
       );
     }
     const submit = tree.flatMap((g) => g.children).find((c) => c.target === 'Submit application');
-    assert(!submit, 'submit buttons are excluded from autofill tree');
+    assert(Boolean(submit), 'submit buttons should appear in the actionable tree');
+    assert(submit!.controlType === 'button', `submit controlType: ${submit!.controlType}`);
   });
 
   await withDom(FILE_UPLOAD_HTML, async (body) => {
@@ -577,6 +606,44 @@ const PLAIN_TEXT_HTML = `
     const location = allTargets.find((c) => c.target === 'Location');
     assert(Boolean(location), 'multi-field: location combobox missing');
     assert(location!.controlType === 'combobox', `multi-field: location type ${location!.controlType}`);
+  });
+
+  await withDom(RIPPLING_DROPZONE_HTML, async (body) => {
+    const tree = await fetchActionableTree(body, { probeComboboxes: false });
+    const targets = tree.flatMap((g) => g.children);
+    const names = targets.map((c) => c.target);
+
+    assert(
+      targets.length >= 10,
+      `rippling dropzone: expected ≥10 targets, got ${targets.length}: ${names.join(', ')}`,
+    );
+    assert(names.includes('First Name (required)'), `rippling dropzone: missing First Name: ${names.join(', ')}`);
+    assert(names.includes('Last Name (required)'), `rippling dropzone: missing Last Name: ${names.join(', ')}`);
+    assert(names.includes('Email Address (required)'), `rippling dropzone: missing Email: ${names.join(', ')}`);
+    assert(
+      names.includes('How many years of professional development experience do you have? (required)'),
+      `rippling dropzone: missing essay textarea: ${names.join(', ')}`,
+    );
+    assert(
+      names.includes('Where did you hear about us? (required)'),
+      `rippling dropzone: missing combobox: ${names.join(', ')}`,
+    );
+
+    assert(
+      !targets.some((c) => c.targetHtml.includes('<body id=')),
+      'rippling dropzone: file widget must not use body as child unit',
+    );
+
+    const fileTargets = targets.filter((c) => c.controlType === 'file');
+    assert(fileTargets.length >= 1, 'rippling dropzone: resume file missing');
+    assert(
+      fileTargets.every((c) => c.targetHtml.length < 500),
+      `rippling dropzone: file targetHtml too large: ${fileTargets.map((c) => c.targetHtml.length).join(', ')}`,
+    );
+
+    const submit = targets.find((c) => c.target === 'Submit Application');
+    assert(Boolean(submit), `rippling dropzone: missing Submit Application: ${names.join(', ')}`);
+    assert(submit!.controlType === 'button', `rippling submit controlType: ${submit!.controlType}`);
   });
 
   console.log('actionable-tree ok');

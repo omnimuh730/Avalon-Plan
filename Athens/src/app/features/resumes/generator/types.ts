@@ -64,6 +64,13 @@ export type GenStep = {
   prompt: string;
   /** JSON schema text — only used/required when kind === "final". */
   schema: string;
+  /**
+   * Skip this step when generating for a structured (MongoDB) job — i.e. the
+   * Job Search page and the Agent pipeline, where the job already carries fetched
+   * skills (available via the {job_skills} token). Ignored for free-text
+   * generation on the Resume Generator page, where the step always runs.
+   */
+  skipForStructuredJobs?: boolean;
 };
 
 // Visual document theme — every field reflects live in the preview.
@@ -101,12 +108,43 @@ export type GeneratorConfig = {
   model: string;
   reasoningEffort: ReasoningEffort;
   templateId: string;
+  uploadedTemplate?: UploadedTemplateManifest;
   theme: ResumeTheme;
   layout: LayoutSection[];
   systemInstruction: string;
   jobDescription: string;
   steps: GenStep[];
 };
+
+export type TemplateSlot = {
+  index: number;
+  paragraphIndex: number;
+  section: Purpose;
+  companyHint?: string;
+  isBullet: boolean;
+  experienceIndex?: number;
+};
+
+export type UploadedTemplateManifest = {
+  id: string;
+  name: string;
+  source: "uploaded";
+  format: "docx";
+  fileName?: string;
+  slotCount: number;
+  sectionsFound: Purpose[];
+  slots: TemplateSlot[];
+  warnings: string[];
+  uploadedAt?: string;
+};
+
+export function isUploadedTemplateId(templateId: string) {
+  return templateId.startsWith("upload:");
+}
+
+export function uploadedTemplateMongoId(templateId: string) {
+  return templateId.replace(/^upload:/, "");
+}
 
 // The reference token users can drop into any prompt; replaced with the actual
 // job-description text at generation time.

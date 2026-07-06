@@ -7,6 +7,7 @@ import type {
   ChatResponse,
   ModelInfo,
 } from './types.js';
+import { normalizeApiKey } from './api-keys.js';
 import type { AiProvider } from './providers/base.js';
 import { createProviders, resolveProvider } from './providers/registry.js';
 
@@ -36,7 +37,16 @@ export class AiKit {
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const model = request.model ?? this.config.defaultModel ?? 'gpt-4o-mini';
-    const provider = resolveProvider(this.providers, model);
+    const providers = request.apiKeys
+      ? createProviders({
+          ...this.config,
+          openaiApiKey:
+            normalizeApiKey(request.apiKeys.openai) ?? this.config.openaiApiKey,
+          deepseekApiKey:
+            normalizeApiKey(request.apiKeys.deepseek) ?? this.config.deepseekApiKey,
+        })
+      : this.providers;
+    const provider = resolveProvider(providers, model);
     const pricing = resolveModelPricing(model);
 
     if (request.responseSchema && !pricing.supportsStructuredOutput) {
@@ -49,19 +59,32 @@ export class AiKit {
     }
 
     const messages = buildMessages(request);
-    const result = await provider.chat({
-      model,
-      messages,
-      temperature: request.temperature,
-      maxTokens: request.maxTokens,
-      topP: request.topP,
-      stop: request.stop,
-      tools: request.tools,
-      toolChoice: request.toolChoice,
-      responseSchema: request.responseSchema,
-      stream: request.stream,
-    });
+    const promptChars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
+    const startedAt = Date.now();
+    console.log(`[llm] → ai-bff · ${provider.id}/${model} — ${messages.length} msg (${promptChars} chars)`);
 
+    let result;
+    try {
+      result = await provider.chat({
+        model,
+        messages,
+        temperature: request.temperature,
+        maxTokens: request.maxTokens,
+        topP: request.topP,
+        stop: request.stop,
+        tools: request.tools,
+        toolChoice: request.toolChoice,
+        responseSchema: request.responseSchema,
+        stream: request.stream,
+      });
+    } catch (err) {
+      const elapsedMs = Date.now() - startedAt;
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[llm] ✖ ai-bff · ${provider.id}/${model} — failed after ${elapsedMs}ms: ${message}`);
+      throw err;
+    }
+
+    const elapsedMs = Date.now() - startedAt;
     const usage = {
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
@@ -72,6 +95,9 @@ export class AiKit {
         totalTokens: result.totalTokens,
       }),
     };
+    console.log(
+      `[llm] ← ai-bff · ${provider.id}/${model} — in ${usage.promptTokens} out ${usage.completionTokens} · $${usage.cost.totalUsd.toFixed(4)} · ${elapsedMs}ms`,
+    );
 
     return {
       id: result.id,

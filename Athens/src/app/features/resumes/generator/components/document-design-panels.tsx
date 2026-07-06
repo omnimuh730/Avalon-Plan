@@ -1,28 +1,117 @@
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { useRef } from "react";
+import { AlertTriangle, ChevronDown, ChevronUp, Upload } from "lucide-react";
 import { Field, Dropdown } from "../adapters/ui";
 import { TemplateGlyph } from "./template-glyph";
 import { TEMPLATES } from "../constants/templates";
 import { FONT_OPTIONS, PALETTES } from "../constants/defaults";
 import { inputCls, numCls } from "../styles";
 import { SECTION_LABEL } from "../types";
-import type { LayoutSection, PaperSize, ResumeTheme } from "../types";
+import type { LayoutSection, PaperSize, ResumeTheme, UploadedTemplateManifest } from "../types";
+import { isUploadedTemplateId } from "../types";
+
+function slotSummary(manifest: UploadedTemplateManifest) {
+  const parts = manifest.sectionsFound.map((s) => {
+    const count = manifest.slots.filter((slot) => slot.section === s).length;
+    return `${count} ${s}`;
+  });
+  return `${manifest.slotCount} slot${manifest.slotCount === 1 ? "" : "s"}${parts.length ? ` · ${parts.join(", ")}` : ""}`;
+}
 
 export function TemplatePanel({
   templateId,
   onSelect,
+  uploadedTemplates,
+  templatesLoading,
+  onUpload,
+  onSelectUploaded,
+  onDeleteUploaded,
 }: {
   templateId: string;
   onSelect: (id: string) => void;
+  uploadedTemplates: UploadedTemplateManifest[];
+  templatesLoading?: boolean;
+  onUpload: (file: File) => void | Promise<void>;
+  onSelectUploaded: (manifest: UploadedTemplateManifest) => void;
+  onDeleteUploaded: (id: string) => void | Promise<void>;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
   return (
     <>
       <p className="text-[11px] text-neutral-400 dark:text-white/40 mb-4">
         The <strong className="text-neutral-600 dark:text-white/70">template</strong> sets the layout (columns, header &amp; heading
-        alignment, heading style). Use <strong className="text-neutral-600 dark:text-white/70">Theme</strong> to restyle it.
+        alignment, heading style). Upload a Word <code className="text-[10px]">.docx</code> with{" "}
+        <code className="text-[10px]">{"{}"}</code> placeholders for AI content. Use <strong className="text-neutral-600 dark:text-white/70">Theme</strong> to restyle built-in templates.
       </p>
+
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="text-left rounded-xl border border-dashed border-sky-400/60 p-3 transition hover:bg-sky-50/40 dark:hover:bg-sky-500/10 min-h-[108px] flex flex-col justify-center"
+        >
+          <div className="w-full h-14 rounded-lg border border-sky-200/60 dark:border-sky-500/20 bg-sky-50/50 dark:bg-sky-500/5 grid place-items-center">
+            <Upload className="w-5 h-5 text-sky-500" />
+          </div>
+          <div className="text-xs font-medium mt-2">Upload template</div>
+          <div className="text-[10px] text-neutral-400 dark:text-white/40 leading-tight mt-0.5">DOCX with {"{}"} placeholders</div>
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void onUpload(file);
+            e.target.value = "";
+          }}
+        />
+
+        {templatesLoading && (
+          <div className="col-span-full text-[11px] text-neutral-400 dark:text-white/40 -mt-1">Loading uploaded templates…</div>
+        )}
+
+        {uploadedTemplates.map((tpl) => {
+          const active = templateId === `upload:${tpl.id}`;
+          return (
+            <div key={tpl.id} className="relative">
+              <button
+                type="button"
+                onClick={() => onSelectUploaded(tpl)}
+                className={`w-full text-left rounded-xl border p-3 transition ${
+                  active
+                    ? "border-sky-500 ring-1 ring-sky-500/40 bg-sky-50/50 dark:bg-sky-500/10"
+                    : "border-neutral-200 dark:border-white/10 hover:bg-neutral-100 dark:hover:bg-white/5"
+                }`}
+              >
+                <div className="w-full h-14 rounded-lg border border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-white/[0.03] grid place-items-center">
+                  <span className="text-[10px] font-semibold tracking-wide text-sky-600 dark:text-sky-300">DOCX</span>
+                </div>
+                <div className="text-xs font-medium mt-2 truncate pr-5">{tpl.name}</div>
+                <div className="text-[10px] text-neutral-400 dark:text-white/40 leading-tight mt-0.5">{slotSummary(tpl)}</div>
+                {tpl.warnings.length > 0 && (
+                  <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="w-3 h-3" />
+                    {tpl.warnings.length} warning{tpl.warnings.length === 1 ? "" : "s"}
+                  </div>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => void onDeleteUploaded(tpl.id)}
+                className="absolute top-2 right-2 w-6 h-6 rounded-md text-[10px] text-neutral-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"
+                aria-label={`Delete ${tpl.name}`}
+                title="Delete template"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+
         {TEMPLATES.map((t) => {
-          const active = t.id === templateId;
+          const active = !isUploadedTemplateId(templateId) && t.id === templateId;
           return (
             <button
               key={t.id}

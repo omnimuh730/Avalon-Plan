@@ -25,6 +25,7 @@ import {
   getGroupLabelFromElement,
   getSectionContextText,
   isComboboxInput,
+  isDocumentRoot,
   isEffectivelyVisible,
   isFieldContainer,
   isFileUploadTriggerButton,
@@ -200,22 +201,6 @@ function isEditorChrome(el: Element): boolean {
   return Boolean(fieldRoot?.querySelector('[contenteditable="true"][role="textbox"]'));
 }
 
-// A bare <button> reports .type === 'submit' by default, so the property alone
-// can't distinguish a real submit button from a typeless choice button (Yes/No,
-// segmented controls). Exclude only buttons explicitly typed submit or clearly
-// labelled as a form-submit action — keep every other button as a real control.
-const SUBMIT_LIKE_TEXT =
-  /^(submit|apply|send|finish|complete)\b|\b(application|now)$/i;
-
-function isSubmitButton(el: Element): boolean {
-  if (el.tagName !== 'BUTTON') return false;
-  if (el.getAttribute('type') === 'submit') return true;
-  const label = normalizeWhitespace(
-    elementText(el) || el.getAttribute('aria-label') || el.getAttribute('value') || '',
-  );
-  return Boolean(label) && SUBMIT_LIKE_TEXT.test(label);
-}
-
 function seedHasOwnLabel(seed: Element): string {
   if (getComboboxInput(seed)) return '';
   const tag = seed.tagName.toLowerCase();
@@ -278,6 +263,7 @@ function isAlternateUploadAction(seed: Element): boolean {
 function dedupeSmallestUnits(
   children: Element[],
   childToSeed: Map<Element, Element>,
+  scope: Element,
 ): Element[] {
   const unique = [...new Set(children)];
   return unique.filter((child) => {
@@ -306,6 +292,16 @@ function dedupeSmallestUnits(
         otherSeed instanceof HTMLInputElement &&
         otherSeed.type === 'file' &&
         isAlternateUploadAction(childSeed)
+      ) {
+        continue;
+      }
+      // Body-orphan Dropzone file inputs must not swallow unrelated form fields.
+      if (
+        other === scope &&
+        otherSeed instanceof HTMLInputElement &&
+        otherSeed.type === 'file' &&
+        childSeed !== otherSeed &&
+        !otherSeed.contains(childSeed)
       ) {
         continue;
       }
@@ -738,15 +734,20 @@ function buildWidgetOverrides(
   for (const widget of fileWidgets) {
     const { fileInput, widgetRoot, groupLabel, suppressedSeeds: widgetSuppressed } = widget;
     const fieldRoot = findFieldRoot(fileInput);
-    const childUnit =
+    let childUnit =
       fieldRoot && widgetRoot.contains(fieldRoot) ? fieldRoot : widgetRoot;
+    if (isDocumentRoot(childUnit)) childUnit = fileInput;
+    let parent = widgetRoot;
+    if (isDocumentRoot(parent)) parent = fileInput;
     childUnitBySeed.set(fileInput, childUnit);
-    parentBySeed.set(fileInput, widgetRoot);
+    parentBySeed.set(fileInput, parent);
     if (groupLabel) targetLabelBySeed.set(fileInput, groupLabel);
     for (const el of widgetSuppressed) suppressedSeeds.add(el);
-    for (const btn of widgetRoot.querySelectorAll('button')) {
-      if (widgetSuppressed.has(btn)) continue;
-      parentBySeed.set(btn, widgetRoot);
+    if (!isDocumentRoot(widgetRoot)) {
+      for (const btn of widgetRoot.querySelectorAll('button')) {
+        if (widgetSuppressed.has(btn)) continue;
+        parentBySeed.set(btn, widgetRoot);
+      }
     }
   }
 
@@ -772,7 +773,6 @@ function collectSeeds(root: ParentNode, overrides: WidgetOverrides): Element[] {
 
   const raw = Array.from(root.querySelectorAll(SEED_SELECTOR)).filter((el) => {
     if (isEditorChrome(el)) return false;
-    if (isSubmitButton(el)) return false;
     if (el.getAttribute('role') === 'combobox' && el.tagName !== 'INPUT') {
       const input = getComboboxInput(el);
       return input ? isRenderedSeed(input, fileInputs) : false;
@@ -920,7 +920,7 @@ export async function fetchActionableTree(
   }
 
   const childToSeed = buildChildToSeed(seeds, scope, overrides);
-  const childUnits = dedupeSmallestUnits([...childToSeed.keys()], childToSeed);
+  const childUnits = dedupeSmallestUnits([...childToSeed.keys()], childToSeed, scope);
   const childSet = new Set(childUnits);
 
   const parentToChildren = new Map<Element, Element[]>();

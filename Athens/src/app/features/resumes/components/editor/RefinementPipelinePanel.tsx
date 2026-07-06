@@ -185,10 +185,24 @@ export function RefinementPipelinePanel({ steps, onChange }: RefinementPipelineP
                 <AthensTextarea
                   value={step.prompt}
                   onChange={(e) => update(step.id, { prompt: e.target.value })}
-                  placeholder="Prompt instructions for this step…"
+                  placeholder="Prompt instructions for this step… use {job_description}, {job_skills}, {career}…"
                   rows={3}
                   className="mb-1"
                 />
+                <label className="flex items-start gap-2.5 cursor-pointer select-none mt-2 mb-1">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(step.skipForStructuredJobs)}
+                    onChange={(e) => update(step.id, { skipForStructuredJobs: e.target.checked })}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                  />
+                  <span className="text-[11px] leading-snug text-muted-foreground">
+                    <span className="font-bold text-foreground">Skip for structured jobs</span> — skip this step for
+                    Job Search / Agent runs, where the job already carries fetched skills (use{" "}
+                    <code className="text-primary">{"{job_skills}"}</code> in a later prompt). Free-text generation
+                    always runs it.
+                  </span>
+                </label>
                 {step.kind === "final" ? (
                   <StepSchemaField step={step} onUpdate={(schema) => update(step.id, { schema })} />
                 ) : (

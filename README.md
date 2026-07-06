@@ -108,7 +108,9 @@ NextOffer/
 
 ## Troubleshooting
 
-**Relay offline** — Ensure `project-avalon` backend is running (`npm run dev:backend` or `npm start`).
+**Relay offline** — Ensure `project-avalon` backend is running (`npm run dev:backend` or `npm start`). If you also run `vender-server` (`npm run bridge`), it must use a port other than **3847** (default **3848**) — that port is reserved for the Avalon relay.
+
+**WebSocket 404 on port 3847** — Another service (usually `vender-server`) is bound to `127.0.0.1:3847` and blocking the relay. Stop it or set `BRIDGE_PORT=3848` in `vender-server/.env`, then reconnect the extension and Athens Controller.
 
 **Extension not connected** — Load the unpacked extension from `project-avalon/packages/extension/.output/chrome-mv3` (after `npm run dev:extension`).
 

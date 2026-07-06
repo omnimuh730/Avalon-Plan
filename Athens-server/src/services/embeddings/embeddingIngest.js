@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb';
 import { getEmbeddingModel } from '../../config/graphAndVectorConfig.js';
 import { jobsCollection, userResumesCollection } from '../../db/mongo.js';
 import { PROFILE_GRAPH_ID } from '../userKnowledgeGraph/index.js';
+import { normalizeResumeSkillEntry } from '../resumeSkillEntry.js';
 import {
 	buildJobEmbeddingText,
 	buildProfileEmbeddingText,
@@ -29,27 +30,23 @@ async function aggregateProfileSkills(ownerName) {
 		.project({ skillProfile: 1, techStack: 1 })
 		.toArray();
 
-	const strengthByKey = new Map();
+	const skillByKey = new Map();
 	const stackSet = new Set();
 	for (const resume of analyzed) {
 		const stack = String(resume?.techStack ?? '').trim();
 		if (stack) stackSet.add(stack);
-		for (const entry of resume.skillProfile || []) {
-			const skillName = String(entry?.name ?? '').trim();
-			if (!skillName) continue;
-			let strength = Number(entry?.strength ?? 0);
-			if (!Number.isFinite(strength)) strength = 5;
-			strength = Math.max(0, Math.min(10, strength));
-			if (strength <= 0) continue;
-			const key = skillName.toLowerCase();
-			const prev = strengthByKey.get(key);
-			if (!prev || strength > prev.strength) {
-				strengthByKey.set(key, { name: skillName, strength });
+		for (const raw of resume.skillProfile || []) {
+			const entry = normalizeResumeSkillEntry(raw);
+			if (!entry) continue;
+			const key = entry.name.toLowerCase();
+			const prev = skillByKey.get(key);
+			if (!prev || entry.level > prev.level) {
+				skillByKey.set(key, entry);
 			}
 		}
 	}
 	return {
-		skillProfile: [...strengthByKey.values()],
+		skillProfile: [...skillByKey.values()],
 		primaryStacks: [...stackSet].slice(0, 20),
 	};
 }

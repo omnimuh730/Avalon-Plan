@@ -12,6 +12,8 @@ export async function responsesHandler(req: Request, res: Response) {
     const route = routeModel(model, auth);
     if (!route.apiKey) return res.status(401).json({ error: { message: 'No API key' } });
 
+    console.log(`[llm] route → feature=responses provider=${route.provider} model=${model}${runId ? ` run=${runId}` : ''}`);
+
     checkTokenBudget(runId || undefined, CONFIG.maxTokensPerCall);
 
     const { res: upstream, data } = await proxyJson(`${route.baseUrl}/responses`, {

@@ -59,13 +59,16 @@ export interface PageValidityResult {
   usage?: AiUsage;
 }
 
-export async function validateJobPage(params: {
-  text: string;
-  title?: string;
-  url?: string;
-  fieldCount: number;
-  controlCount?: number;
-}): Promise<PageValidityResult> {
+export async function validateJobPage(
+  params: {
+    text: string;
+    title?: string;
+    url?: string;
+    fieldCount: number;
+    controlCount?: number;
+  },
+  signal?: AbortSignal,
+): Promise<PageValidityResult> {
   const text = (params.text || "").slice(0, 5000);
   const response = await chatCompletion({
     system: VALIDATE_SYSTEM_PROMPT,
@@ -89,6 +92,7 @@ export async function validateJobPage(params: {
     ],
     responseSchema: PAGE_VALIDITY_SCHEMA,
     temperature: 0,
+    signal,
   });
 
   const usage = toAiUsage(response.usage);

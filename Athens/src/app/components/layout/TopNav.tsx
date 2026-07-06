@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, Bell, Plus, Sparkles } from "lucide-react";
+import { Search, Bell, Sparkles } from "lucide-react";
 import { VIEW_TITLES } from "../../config/navigation";
 import { Badge } from "../ui";
 import { ThemeToggle } from "../shared/ThemeToggle";
@@ -32,10 +32,6 @@ export function TopNav({ active }: { active: View }) {
         <button type="button" className="relative icon-btn text-muted-foreground hover:text-foreground hover:bg-secondary">
           <Bell className="w-5 h-5" />
           <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary" />
-        </button>
-        <button type="button" className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-primary/90 transition-colors shadow-sm shadow-violet-500/20 min-h-10">
-          <Plus className="w-4 h-4" />
-          New
         </button>
       </div>
     </header>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { syncMailIncremental, fetchMailThreads } from "@/api/mail";
 
 const POLL_INTERVAL_MS = 60_000;
@@ -10,16 +10,28 @@ type UseMailSyncOptions = {
   /** Called with new threads from the sync, so the caller can prepend them
    *  instead of doing a full page reload. */
   onNewThreads?: (threads: import("../../../types").MailThread[]) => void;
+  /** Called after a sync completes (success or failure). */
+  onSyncComplete?: () => void;
 };
 
-export function useMailSync({ applierName, applierReady, enabled, onNewThreads }: UseMailSyncOptions) {
+export function useMailSync({
+  applierName,
+  applierReady,
+  enabled,
+  onNewThreads,
+  onSyncComplete,
+}: UseMailSyncOptions) {
+  const [syncing, setSyncing] = useState(false);
   const syncingRef = useRef(false);
   const onNewThreadsRef = useRef(onNewThreads);
+  const onSyncCompleteRef = useRef(onSyncComplete);
   onNewThreadsRef.current = onNewThreads;
+  onSyncCompleteRef.current = onSyncComplete;
 
   const runSync = useCallback(async () => {
     if (!applierName || syncingRef.current) return;
     syncingRef.current = true;
+    setSyncing(true);
     try {
       const result = await syncMailIncremental(applierName);
       // If new messages arrived, fetch them from cache and prepend
@@ -41,6 +53,8 @@ export function useMailSync({ applierName, applierReady, enabled, onNewThreads }
       console.error("mail sync failed", e);
     } finally {
       syncingRef.current = false;
+      setSyncing(false);
+      onSyncCompleteRef.current?.();
     }
   }, [applierName]);
 
@@ -62,5 +76,5 @@ export function useMailSync({ applierName, applierReady, enabled, onNewThreads }
     };
   }, [applierReady, applierName, enabled, runSync]);
 
-  return { runSync };
+  return { runSync, syncing };
 }

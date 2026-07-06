@@ -1,3 +1,7 @@
+import { installTerminalLogger, requestLogger } from '@nextoffer/shared/terminal-log';
+
+installTerminalLogger('avalon-relay');
+
 import cors from 'cors';
 import express from 'express';
 import { createServer } from 'node:http';
@@ -73,6 +77,7 @@ function cleanupSocket(socket: Socket) {
 
 const app = express();
 app.use(cors({ origin: CORS_ORIGIN }));
+app.use(requestLogger('api'));
 app.get('/health', (_req, res) => {
   const active = [...sessions.values()].map((session) => ({
     id: session.id,
@@ -88,6 +93,7 @@ const io = new Server(httpServer, {
 
 io.on('connection', (socket) => {
   let boundSession: Session | null = null;
+  console.log(`[socket] connect ${socket.id}`);
 
   socket.on(SOCKET_EVENTS.REGISTER, (payload: RegisterPayload, ack?: (data: RegisteredPayload) => void) => {
     const session = getOrCreateSession(payload.sessionId);
@@ -128,10 +134,12 @@ io.on('connection', (socket) => {
     ack?.(response);
     socket.emit(SOCKET_EVENTS.REGISTERED, response);
     emitPeerStatus(session);
+    console.log(`[socket] register session=${session.id} role=${payload.role} client=${socket.id}`);
   });
 
   socket.on(SOCKET_EVENTS.EXECUTE_ACTION, (action: RemoteAction) => {
     if (!boundSession?.extension) {
+      console.warn(`[socket] execute-action ${action.id} (${action.action}) — no extension connected in session=${boundSession?.id ?? '-'}`);
       socket.emit(SOCKET_EVENTS.ACTION_RESULT, {
         actionId: action.id,
         success: false,
@@ -139,16 +147,19 @@ io.on('connection', (socket) => {
       } satisfies ActionResult);
       return;
     }
+    console.log(`[socket] execute-action → session=${boundSession.id} id=${action.id} action=${action.action} tab=${action.tabId ?? '-'}`);
     boundSession.extension.emit(SOCKET_EVENTS.EXECUTE_ACTION, action);
   });
 
   socket.on(SOCKET_EVENTS.ACTION_RESULT, (result: ActionResult) => {
+    console.log(`[socket] action-result ← session=${boundSession?.id ?? '-'} id=${result.actionId} success=${result.success}${result.error ? ` error="${result.error}"` : ''}`);
     boundSession?.controller?.emit(SOCKET_EVENTS.ACTION_RESULT, result);
   });
 
   // Live apply progress from the extension → controller + all observers (Athens).
   socket.on(SOCKET_EVENTS.APPLY_PROGRESS, (progress: ApplyProgress) => {
     if (!boundSession) return;
+    console.log(`[socket] apply-progress session=${boundSession.id} phase=${progress.phase} step=${progress.appliedSteps ?? '-'}/${progress.totalSteps ?? '-'} — ${progress.message}`);
     boundSession.controller?.emit(SOCKET_EVENTS.APPLY_PROGRESS, progress);
     for (const observer of boundSession.observers) {
       observer.emit(SOCKET_EVENTS.APPLY_PROGRESS, progress);
@@ -156,6 +167,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on(SOCKET_EVENTS.TABS_UPDATE, (tabs: TabInfo[]) => {
+    console.log(`[socket] tabs-update session=${boundSession?.id ?? '-'} count=${tabs.length}`);
     boundSession?.controller?.emit(SOCKET_EVENTS.TABS_UPDATE, tabs);
   });
 
@@ -164,12 +176,14 @@ io.on('connection', (socket) => {
   });
 
   socket.on(SOCKET_EVENTS.REQUEST_SCREENSHOT, (payload: { tabId?: number }) => {
+    console.log(`[socket] request-screenshot session=${boundSession?.id ?? '-'} tab=${payload.tabId ?? '-'}`);
     boundSession?.extension?.emit(SOCKET_EVENTS.REQUEST_SCREENSHOT, payload);
   });
 
   socket.on(
     SOCKET_EVENTS.SCREENSHOT_RESULT,
     (payload: { tabId: number; dataUrl?: string; error?: string }) => {
+      console.log(`[socket] screenshot-result session=${boundSession?.id ?? '-'} tab=${payload.tabId}${payload.error ? ` error="${payload.error}"` : ' ok'}`);
       boundSession?.controller?.emit(SOCKET_EVENTS.SCREENSHOT_RESULT, payload);
     },
   );
@@ -179,6 +193,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    console.log(`[socket] disconnect ${socket.id} session=${boundSession?.id ?? '-'}`);
     cleanupSocket(socket);
   });
 });

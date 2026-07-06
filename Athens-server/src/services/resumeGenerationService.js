@@ -69,6 +69,7 @@ export function buildGenerationRequestFromSavedConfig({
   savedConfig,
   identity,
   generateParentJobId,
+  structuredJob = false,
 }) {
   const jd = cleanString(jobDescription);
   const config = mergeStoredConfig(savedConfig);
@@ -76,6 +77,12 @@ export function buildGenerationRequestFromSavedConfig({
   const model = resolveResumeModel(provider, config.model);
   const reasoningEffort =
     config.reasoningEffort === "default" || !config.reasoningEffort ? undefined : config.reasoningEffort;
+
+  // For structured (MongoDB) jobs, drop steps the user marked "skip for structured
+  // jobs" — e.g. the AI skill-fetch step, since those skills come from the job doc.
+  const steps = structuredJob
+    ? (Array.isArray(config.steps) ? config.steps : []).filter((s) => !s?.skipForStructuredJobs)
+    : config.steps;
 
   return {
     applierName: cleanString(applierName),
@@ -89,7 +96,7 @@ export function buildGenerationRequestFromSavedConfig({
     systemInstruction: config.systemInstruction,
     jobDescription: jd,
     identity: identity ?? identityFromProfile({}),
-    steps: stepsToPlan(config.steps),
+    steps: stepsToPlan(steps),
     generateParentJobId: generateParentJobId ? cleanString(generateParentJobId) : undefined,
   };
 }
