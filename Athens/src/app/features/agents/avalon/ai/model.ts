@@ -33,7 +33,7 @@ export function resolveProfileDefaultModel(
     provider = profile.deepseekApiKey ? "deepseek" : profile.openaiApiKey ? "openai" : undefined;
   }
   if (provider === "openai") {
-    return String(profile.openaiModel ?? "").trim() || "gpt-4o-mini";
+    return "gpt-4o-mini";
   }
   if (provider === "deepseek") {
     return "deepseek-v4-flash";

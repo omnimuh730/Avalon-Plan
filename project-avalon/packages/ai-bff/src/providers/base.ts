@@ -18,6 +18,7 @@ export interface ProviderRunResult {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cachedTokens: number;
   raw: ChatCompletion;
 }
 
@@ -102,6 +103,10 @@ export function createOpenAiCompatibleProvider(
         parsed = parseStructuredContent(content);
       }
 
+      const usage = completion.usage;
+      const cachedTokens =
+        Number(usage?.prompt_tokens_details?.cached_tokens ?? 0) || 0;
+
       return {
         id: completion.id,
         model: completion.model,
@@ -113,9 +118,10 @@ export function createOpenAiCompatibleProvider(
           name: call.type === 'function' ? call.function.name : call.type,
           arguments: call.type === 'function' ? call.function.arguments : '{}',
         })),
-        promptTokens: completion.usage?.prompt_tokens ?? 0,
-        completionTokens: completion.usage?.completion_tokens ?? 0,
-        totalTokens: completion.usage?.total_tokens ?? 0,
+        promptTokens: usage?.prompt_tokens ?? 0,
+        completionTokens: usage?.completion_tokens ?? 0,
+        totalTokens: usage?.total_tokens ?? 0,
+        cachedTokens,
         raw: completion,
       };
     },

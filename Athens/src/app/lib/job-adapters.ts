@@ -50,11 +50,17 @@ function parseWorkMode(remote: string): WorkMode {
 
 export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccount | null): Job {
   const backendId = normalizeId(doc._id);
+  const isExternal = doc.catalog === "external" || (typeof doc.jobTitle === "string" && !doc.title);
   const company = (doc.company as { name?: string; tags?: string[]; logo?: string } | undefined) || {};
   const details = (doc.details as Record<string, string | undefined> | undefined) || {};
-  const title = String(doc.title || "Untitled role");
+  const title = String(doc.title || doc.jobTitle || "Untitled role");
 
-  const rawLogo = typeof company.logo === "string" ? company.logo.trim() : "";
+  const rawLogo =
+    typeof company.logo === "string"
+      ? company.logo.trim()
+      : typeof doc.companyIcon === "string"
+        ? doc.companyIcon.trim()
+        : "";
   let logoUrl: string | undefined;
   if (/^https?:\/\//i.test(rawLogo)) logoUrl = rawLogo;
   else if (rawLogo.startsWith("//")) logoUrl = `https:${rawLogo}`;
@@ -62,25 +68,29 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
   const companyLinkRaw = typeof doc.companyLink === "string" ? doc.companyLink.trim() : "";
   const companyUrl = /^https?:\/\//i.test(companyLinkRaw) ? companyLinkRaw : "#";
 
-  const industries = Array.isArray(company.tags) ? company.tags.map(String) : ["General"];
+  const industries = Array.isArray(company.tags) ? company.tags.map(String) : isExternal ? [] : ["General"];
   const applierId = applier?._id != null ? normalizeId(applier._id) : null;
-  const st = resolveStatusForApplier(doc.status as unknown[] | undefined, applierId);
+  const st = isExternal ? "none" : resolveStatusForApplier(doc.status as unknown[] | undefined, applierId);
   const status = mapApiStatusToJob(st);
 
-  const location = String(details.position || "—");
-  const workMode = parseWorkMode(String(details.remote || ""));
-  const type = String(details.time || "Full-time");
+  const location = String(details.position || (isExternal ? "—" : "—"));
+  const workMode = isExternal ? "onsite" : parseWorkMode(String(details.remote || ""));
+  const type = String(details.time || (isExternal ? "—" : "Full-time"));
   const seniority = String(details.seniority || "—");
-  const salary = String(details.money || "Undisclosed");
+  const salary = String(details.money || (isExternal ? "—" : "Undisclosed"));
   const postedRaw = String(doc.postedAt || doc._createdAt || "");
   const postedAt = postedRaw ? postedRaw.slice(0, 10) : "";
   const posted = postedRaw ? new Date(postedRaw).toLocaleString() : "—";
-  const applyUrl = String(doc.applyLink || "#");
+  const applyUrl = String(doc.applyLink || doc.jobLink || "#");
   const source =
-    typeof doc.source === "string" && doc.source ? doc.source : inferJobSource(String(doc.applyLink || ""));
+    typeof doc.source === "string" && doc.source
+      ? doc.source
+      : typeof doc.sender === "string" && doc.sender
+        ? doc.sender
+        : inferJobSource(String(doc.applyLink || doc.jobLink || ""));
 
-  const skill = readScore(doc, "scoreSkill", "matchScore", "skillScore") ?? 0;
-  const overall = readScore(doc, "_score", "scoreOverall") ?? skill;
+  const skill = isExternal ? 0 : readScore(doc, "scoreSkill", "matchScore", "skillScore") ?? 0;
+  const overall = isExternal ? 0 : readScore(doc, "_score", "scoreOverall") ?? skill;
   const skillsCovered = readScore(doc, "skillsCovered") ?? undefined;
   const skillsRequired = readScore(doc, "skillsRequired") ?? undefined;
   const scoreVector = readScore(doc, "scoreVector");
@@ -131,7 +141,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     id: backendId,
     backendId,
     title,
-    company: String(company.name || "Unknown"),
+    company: String(company.name || doc.companyName || "Unknown"),
     companyUrl,
     logoUrl,
     location,
@@ -154,7 +164,11 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     postedAgo: typeof doc.postedAgo === "string" ? doc.postedAgo : undefined,
     salary,
     source,
-    jobDescription: String(doc.description || `${title} at ${company.name || "company"}.`),
+    jobDescription: String(
+      doc.jobDescription ||
+        doc.description ||
+        `${title} at ${company.name || doc.companyName || "company"}.`,
+    ),
     skills,
     tags,
     applicantsText,
@@ -164,6 +178,7 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
     bestResumeId,
     skillHighlights,
     aiSkills,
+    catalog: isExternal ? "external" : "market",
   };
 }
 

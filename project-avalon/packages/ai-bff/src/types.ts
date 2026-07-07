@@ -45,12 +45,19 @@ export interface ChatRequest {
     openai?: string;
     deepseek?: string;
   };
+  /** Correlation / attribution (forwarded from proxy or client). */
+  requestId?: string;
+  runId?: string;
+  applierName?: string;
+  jobId?: string;
+  feature?: string;
 }
 
 export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cachedTokens?: number;
 }
 
 export interface CostBreakdown {
@@ -71,7 +78,12 @@ export interface ChatUsage extends TokenUsage {
 
 export interface ChatResponse {
   id: string;
+  requestId: string;
+  requestedModel: string;
+  billedModel: string;
+  modelMismatch: boolean;
   provider: AiProviderId;
+  /** Billed model ID (alias for billedModel, kept for compatibility). */
   model: string;
   content: string | null;
   /** Parsed JSON when responseSchema was requested */

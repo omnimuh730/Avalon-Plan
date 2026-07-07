@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Start all NextOffer dev services.
- * Uses the Ink TUI dashboard when stdout is a TTY; falls back to plain styled logs otherwise.
+ * Start all NextOffer dev services with plain structured log multiplexing.
+ * Set DEV_TUI=1 to opt into the Ink TUI dashboard.
  */
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -10,11 +10,11 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dashboard = path.join(ROOT, 'scripts', 'dev-dashboard.mjs');
 
-if (process.stdout.isTTY && process.env.NO_DEV_TUI !== '1') {
+if (process.stdout.isTTY && process.env.DEV_TUI === '1') {
 	const runner = spawn(process.execPath, [dashboard], {
 		cwd: ROOT,
 		stdio: 'inherit',
-		env: { ...process.env, FORCE_COLOR: '1', FORCE_STYLED_LOGS: '1' },
+		env: { ...process.env },
 	});
 	runner.on('exit', (code) => process.exit(code ?? 0));
 } else {

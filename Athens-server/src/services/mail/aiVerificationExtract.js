@@ -143,6 +143,7 @@ export async function aiExtractVerification(emails, profile, context = {}) {
       provider: picked.provider,
       apiKey: picked.apiKey,
       model: picked.model,
+      feature: "mail-otp-select",
       jsonMode: true,
       messages: [
         { role: "system", content: SELECT_SYSTEM_PROMPT },
@@ -198,6 +199,7 @@ export async function aiExtractVerification(emails, profile, context = {}) {
       provider: picked.provider,
       apiKey: picked.apiKey,
       model: picked.model,
+      feature: "mail-otp-extract",
       jsonMode: true,
       messages: [
         { role: "system", content: EXTRACT_SYSTEM_PROMPT },

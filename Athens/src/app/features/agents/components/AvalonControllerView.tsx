@@ -201,11 +201,15 @@ export function AvalonControllerView({
     () => [...relay.jobUsage.requests].reverse().find((request) => request.model),
     [relay.jobUsage.requests],
   );
-  const activeAiModel = latestRateRequest?.model || profileDefaultModel || latestModelRequest?.model || "AI BFF default";
-  const inferredPricing = resolveAgentModelPricing(activeAiModel);
-  const activePricingRates = latestRateRequest?.pricingRates ?? inferredPricing?.rates ?? null;
-  const activeProvider = latestRateRequest?.provider ?? inferredPricing?.provider ?? null;
-  const activePricingPolicy = formatPricingPolicy(activePricingRates);
+  const activeAiModel = latestModelRequest?.model || latestRateRequest?.model || profileDefaultModel || "Expected model (profile default)";
+  const inferredPricing = resolveAgentModelPricing(profileDefaultModel);
+  const activePricingRates = latestRateRequest?.pricingRates ?? null;
+  const activeProvider = latestRateRequest?.provider ?? null;
+  const activePricingPolicy = activePricingRates
+    ? formatPricingPolicy(activePricingRates)
+    : inferredPricing
+      ? `Est. ${formatPricingPolicy(inferredPricing.rates)}`
+      : "Rates pending first response";
   const pipeline = relay.activePipeline;
   const hasTree = pipeline.scanned && Boolean(relay.actionableTree?.length);
   const hasPlan = pipeline.analyzed && Boolean(relay.formAnalysis?.fields.length);
@@ -478,16 +482,17 @@ export function AvalonControllerView({
                   const rowPricingPolicy = r.pricingRates
                     ? formatPricingPolicy(r.pricingRates)
                     : r.costUsd > 0
-                      ? "Priced by server response"
-                      : activePricingPolicy;
+                      ? "Server-priced"
+                      : "—";
+                  const displayModel = r.model ?? "—";
                   return (
                     <tr key={`${r.label}-${i}`} className="border-t border-border/40">
                       <td className="px-2 py-1 text-foreground truncate max-w-[180px]" title={`${r.label} · ${r.at}`}>
                         {r.label}
                       </td>
                       <td className="px-2 py-1 text-muted-foreground">
-                        <div className="max-w-[220px] truncate" title={`${r.provider ? `${r.provider} · ` : ""}${r.model ?? activeAiModel}`}>
-                          {r.model ?? activeAiModel}
+                        <div className="max-w-[220px] truncate" title={`${r.provider ? `${r.provider} · ` : ""}${displayModel}`}>
+                          {displayModel}
                           {r.provider ? ` · ${r.provider}` : ""}
                         </div>
                         <div className="text-[10px] truncate" title={rowPricingPolicy}>

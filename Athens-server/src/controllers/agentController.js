@@ -1,10 +1,13 @@
 import { ObjectId } from "mongodb";
+import { randomUUID } from "node:crypto";
 import { jobsCollection, accountInfoCollection } from "../db/mongo.js";
 import { JobSource } from "../config/jobSources.js";
 import { DEEPSEEK_MODELS, listOpenAiModels } from "@nextoffer/shared/models";
 import { createAsyncHandler } from "../utils/http.js";
 import { findAccountByApplierName } from "../services/mail/credentials.js";
 import { resolveDefaultModel } from "../services/llm/llmService.js";
+import { decryptProfileApiKeys } from "../services/autoBidProfileSecrets.js";
+import { decryptSecret } from "@nextoffer/shared/secretCrypto";
 
 const AI_BFF_URL = (process.env.AI_BFF_URL || "http://127.0.0.1:3920").replace(/\/$/, "");
 
@@ -41,7 +44,7 @@ async function resolveOpenAiKey(profileId) {
     { _id: new ObjectId(profileId) },
     { projection: { "autoBidProfile.openaiApiKey": 1 } },
   );
-  return doc?.autoBidProfile?.openaiApiKey?.trim() || envKey || null;
+  return decryptSecret(doc?.autoBidProfile?.openaiApiKey ?? '').trim() || envKey || null;
 }
 
 export const getAgentHealth = createAsyncHandler(async (_req, res) => {
@@ -150,7 +153,7 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
     return res.status(404).json({ error: `No account named "${applierName}".` });
   }
 
-  const profile = acc.autoBidProfile || {};
+  const profile = decryptProfileApiKeys(acc.autoBidProfile || {});
   const { model: profileModel } = resolveDefaultModel(profile);
   const model = String(req.body?.model || "").trim() || profileModel;
 
@@ -162,14 +165,23 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
     });
   }
 
-  const { messages, system, temperature, maxTokens, responseSchema } = req.body || {};
+  const { messages, system, temperature, maxTokens, responseSchema, runId, jobId, feature } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "messages required" });
   }
 
+  const requestId = String(req.headers["x-request-id"] || req.body?.requestId || randomUUID());
+
   const upstream = await fetch(`${AI_BFF_URL}/v1/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-request-id": requestId,
+      ...(runId ? { "x-run-id": String(runId) } : {}),
+      "x-applier-name": applierName,
+      ...(jobId ? { "x-job-id": String(jobId) } : {}),
+      ...(feature ? { "x-feature": String(feature) } : { "x-feature": "avalon-agent-chat" }),
+    },
     body: JSON.stringify({
       model,
       system,
@@ -177,6 +189,11 @@ export const postAgentChat = createAsyncHandler(async (req, res) => {
       temperature,
       maxTokens,
       responseSchema,
+      requestId,
+      runId,
+      applierName,
+      jobId,
+      feature: feature || "avalon-agent-chat",
       apiKeys: {
         ...(openaiApiKey ? { openai: openaiApiKey } : {}),
         ...(deepseekApiKey ? { deepseek: deepseekApiKey } : {}),

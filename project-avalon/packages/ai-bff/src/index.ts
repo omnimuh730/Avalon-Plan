@@ -4,4 +4,7 @@ installTerminalLogger('ai-bff');
 
 import { startAiBffServer } from './server.js';
 
-startAiBffServer();
+startAiBffServer().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

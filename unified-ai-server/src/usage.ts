@@ -32,6 +32,12 @@ export function getRunTokenTotal(runId: string) {
   return runTokenTotals.get(runId) ?? 0;
 }
 
+export function addRunTokenTotal(runId: string, tokens: number) {
+  if (!runId || tokens <= 0) return;
+  const prev = runTokenTotals.get(runId) ?? 0;
+  runTokenTotals.set(runId, prev + tokens);
+}
+
 export function normalizeUsage(model: string, usage: Record<string, unknown>) {
   return costFromUsage(model, usage);
 }

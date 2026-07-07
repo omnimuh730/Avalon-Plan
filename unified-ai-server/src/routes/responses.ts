@@ -1,18 +1,22 @@
 import type { Request, Response } from 'express';
+import { createLogger } from '@nextoffer/shared/terminal-log';
 import { CONFIG } from '../config.js';
 import { routeModel, proxyJson, checkTokenBudget } from '../providers.js';
-import { recordUsage, normalizeUsage } from '../usage.js';
+import { recordCallLog } from '../call-log.js';
+
+const log = createLogger('unified-ai');
 
 /** DeepSeek Responses API passthrough for codex-rs. */
 export async function responsesHandler(req: Request, res: Response) {
+  const startedAt = Date.now();
   try {
-    const model = String(req.body?.model || 'deepseek-v4-flash');
+    const requestedModel = String(req.body?.model || 'deepseek-v4-flash');
     const auth = req.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
     const runId = String(req.headers['x-run-id'] || '');
-    const route = routeModel(model, auth);
+    const route = routeModel(requestedModel, auth);
     if (!route.apiKey) return res.status(401).json({ error: { message: 'No API key' } });
 
-    console.log(`[llm] route → feature=responses provider=${route.provider} model=${model}${runId ? ` run=${runId}` : ''}`);
+    log.llm({ msg: 'route responses', feature: 'responses', provider: route.provider, requestedModel, runId: runId || undefined });
 
     checkTokenBudget(runId || undefined, CONFIG.maxTokensPerCall);
 
@@ -25,19 +29,21 @@ export async function responsesHandler(req: Request, res: Response) {
       body: JSON.stringify(req.body),
     });
 
-    if (upstream.ok && data?.usage) {
-      const u = normalizeUsage(model, data.usage);
-      await recordUsage({
-        feature: 'responses',
-        runId: runId || undefined,
-        model,
+    const elapsedMs = Date.now() - startedAt;
+    const billedModel = String(data?.model || requestedModel);
+
+    if (data?.usage) {
+      await recordCallLog({
+        req,
+        requestedModel,
+        billedModel,
         provider: route.provider,
-        inputTokens: u.inputTokens,
-        cachedTokens: u.cachedTokens,
-        outputTokens: u.outputTokens,
-        totalTokens: u.totalTokens,
-        costUsd: u.costUsd,
-        priced: u.priced,
+        rawUsage: data.usage,
+        durationMs: elapsedMs,
+        success: upstream.ok,
+        httpStatus: upstream.status,
+        feature: 'responses',
+        path: '/v1/responses',
       });
     }
 

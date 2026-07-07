@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 import {
 	jobsCollection,
+	externalScrapedJobsCollection,
 	personalInfoCollection,
 	companyCategoryCollection,
 	accountInfoCollection,
@@ -17,6 +18,8 @@ import {
 } from '../services/jobListQuery.js';
 import { queueJobAnalysis, getJobAnalysisStatus } from '../services/jobAnalysis/index.js';
 import { listRecommendedJobs } from '../services/matching/matchScoreReader.js';
+import { normalizeExternalScrapedJob } from '../services/externalScrapedJobsListQuery.js';
+import { listMergedJobs, countExternalForStatusTabs } from '../services/mergedJobsListService.js';
 import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../services/matching/skillIndex.js';
 import { deleteScoresForJobs } from '../services/matching/matchScoreStore.js';
 import { buildJobSkillRadar } from '../services/jobSkillRadarService.js';
@@ -247,6 +250,10 @@ export async function getJobStatusCounts(req, res) {
 			counts[tab] = result?.[tab]?.[0]?.count ?? 0;
 		}
 
+		const externalCounts = await countExternalForStatusTabs(req.body);
+		counts.all += externalCounts.all;
+		counts.posted += externalCounts.posted;
+
 		return res.json({
 			success: true,
 			counts,
@@ -261,6 +268,25 @@ export async function getJobs(req, res) {
 	try {
 		if (!jobsCollection) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
+
+		const mergedResult = await listMergedJobs(req.body);
+		if (mergedResult.mergeExternal) {
+			const { docs, total, pageNum, limitNum, recommendationFallback, recommendationReason, recommendationWarming, catalogTotal } = mergedResult;
+			return res.json({
+				success: true,
+				data: docs,
+				recommendationFallback,
+				recommendationReason,
+				recommendationWarming,
+				catalogTotal,
+				pagination: {
+					total,
+					page: pageNum,
+					limit: limitNum,
+					totalPages: Math.ceil(total / limitNum),
+				},
+			});
 		}
 
 		const {
@@ -564,8 +590,16 @@ export async function getJobById(req, res) {
 			{ _id: new ObjectId(id) },
 			{ projection: JOB_DETAIL_PROJECTION },
 		);
-		if (!doc) return res.status(404).json({ success: false, error: 'Job not found' });
-		return res.json({ success: true, data: doc });
+		if (doc) return res.json({ success: true, data: doc });
+
+		if (externalScrapedJobsCollection) {
+			const externalDoc = await externalScrapedJobsCollection.findOne({ _id: new ObjectId(id) });
+			if (externalDoc) {
+				return res.json({ success: true, data: normalizeExternalScrapedJob(externalDoc) });
+			}
+		}
+
+		return res.status(404).json({ success: false, error: 'Job not found' });
 	} catch (err) {
 		console.error(`GET /api/jobs/${req.params.id} error`, err);
 		return res.status(500).json({ success: false, error: 'Failed to fetch job' });

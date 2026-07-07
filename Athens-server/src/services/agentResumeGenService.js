@@ -16,6 +16,7 @@ import {
   buildGenerationRequestFromSavedConfig,
   loadGeneratorConfig,
 } from "./resumeGenerationService.js";
+import { decryptAccountDoc, loadDecryptedAutoBidProfile } from "./autoBidProfileSecrets.js";
 
 /** Render sections to PDF or read the on-disk draft (Node fs). */
 async function pdfPayloadForAgent(sections, identity, savedConfig, applierName, jobId) {
@@ -43,15 +44,7 @@ async function pdfPayloadForAgent(sections, identity, savedConfig, applierName, 
 const cleanString = (v) => String(v ?? "").trim();
 
 async function findProfile(applierNameRaw) {
-  const name = cleanString(applierNameRaw);
-  if (!name || !accountInfoCollection) return null;
-  const proj = { projection: { autoBidProfile: 1 } };
-  let acc = await accountInfoCollection.findOne({ name }, proj);
-  if (!acc) {
-    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, proj);
-  }
-  return acc?.autoBidProfile || null;
+  return loadDecryptedAutoBidProfile(applierNameRaw);
 }
 
 async function findAccountForKit(applierNameRaw) {
@@ -63,7 +56,7 @@ async function findAccountForKit(applierNameRaw) {
     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, { projection });
   }
-  return acc || null;
+  return acc ? decryptAccountDoc(acc) : null;
 }
 
 async function loadRawGeneratorConfig(applierName) {
@@ -176,12 +169,15 @@ function profileToKitSections(identity, account) {
       skills: catalogSkills.size ? [{ category: "Skills", items: [...catalogSkills].slice(0, 24) }] : [],
     },
     experience: {
-      experiences: careers.map((career) => ({
-        company: cleanString(career?.company),
-        title: cleanString(career?.title),
-        period: cleanString(career?.period),
-        bullets: [],
-      })),
+      experiences: careers.map((career) => {
+        const description = cleanString(career?.description);
+        return {
+          company: cleanString(career?.company),
+          title: cleanString(career?.title),
+          period: cleanString(career?.period),
+          bullets: description ? [description] : [],
+        };
+      }),
     },
     education: { education: Array.isArray(identity?.education) ? identity.education : [] },
   };

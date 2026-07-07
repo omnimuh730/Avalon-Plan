@@ -150,7 +150,7 @@ export function uploadedTemplateMongoId(templateId: string) {
 // job-description text at generation time.
 const JOB_DESC_TOKEN = "{job_description}";
 
-export type CareerEntry = { company: string; title: string; period: string };
+export type CareerEntry = { company: string; title: string; period: string; description: string };
 export type EducationEntry = { school: string; degree: string; period: string };
 
 // Token + cost summary returned by the backend (mirrors llmService.summarizeUsage).

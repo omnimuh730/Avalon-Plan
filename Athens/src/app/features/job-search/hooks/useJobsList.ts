@@ -104,6 +104,7 @@ export function buildJobsListBody(
 
   if (opts.applierName) body.applierName = opts.applierName;
   if (filters.aiExtractedOnly) body.aiExtracted = true;
+  if (filters.includeExternalScraped) body.includeExternalScraped = true;
 
   if (filters.companyQuery.trim()) body["company.name"] = filters.companyQuery.trim();
   if (filters.location !== "all") body["details.position"] = filters.location;

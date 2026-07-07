@@ -77,3 +77,10 @@ export interface Job {
   skillHighlights?: { name: string; matched: boolean }[];
   /** AI-detected skills with category + requirement (1-5), when analyzed. */
   aiSkills?: { name: string; category: string; requirement: number }[];
+  /** Data catalog: job_market (default) or external_scraped_jobs. */
+  catalog?: "market" | "external";
+}
+
+export function isExternalJob(job: Pick<Job, "catalog">): boolean {
+  return job.catalog === "external";
+}

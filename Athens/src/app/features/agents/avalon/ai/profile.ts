@@ -28,6 +28,7 @@ export interface AutoBidProfile {
   careers?: Array<{
     company?: string;
     title?: string;
+    description?: string;
     startMonth?: string;
     startYear?: string;
     endPresent?: boolean;

@@ -4,6 +4,7 @@ import { JOB_ANALYSIS_PROMPT } from "../config/jobAnalysisPrompt.js";
 import { rankResumes, rankUploadedResumes } from "../services/resumeMatchService.js";
 import { listUserResumesForOwner } from "../services/userResumeService.js";
 import { emptyResumeCatalog } from "../services/resumeCatalogService.js";
+import { decryptAccountDoc } from "../services/autoBidProfileSecrets.js";
 
 async function findAccount(applierNameRaw) {
   const name = String(applierNameRaw ?? "").trim();
@@ -27,6 +28,7 @@ async function analyzeJobDescription(jobDescription, profile) {
     provider: providerId,
     apiKey,
     model,
+    feature: "job-match-analysis",
     messages: [
       { role: "system", content: JOB_ANALYSIS_PROMPT },
       { role: "user", content: `Job description:\n\n${jobDescription}` },
@@ -54,7 +56,7 @@ export async function analyzeResumeMatch(req, res) {
       return res.status(400).json({ success: false, error: "jobDescription is required" });
     }
 
-    const acc = await findAccount(applierName);
+    const acc = decryptAccountDoc(await findAccount(applierName));
     if (!acc) {
       return res.status(404).json({ success: false, error: "Account not found" });
     }

@@ -30,8 +30,6 @@ export function ProfileTab() {
     openai: { state: "idle" },
     deepseek: { state: "idle" },
   });
-  const [openaiModels, setOpenaiModels] = useState<string[]>([]);
-
   const load = useCallback(async () => {
     if (!applier?.name) {
       setProfile(emptyProfile());
@@ -96,9 +94,6 @@ export function ProfileTab() {
         ...c,
         [provider]: { state: res.ok ? "ok" : "fail", message: res.message },
       }));
-      if (provider === "openai" && res.ok && res.models) {
-        setOpenaiModels(res.models);
-      }
     } catch {
       setKeyChecks((c) => ({ ...c, [provider]: { state: "fail", message: "Could not reach the backend." } }));
     }
@@ -167,7 +162,6 @@ export function ProfileTab() {
                   onChange={patch}
                   keyChecks={keyChecks}
                   onTestKey={(p) => void checkKey(p)}
-                  openaiModels={openaiModels}
                 />
                 {applier?.name ? (
                   <DefaultModelCard

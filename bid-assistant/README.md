@@ -58,8 +58,8 @@ The **Job Bid** tab analyzes the **currently active browser tab** (read-only) to
 
 ### Setup
 
-1. In **lancer-frontend → Settings → Profile**, set your **OpenAI API key** and model (stored in MongoDB on your applier account).
-2. Run the local bridge from **vender-server**: `npm run bridge` or use `npm run dev:all` here only for UI dev without analysis.
+1. In **lancer-frontend → Settings → Profile**, set your **OpenAI API key** and model (stored encrypted in MongoDB on your applier account).
+2. Run the local bridge from **vender-server**: `npm run bridge` (set `API_KEYS_ENCRYPTION_KEY` in `vender-server/.env` — same value as Athens-server).
 
 The bridge reads `prompt.md` (skill extraction rules) and resume stacks from MongoDB (`account_info.resumeCatalog`) or `resumes.json`.
 

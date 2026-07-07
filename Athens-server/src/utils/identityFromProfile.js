@@ -13,7 +13,7 @@ export function identityFromProfile(profile) {
       const start = [str(row.startYear), str(row.startMonth)].filter(Boolean).join(".");
       const end = row.endPresent ? "Present" : [str(row.endYear), str(row.endMonth)].filter(Boolean).join(".");
       const period = start || end ? `${start || "?"} – ${end || "?"}` : "";
-      return { company: str(row.company), title: str(row.title), period };
+      return { company: str(row.company), title: str(row.title), period, description: str(row.description).trim() };
     })
     .filter((c) => c.company || c.title);
 

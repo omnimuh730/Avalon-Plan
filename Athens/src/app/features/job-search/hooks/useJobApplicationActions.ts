@@ -6,6 +6,7 @@ import { API_BASE } from "@/lib/api-base";
 import { JOB_STATUS_TO_API } from "../../../api/jobs";
 import { mapDocToJob } from "../../../lib/job-adapters";
 import type { Job, JobStatus } from "../../../types";
+import { isExternalJob } from "../../../types/job";
 
 type JobMutationResponse = {
   success?: boolean;
@@ -46,6 +47,10 @@ export function useJobApplicationActions(
           window.open(job.applyUrl, "_blank", "noopener,noreferrer");
         }
 
+        if (isExternalJob(job)) {
+          return;
+        }
+
         const res = (await post(`/jobs/${jobId}/apply`, {
           applierName: applier.name,
         })) as JobMutationResponse;
@@ -68,6 +73,7 @@ export function useJobApplicationActions(
 
   const updateJobStatus = useCallback(
     async (job: Job, status: Exclude<JobStatus, "posted">) => {
+      if (isExternalJob(job)) return;
       const jobId = job.backendId || job.id;
       if (!applier?.name) {
         toast.error("Select a profile before updating status");
@@ -97,6 +103,7 @@ export function useJobApplicationActions(
 
   const cancelJobStatus = useCallback(
     async (job: Job) => {
+      if (isExternalJob(job)) return;
       const jobId = job.backendId || job.id;
       if (!applier?.name) {
         toast.error("Select a profile before updating status");

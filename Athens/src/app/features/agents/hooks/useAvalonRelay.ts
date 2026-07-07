@@ -41,6 +41,7 @@ import { verifyApplyOutcome, type ApplyVerifyResult } from "../avalon/ai/verify-
 import { validateJobPage, type PageValidityResult } from "../avalon/ai/validate-page";
 import { postApplyLog, type ApplyLogEvent } from "../../../api/avalonLog";
 import { requestVerificationCode } from "../../../api/mail";
+import { setAgentRunContext, clearAgentRunContext } from "../avalon/ai/run-context";
 
 /** Short unique id for one apply run (used to correlate the debug log file + Mongo doc). */
 function newRunId(): string {
@@ -557,6 +558,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       runIdRef.current = runId;
       runJobRef.current = job;
       runEventsRef.current = [];
+      setAgentRunContext({ runId, jobId: job.id });
       void postApplyLog({
         runId,
         applierName: applierName || undefined,
@@ -592,6 +594,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       flushRunLog({ status, finished: true });
       runIdRef.current = null;
       runJobRef.current = null;
+      clearAgentRunContext();
     },
     [flushRunLog],
   );

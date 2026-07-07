@@ -5,3 +5,5 @@ export * from './skill-match.js';
 export * from './pricing.js';
 export * from './models.js';
 export * from './score.js';
+export * from './secretCrypto.js';
+export * from './profileApiKeys.js';

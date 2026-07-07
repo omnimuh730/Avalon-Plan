@@ -12,20 +12,13 @@ import {
   EMPTY_USAGE,
   resolveDefaultModel,
 } from "../services/llm/llmService.js";
+import { loadDecryptedAutoBidProfile } from "../services/autoBidProfileSecrets.js";
 
 const cleanString = (v) => String(v ?? "").trim();
 
 /** Resolve an applier's autoBidProfile (exact, then case-insensitive). */
 async function findProfile(applierNameRaw) {
-  const name = String(applierNameRaw ?? "").trim();
-  if (!name || !accountInfoCollection) return null;
-  const proj = { projection: { autoBidProfile: 1 } };
-  let acc = await accountInfoCollection.findOne({ name }, proj);
-  if (!acc) {
-    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, proj);
-  }
-  return acc?.autoBidProfile || null;
+  return loadDecryptedAutoBidProfile(applierNameRaw);
 }
 
 function apiKeyFor(profile, providerId) {
@@ -97,7 +90,11 @@ function buildTokenMap(identity, jobDescription, jobSkills) {
     job_description: cleanString(jobDescription),
     job_skills: skills.join(", "),
     career: careers
-      .map((c) => [field(c?.title), field(c?.company), field(c?.period)].filter(Boolean).join(" | "))
+      .map((c) => {
+        const parts = [field(c?.title), field(c?.company), field(c?.period)].filter(Boolean);
+        const description = field(c?.description);
+        return description ? `${parts.join(" | ")} — ${description}` : parts.join(" | ");
+      })
       .filter(Boolean)
       .join("\n"),
   };
@@ -106,6 +103,7 @@ function buildTokenMap(identity, jobDescription, jobSkills) {
     map[`company${n}_name`] = field(c?.company);
     map[`company${n}_title`] = field(c?.title);
     map[`company${n}_duration`] = field(c?.period);
+    map[`company${n}_description`] = field(c?.description);
   });
   return map;
 }

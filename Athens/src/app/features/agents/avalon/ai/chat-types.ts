@@ -14,9 +14,16 @@ export interface ChatRequest {
   responseSchema?: JsonSchemaDefinition;
   /** Abort the request when the caller's run is stopped (auto-run Stop). */
   signal?: AbortSignal;
+  runId?: string;
+  jobId?: string;
+  feature?: string;
 }
 
 export interface ChatResponse {
+  requestId?: string;
+  requestedModel?: string;
+  billedModel?: string;
+  modelMismatch?: boolean;
   provider?: string;
   model?: string;
   structured?: {

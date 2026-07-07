@@ -1,11 +1,15 @@
 // Thin client for unified-ai-server — all LLM traffic goes through the gateway.
 
+import { randomUUID } from 'node:crypto';
 import {
   costFromUsage,
   findPricing,
   formatUsd as formatCostUsd,
 } from '@nextoffer/shared/pricing';
+import { createLogger } from '@nextoffer/shared/terminal-log';
 import { DEEPSEEK_MODELS, isDeepSeekModel, listOpenAiModels } from '@nextoffer/shared/models';
+
+const log = createLogger('athens');
 
 const AI_BASE = (process.env.UNIFIED_AI_URL || 'http://127.0.0.1:8790').replace(/\/$/, '');
 
@@ -45,9 +49,7 @@ export function resolveDefaultModel(profile) {
     provider = p.deepseekApiKey ? 'deepseek' : p.openaiApiKey ? 'openai' : 'deepseek';
   }
   const apiKey = String((provider === 'openai' ? p.openaiApiKey : p.deepseekApiKey) || '').trim();
-  const fallbackModel = provider === 'openai'
-    ? (String(p.openaiModel || '').trim() || 'gpt-4o-mini')
-    : (DEEPSEEK_MODELS[0] || 'deepseek-v4-flash');
+  const fallbackModel = provider === 'openai' ? 'gpt-4o-mini' : (DEEPSEEK_MODELS[0] || 'deepseek-v4-flash');
   const model = String(p.defaultModel || '').trim() || fallbackModel;
   return { provider, apiKey, model };
 }
@@ -161,6 +163,9 @@ export async function chatCompletion({
   timeoutMs = 120000,
   runId,
   feature = 'resume-analysis',
+  applierName,
+  jobId,
+  requestId,
   signal,
 }) {
   const p = getProvider(provider);
@@ -179,10 +184,20 @@ export async function chatCompletion({
 
   const promptChars = messages.reduce((sum, m) => sum + String(m?.content || '').length, 0);
   const startedAt = Date.now();
+  const reqId = requestId || randomUUID();
   if (process.env.LLM_LOG !== 'off') {
-    console.log(
-      `[llm] → ${feature} · ${p.id}/${model} — ${messages.length} msg (${promptChars} chars)${jsonMode ? ' json' : ''}${runId ? ` run=${runId}` : ''}`,
-    );
+    log.llm({
+      msg: 'chat started',
+      requestId: reqId,
+      feature,
+      provider: p.id,
+      requestedModel: model,
+      runId,
+      applierName,
+      messageCount: messages.length,
+      promptChars,
+      jsonMode: jsonMode || undefined,
+    });
   }
 
   const response = await fetchRetry(
@@ -192,7 +207,10 @@ export async function chatCompletion({
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
+        'x-request-id': reqId,
         ...(runId ? { 'x-run-id': runId } : {}),
+        ...(applierName ? { 'x-applier-name': applierName } : {}),
+        ...(jobId ? { 'x-job-id': jobId } : {}),
         'x-feature': feature,
       },
       body: JSON.stringify(body),
@@ -206,22 +224,47 @@ export async function chatCompletion({
     const err = new Error(data?.error?.message || `${p.label} request failed (${response.status})`);
     err.status = response.status;
     err.provider = p.id;
-    console.error(`[llm] ✖ ${feature} · ${p.id}/${model} — ${response.status} after ${elapsedMs}ms: ${err.message}`);
+    log.error('llm', 'chat failed', {
+      requestId: reqId,
+      feature,
+      provider: p.id,
+      requestedModel: model,
+      durationMs: elapsedMs,
+      httpStatus: response.status,
+      error: err.message,
+    });
     throw err;
   }
   const content = data?.choices?.[0]?.message?.content;
   if (content == null) {
-    console.error(`[llm] ✖ ${feature} · ${p.id}/${model} — empty response after ${elapsedMs}ms`);
+    log.error('llm', 'empty response', {
+      requestId: reqId,
+      feature,
+      provider: p.id,
+      requestedModel: model,
+      durationMs: elapsedMs,
+    });
     throw new Error(`${p.label} returned an empty response.`);
   }
-  const usage = summarizeUsage(data?.usage, model);
+  const billedModel = data?.model ?? model;
+  const usage = summarizeUsage(data?.usage, billedModel);
   if (process.env.LLM_LOG !== 'off') {
-    const cost = usage.cost != null ? formatCostUsd(usage.cost) : 'n/a';
-    const cached = usage.cachedTokens ? ` (+${usage.cachedTokens} cached)` : '';
-    // one line per call: purpose · provider/model · tokens · cost · duration
-    console.log(
-      `[llm] ← ${feature} · ${p.id}/${model} — in ${usage.inputTokens}${cached} out ${usage.outputTokens} · ${cost} · ${elapsedMs}ms`,
-    );
+    log.llm({
+      msg: 'chat completed',
+      requestId: reqId,
+      feature,
+      provider: p.id,
+      requestedModel: model,
+      billedModel,
+      inputTokens: usage.inputTokens,
+      cachedInputTokens: usage.cachedTokens,
+      outputTokens: usage.outputTokens,
+      costUsd: usage.cost,
+      durationMs: elapsedMs,
+      runId,
+      applierName,
+      modelMismatch: model !== billedModel,
+    });
   }
   return { content, usage };
 }

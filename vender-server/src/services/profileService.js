@@ -1,4 +1,16 @@
 import { buildVerificationChecks } from './profileVerifyService.js';
+import { decryptProfileApiKeys } from './autoBidProfileSecrets.js';
+
+function resolveOpenAiApiKey(profile) {
+  return String(profile?.openaiApiKey ?? '').trim();
+}
+
+function resolveOpenAiModel(rawProfile) {
+  const defaultProvider = String(rawProfile?.defaultProvider ?? '').trim();
+  const defaultModel = String(rawProfile?.defaultModel ?? '').trim();
+  if (defaultProvider === 'openai' && defaultModel) return defaultModel;
+  return String(process.env.OPENAI_MODEL ?? '').trim() || 'gpt-4o-mini';
+}
 
 const GENDER_LABELS = {
   prefer_not_say: 'Prefer not to say',
@@ -67,7 +79,7 @@ function defaultEducationEntry() {
 }
 
 function defaultCareerEntry() {
-  return { company: '', title: '', startMonth: '', startYear: '', endMonth: '', endYear: '', endPresent: false };
+  return { company: '', title: '', description: '', startMonth: '', startYear: '', endMonth: '', endYear: '', endPresent: false };
 }
 
 function formatMonthYear(month, year, present = false) {
@@ -102,7 +114,9 @@ function formatCareers(entries) {
       const end = entry.endPresent
         ? range
         : [range, formatMonthYear(entry.endMonth, entry.endYear)].filter(Boolean).join(' - ');
-      return [entry.title, entry.company, end].filter(Boolean).join(' · ');
+      const base = [entry.title, entry.company, end].filter(Boolean).join(' · ');
+      const description = String(entry.description ?? '').trim();
+      return description ? `${base} — ${description}` : base;
     });
 }
 
@@ -270,7 +284,7 @@ export async function loadProfileBundle(accountInfoCollection, personalInfoColle
     );
   }
 
-  const rawProfile = account.autoBidProfile || {};
+  const rawProfile = decryptProfileApiKeys(account.autoBidProfile || {});
   const profile = buildPublicProfile(rawProfile);
   const skills = await loadSkills(personalInfoCollection);
   const resumeCatalog =
@@ -289,8 +303,8 @@ export async function loadProfileBundle(accountInfoCollection, personalInfoColle
       password: String(rawProfile.gmailAppPassword ?? '').replace(/\s/g, ''),
     },
     openAi: {
-      apiKey: String(rawProfile.openaiApiKey ?? '').trim(),
-      model: String(rawProfile.openaiModel ?? '').trim() || 'gpt-5-nano',
+      apiKey: resolveOpenAiApiKey(rawProfile),
+      model: resolveOpenAiModel(rawProfile),
     },
   };
 }
@@ -334,7 +348,7 @@ export async function verifyApplierProfile(
     };
   }
 
-  const rawProfile = account.autoBidProfile || {};
+  const rawProfile = decryptProfileApiKeys(account.autoBidProfile || {});
   const profile = buildPublicProfile(rawProfile);
   const skills = await loadSkills(personalInfoCollection);
   const resumeCatalog =
@@ -353,8 +367,8 @@ export async function verifyApplierProfile(
       password: String(rawProfile.gmailAppPassword ?? '').replace(/\s/g, ''),
     },
     openAi: {
-      apiKey: String(rawProfile.openaiApiKey ?? '').trim(),
-      model: String(rawProfile.openaiModel ?? '').trim() || 'gpt-5-nano',
+      apiKey: resolveOpenAiApiKey(rawProfile),
+      model: resolveOpenAiModel(rawProfile),
     },
   };
 
@@ -373,42 +387,6 @@ export async function verifyApplierProfile(
     profileEmail: profile.email || null,
     checks,
   };
-}
-
-export async function updateOpenAiModel(accountInfoCollection, applierNameRaw, profileIdKeyRaw, modelRaw) {
-  const applierName = String(applierNameRaw ?? '').trim();
-  const profileIdKey = String(profileIdKeyRaw ?? '').trim();
-  if (!applierName) {
-    throw new Error('applierName is required.');
-  }
-  if (!profileIdKey) {
-    throw new Error('profileIdKey is required.');
-  }
-
-  const account = await findAccountByApplierName(accountInfoCollection, applierName);
-  if (!account) {
-    throw new Error(`No account named "${applierName}".`);
-  }
-
-  const profileId = account._id ? String(account._id) : '';
-  if (!profileId || profileId !== profileIdKey) {
-    const error = new Error('Profile key does not match the loaded profile _id.');
-    error.statusCode = 403;
-    throw error;
-  }
-
-  const openaiModel = String(modelRaw ?? '').trim().slice(0, 64) || 'gpt-5-nano';
-  await accountInfoCollection.updateOne(
-    { _id: account._id },
-    {
-      $set: {
-        'autoBidProfile.openaiModel': openaiModel,
-        'autoBidProfile.updatedAt': new Date().toISOString(),
-      },
-    },
-  );
-
-  return { profileId, openaiModel };
 }
 
 export async function getPublicProfile(accountInfoCollection, personalInfoCollection, applierName) {

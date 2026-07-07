@@ -4,6 +4,7 @@ import {
 	deleteAccountInfoByName,
 	insertAccountInfo,
 } from "../services/accountInfoStore.js";
+import { decryptAccountDoc } from "../services/autoBidProfileSecrets.js";
 
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -14,7 +15,7 @@ export const getAccountInfo = async (req, res) => {
 		console.log('GET /api/account_info - Fetching all account info');
 		const accountInfo = await accountInfoCollection.find({}).toArray();
 		// Don't return passwords
-		const sanitized = accountInfo.map(({ password, ...rest }) => rest);
+		const sanitized = accountInfo.map(({ password, ...rest }) => decryptAccountDoc(rest));
 		res.status(200).json(sanitized);
 	} catch (error) {
 		console.error('Error in getAccountInfo:', error);
@@ -40,7 +41,7 @@ export const getAccountInfoByName = async (req, res) => {
 			return res.status(404).json({ success: false, message: "Account not found" });
 		}
 		const { password, ...rest } = doc;
-		res.status(200).json({ success: true, data: rest });
+		res.status(200).json({ success: true, data: decryptAccountDoc(rest) });
 	} catch (error) {
 		console.error("Error in getAccountInfoByName:", error);
 		res.status(500).json({ success: false, message: error.message });

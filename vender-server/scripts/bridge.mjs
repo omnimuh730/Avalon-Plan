@@ -1,4 +1,8 @@
 import http from 'node:http';
+import { installTerminalLogger } from '@nextoffer/shared/terminal-log';
+
+installTerminalLogger('vender');
+
 import { loadEnv, readTextAsset } from '../src/lib/env.js';
 import { JOB_ANALYSIS_PROMPT } from '../src/config/jobAnalysisPrompt.js';
 import {

@@ -89,7 +89,7 @@ export async function analyzeFormFields(
 
     usage = response.usage
       ? {
-          model: response.model,
+          model: response.billedModel ?? response.model,
           provider: response.provider,
           promptTokens: response.usage.promptTokens,
           cachedTokens: response.usage.cachedTokens,

@@ -5,7 +5,6 @@ import type { ResumeIdentity } from "../types/resume";
 
 export type ResumeAiDefaults = {
   openaiKey: string;
-  openaiModel: string;
   deepseekKey: string;
   defaultProvider: string;
   defaultModel: string;
@@ -15,7 +14,6 @@ const AI_DEFAULTS_KEY = "athens-resume-ai-defaults";
 
 const DEFAULT_AI: ResumeAiDefaults = {
   openaiKey: "",
-  openaiModel: "gpt-4o-mini",
   deepseekKey: "",
   defaultProvider: "openai",
   defaultModel: "gpt-4o-mini",

@@ -219,7 +219,9 @@ export function JobCard({
         </div>
 
         <div className="flex items-center justify-between gap-3 pt-1 border-t border-border/60">
-          <span className="text-xs text-muted-foreground truncate">{job.source}</span>
+          <span className="text-xs text-muted-foreground truncate">
+            {job.catalog === "external" ? `External · ${job.source}` : job.source}
+          </span>
           <div className="flex items-center gap-2 shrink-0" data-no-select>
             <Button
               variant="outline"

@@ -1,5 +1,6 @@
 
 import { MongoClient } from "mongodb";
+import { LLM_CALL_LOG_COLLECTION, ensureCallLogIndexes } from "@nextoffer/shared/ai-usage";
 import { ensureJobMarketIndexes, backfillMissingJobSourceFields, dedupeJobMarketByApplyLink } from "../services/jobMarketIndexes.js";
 
 let mongoClient;
@@ -38,6 +39,7 @@ let userSkillsCollection;
 let skillDictionaryCollection;
 // 3rd-party scraped jobs ingested via the expose API (separate from job_market).
 let externalScrapedJobsCollection;
+let llmCallLogCollection;
 
 async function ensureExternalScrapedJobsIndexes() {
 	if (!externalScrapedJobsCollection) return;
@@ -166,6 +168,12 @@ async function initMongo() {
 	userSkillsCollection = db.collection('user_skills');
 	skillDictionaryCollection = db.collection('skill_dictionary');
 	externalScrapedJobsCollection = db.collection('external_scraped_jobs');
+	llmCallLogCollection = db.collection(LLM_CALL_LOG_COLLECTION);
+	try {
+		await ensureCallLogIndexes(llmCallLogCollection);
+	} catch (err) {
+		console.warn('[llm_call_log] index creation failed:', err.message);
+	}
 	try {
 		await avalonRunsCollection.createIndex({ runId: 1 }, { unique: true });
 		await avalonRunsCollection.createIndex({ applierName: 1, startedAt: -1 });
@@ -309,5 +317,6 @@ export {
 	userSkillsCollection,
 	skillDictionaryCollection,
 	externalScrapedJobsCollection,
+	llmCallLogCollection,
 	closeMongo
 };

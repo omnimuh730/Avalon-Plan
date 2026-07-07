@@ -4,6 +4,7 @@ import { updateAccountInfoById } from "../services/accountInfoStore.js";
 import { verifyKey, getProvider } from "../services/llm/llmService.js";
 import { toCanonical } from "../services/skillNormalize.js";
 import { emptyResumeCatalog, validateResumeCatalog } from "../services/resumeCatalogService.js";
+import { decryptProfileApiKeys, encryptProfileApiKeys } from "../services/autoBidProfileSecrets.js";
 
 /** Build personal skill document with normalized canonical id. */
 async function buildPersonalSkillDoc(name) {
@@ -176,6 +177,7 @@ function normalizeCareerEntries(arr) {
 		return {
 			company: String(c?.company ?? "").trim(),
 			title: String(c?.title ?? "").trim(),
+			description: String(c?.description ?? "").trim().slice(0, 2000),
 			startMonth: normMonth(c?.startMonth),
 			startYear: normYear(c?.startYear),
 			endPresent,
@@ -213,7 +215,6 @@ function normalizeAutoBidProfile(body) {
 		email: String(body.email || "").trim(),
 		gmailAppPassword: String(body.gmailAppPassword || "").trim().slice(0, 128),
 		openaiApiKey: String(body.openaiApiKey || "").trim().slice(0, 256),
-		openaiModel: String(body.openaiModel || "gpt-5-nano").trim().slice(0, 64) || "gpt-5-nano",
 		deepseekApiKey: String(body.deepseekApiKey || "").trim().slice(0, 256),
 		defaultProvider: body.defaultProvider === "openai" || body.defaultProvider === "deepseek" ? body.defaultProvider : "",
 		defaultModel: String(body.defaultModel || "").trim().slice(0, 64),
@@ -243,7 +244,7 @@ function defaultEducationEntry() {
 }
 
 function defaultCareerEntry() {
-	return { company: "", title: "", startMonth: "", startYear: "", endMonth: "", endYear: "", endPresent: false };
+	return { company: "", title: "", description: "", startMonth: "", startYear: "", endMonth: "", endYear: "", endPresent: false };
 }
 
 /** Shape returned in GET `profile` (stored or empty). */
@@ -269,7 +270,6 @@ function buildAutoBidProfileResponse(p) {
 		email: p.email || "",
 		gmailAppPassword: p.gmailAppPassword || "",
 		openaiApiKey: p.openaiApiKey || "",
-		openaiModel: p.openaiModel || "gpt-5-nano",
 		deepseekApiKey: p.deepseekApiKey || "",
 		defaultProvider: p.defaultProvider || "",
 		defaultModel: p.defaultModel || "",
@@ -325,7 +325,7 @@ export async function getAutoBidProfile(req, res) {
 				profile: buildAutoBidProfileResponse({}),
 			});
 		}
-		const p = acc.autoBidProfile || {};
+		const p = decryptProfileApiKeys(acc.autoBidProfile || {});
 		return res.json({
 			success: true,
 			accountExists: true,
@@ -344,7 +344,7 @@ export async function upsertAutoBidProfile(req, res) {
 		const body = req.body || {};
 		const name = String(body.applierName || "").trim();
 		if (!name) return res.status(400).json({ success: false, error: "applierName required in body" });
-		const autoBidProfile = normalizeAutoBidProfile(body);
+		const autoBidProfile = encryptProfileApiKeys(normalizeAutoBidProfile(body));
 		const vendorAllowed = body.vendorAllowed === true || body.vendorAllowed === "true";
 		const acc = await findAccountByApplierName(name, { _id: 1, name: 1 });
 		if (!acc) {
@@ -364,57 +364,12 @@ export async function upsertAutoBidProfile(req, res) {
 		}
 		return res.json({
 			success: true,
-			profile: autoBidProfile,
+			profile: decryptProfileApiKeys(autoBidProfile),
 			vendorAllowed,
 			cloudMirror: getCloudMirrorStatus(),
 		});
 	} catch (err) {
 		console.error("PUT /api/personal/auto-bid-profile error", err);
-		return res.status(500).json({ success: false, error: err.message });
-	}
-}
-
-export async function updateAutoBidOpenAiModel(req, res) {
-	try {
-		if (!accountInfoCollection) return res.status(503).json({ success: false, error: "Database not ready" });
-		const body = req.body || {};
-		const name = String(body.applierName || "").trim();
-		const profileIdKey = String(body.profileIdKey || "").trim();
-		if (!name) return res.status(400).json({ success: false, error: "applierName required in body" });
-		if (!profileIdKey) return res.status(400).json({ success: false, error: "profileIdKey required in body" });
-
-		const acc = await findAccountByApplierName(name, { _id: 1, name: 1 });
-		if (!acc) {
-			return res.status(404).json({ success: false, error: `No account named "${name}".` });
-		}
-
-		const profileId = String(acc._id);
-		if (profileId !== profileIdKey) {
-			return res.status(403).json({
-				success: false,
-				error: "Profile key does not match the loaded profile _id.",
-			});
-		}
-
-		const openaiModel = String(body.openaiModel || "gpt-5-nano").trim().slice(0, 64) || "gpt-5-nano";
-		const r = await updateAccountInfoById(acc._id, acc.name, {
-			$set: {
-				"autoBidProfile.openaiModel": openaiModel,
-				"autoBidProfile.updatedAt": new Date().toISOString(),
-			},
-		});
-		if (r.matchedCount === 0) {
-			return res.status(404).json({ success: false, error: `No account named "${name}".` });
-		}
-
-		return res.json({
-			success: true,
-			profileId,
-			openaiModel,
-			cloudMirror: getCloudMirrorStatus(),
-		});
-	} catch (err) {
-		console.error("POST /api/personal/auto-bid-profile/openai-model error", err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }
@@ -438,7 +393,7 @@ export async function setDefaultModel(req, res) {
 		const acc = await findAccountByApplierName(name);
 		if (!acc) return res.status(404).json({ success: false, error: `No account named "${name}".` });
 
-		const profile = acc.autoBidProfile || {};
+		const profile = decryptProfileApiKeys(acc.autoBidProfile || {});
 		const apiKey = String(profile?.[getProvider(provider).keyField] || "").trim();
 		if (!apiKey) {
 			return res.json({ success: false, valid: false, error: `No ${getProvider(provider).label} API key saved. Add it and save your profile first.` });

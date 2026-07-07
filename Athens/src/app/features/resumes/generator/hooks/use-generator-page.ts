@@ -94,7 +94,11 @@ export function useGeneratorPage() {
       // here on the free-text Resume Generator page.
       job_skills: "",
       career: careers
-        .map((c) => [c.title, c.company, c.period].filter(Boolean).join(" | "))
+        .map((c) => {
+          const parts = [c.title, c.company, c.period].filter(Boolean);
+          const description = c.description?.trim();
+          return description ? `${parts.join(" | ")} — ${description}` : parts.join(" | ");
+        })
         .filter(Boolean)
         .join("\n"),
     };
@@ -103,6 +107,7 @@ export function useGeneratorPage() {
       map[`company${n}_name`] = c.company || "";
       map[`company${n}_title`] = c.title || "";
       map[`company${n}_duration`] = c.period || "";
+      map[`company${n}_description`] = c.description || "";
     });
     return map;
   })();

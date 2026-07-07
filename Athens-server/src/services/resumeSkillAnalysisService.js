@@ -10,6 +10,7 @@ import {
 import { mergeSkillProfiles } from "./resumeSkillMerge.js";
 import { parseSkillProfileJson } from "./resumeSkillProfile.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
+import { decryptAccountDoc } from "./autoBidProfileSecrets.js";
 
 async function findAccount(applierNameRaw) {
   const name = String(applierNameRaw ?? "").trim();
@@ -38,6 +39,7 @@ async function extractSkillsWithLlm(extractedText, profile) {
     provider: providerId,
     apiKey,
     model,
+    feature: "resume-skill-analysis",
     messages: [
       { role: "system", content: RESUME_SKILL_ANALYSIS_PROMPT },
       { role: "user", content: `Resume text:\n\n${truncated}` },
@@ -111,7 +113,7 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
     };
   }
 
-  const acc = await findAccount(ownerName);
+  const acc = decryptAccountDoc(await findAccount(ownerName));
   if (!acc) throw new Error("Account not found");
 
   const profile = acc.autoBidProfile || {};

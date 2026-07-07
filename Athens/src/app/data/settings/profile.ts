@@ -28,6 +28,7 @@ export type EducationEntry = {
 export type CareerEntry = {
   company: string;
   title: string;
+  description: string;
   startMonth: string;
   startYear: string;
   endMonth: string;
@@ -52,7 +53,6 @@ export type UserProfile = {
   email: string;
   gmailAppPassword: string;
   openaiApiKey: string;
-  openaiModel: string;
   deepseekApiKey: string;
   /** Default model used by all AI features (empty until set). */
   defaultProvider: string;
@@ -85,6 +85,7 @@ export const emptyEducation = (): EducationEntry => ({
 export const emptyCareer = (): CareerEntry => ({
   company: "",
   title: "",
+  description: "",
   startMonth: "",
   startYear: "",
   endMonth: "",
@@ -109,7 +110,6 @@ export const emptyProfile = (): UserProfile => ({
   email: "",
   gmailAppPassword: "",
   openaiApiKey: "",
-  openaiModel: "gpt-5-nano",
   deepseekApiKey: "",
   defaultProvider: "",
   defaultModel: "",
@@ -158,6 +158,7 @@ export function mapProfileFromApi(raw: Record<string, unknown> | undefined): Use
         return {
           company: String(x.company ?? ""),
           title: String(x.title ?? ""),
+          description: String(x.description ?? ""),
           startMonth: String(x.startMonth ?? ""),
           startYear: String(x.startYear ?? ""),
           endPresent,
@@ -192,7 +193,6 @@ export function mapProfileFromApi(raw: Record<string, unknown> | undefined): Use
     email: String(raw.email ?? ""),
     gmailAppPassword: String(raw.gmailAppPassword ?? ""),
     openaiApiKey: String(raw.openaiApiKey ?? ""),
-    openaiModel: String(raw.openaiModel ?? "gpt-5-nano") || "gpt-5-nano",
     deepseekApiKey: String(raw.deepseekApiKey ?? ""),
     defaultProvider: raw.defaultProvider === "openai" || raw.defaultProvider === "deepseek" ? raw.defaultProvider : "",
     defaultModel: String(raw.defaultModel ?? ""),

@@ -1,6 +1,9 @@
 import { isDeepSeekModel, DEEPSEEK_BASE_URL, DEEPSEEK_ANTHROPIC_BASE_URL } from '@nextoffer/shared/models';
+import { createLogger } from '@nextoffer/shared/terminal-log';
 import { CONFIG } from './config.js';
 import { getRunTokenTotal } from './usage.js';
+
+const log = createLogger('unified-ai');
 
 export type ProviderRoute = {
   provider: 'openai' | 'deepseek';
@@ -39,16 +42,33 @@ export async function proxyJson(url: string, init: RequestInit) {
   } catch {
     /* body isn't JSON-parseable — skip model label */
   }
-  const modelLabel = model ? ` model=${model}` : '';
   const startedAt = Date.now();
-  console.log(`[llm] → ${init.method || 'GET'} ${url}${modelLabel}`);
+  log.llm({ msg: 'upstream request', method: init.method || 'GET', url, requestedModel: model || undefined });
 
   const res = await fetch(url, init);
   const data = await res.json().catch(() => ({}));
   const elapsedMs = Date.now() - startedAt;
-  const line = `[llm] ← ${res.status} ${url}${modelLabel} (${elapsedMs}ms)`;
-  if (!res.ok) console.error(`${line} — ${data?.error?.message || 'upstream error'}`);
-  else console.log(line);
+  const billedModel = String(data?.model || model || '');
+
+  if (!res.ok) {
+    log.error('llm', 'upstream error', {
+      url,
+      requestedModel: model || undefined,
+      billedModel: billedModel || undefined,
+      httpStatus: res.status,
+      durationMs: elapsedMs,
+      error: data?.error?.message || 'upstream error',
+    });
+  } else {
+    log.llm({
+      msg: 'upstream response',
+      url,
+      requestedModel: model || undefined,
+      billedModel: billedModel || undefined,
+      httpStatus: res.status,
+      durationMs: elapsedMs,
+    });
+  }
 
   return { res, data };
 }

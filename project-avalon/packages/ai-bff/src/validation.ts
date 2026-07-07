@@ -56,6 +56,11 @@ export const chatRequestSchema = z.object({
       deepseek: z.string().optional(),
     })
     .optional(),
+  requestId: z.string().optional(),
+  runId: z.string().optional(),
+  applierName: z.string().optional(),
+  jobId: z.string().optional(),
+  feature: z.string().optional(),
 });
 
 export type ParsedChatRequest = z.infer<typeof chatRequestSchema>;

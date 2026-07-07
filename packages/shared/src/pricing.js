@@ -3,6 +3,8 @@
 export const STANDARD_PRICING = [
   { prefix: 'deepseek-v4-pro', input: 0.435, cachedInput: 0.003625, output: 0.87 },
   { prefix: 'deepseek-v4-flash', input: 0.14, cachedInput: 0.0028, output: 0.28 },
+  { prefix: 'deepseek-reasoner', input: 0.55, cachedInput: 0.14, output: 2.19 },
+  { prefix: 'deepseek-chat', input: 0.27, cachedInput: 0.07, output: 1.1 },
   { prefix: 'gpt-5.5-pro', input: 30, cachedInput: null, output: 180 },
   { prefix: 'gpt-5.5', input: 5, cachedInput: 0.5, output: 30 },
   { prefix: 'gpt-5.4-pro', input: 30, cachedInput: null, output: 180 },
@@ -30,6 +32,7 @@ export const STANDARD_PRICING = [
   { prefix: 'o3', input: 2, cachedInput: 0.5, output: 8 },
   { prefix: 'o4-mini', input: 1.1, cachedInput: 0.275, output: 4.4 },
   { prefix: 'gpt-4-turbo-2024-04-09', input: 10, cachedInput: null, output: 30 },
+  { prefix: 'gpt-4-turbo', input: 10, cachedInput: null, output: 30 },
   { prefix: 'gpt-4-0125-preview', input: 10, cachedInput: null, output: 30 },
   { prefix: 'gpt-4-1106-vision-preview', input: 10, cachedInput: null, output: 30 },
   { prefix: 'gpt-4-1106-preview', input: 10, cachedInput: null, output: 30 },

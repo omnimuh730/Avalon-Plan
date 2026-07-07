@@ -15,6 +15,7 @@ npm install
 Configure `.env`:
 
 - `MONGO_URL` / `MONGO_DB` — same MongoDB as lancer-backend
+- `API_KEYS_ENCRYPTION_KEY` — same 64-char hex key as Athens-server (decrypts `openaiApiKey` / `deepseekApiKey` from MongoDB)
 - `APPLIER_NAME` — account name from the MongoDB `account_info` collection
 - OpenAI API key + model — set in **lancer-frontend → Settings → Profile** (MongoDB), not in this `.env`
 - `PROMPT_MD_PATH` / `RESUMES_JSON_PATH` — defaults to `../bid-assistant/` assets

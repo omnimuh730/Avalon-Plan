@@ -11,6 +11,7 @@
     "start": "node scripts/bridge.mjs"
   },
   "dependencies": {
+    "@nextoffer/shared": "file:../packages/shared",
     "dotenv": "^17.2.1",
     "imapflow": "^1.0.186",
     "mailparser": "^3.7.2",

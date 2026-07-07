@@ -59,7 +59,7 @@ function checkOpenAi(openAi) {
   return {
     ok: hasKey,
     message: hasKey
-      ? `OpenAI key configured (${openAi.model || 'gpt-5-nano'}).`
+      ? `OpenAI key configured (${openAi.model || 'gpt-4o-mini'}).`
       : 'OpenAI API key missing. Add it under Settings → Profile in lancer-frontend.',
     model: openAi?.model || null,
   };

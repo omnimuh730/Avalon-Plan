@@ -10,6 +10,8 @@ export function createAiBffApp(config = loadConfigFromEnv()) {
   const kit = createAiKit(config);
   const app = express();
 
+  process.env.LOG_SERVICE = 'ai-bff';
+
   app.use(cors({ origin: serverConfig.corsOrigin }));
   app.use(express.json({ limit: '20mb' }));
   app.use(requestLogger('api'));
@@ -19,7 +21,10 @@ export function createAiBffApp(config = loadConfigFromEnv()) {
   return { app, kit };
 }
 
-export function startAiBffServer(config = loadConfigFromEnv()) {
+export async function startAiBffServer(config = loadConfigFromEnv()) {
+  const { initDb } = await import('./db.js');
+  await initDb();
+
   const { app, kit } = createAiBffApp(config);
   const port = serverConfig.port;
 

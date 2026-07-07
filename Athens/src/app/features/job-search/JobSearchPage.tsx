@@ -19,6 +19,7 @@ import { useJobSelection } from "./hooks/useJobSelection";
 import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
+import { isExternalJob } from "../../types/job";
 
 export function JobSearchPage() {
   const jobNav = useJobSearchNavigationOptional();
@@ -67,7 +68,12 @@ export function JobSearchPage() {
   };
 
   const handleApplyAll = async (jobs = selectedJobs) => {
-    await Promise.all(jobs.map((job) => applyToJob(job, { openUrl: false })));
+    const marketJobs = jobs.filter((job) => !isExternalJob(job));
+    if (!marketJobs.length) {
+      toast.message("External scraped jobs open in a new tab only — nothing to mark as applied.");
+      return;
+    }
+    await Promise.all(marketJobs.map((job) => applyToJob(job, { openUrl: false })));
   };
 
   const downloadSelected = () => {
@@ -158,7 +164,14 @@ export function JobSearchPage() {
         onToggleSelectAll={toggleSelectAllOnPage}
         onExport={() => setExportOpen(true)}
         onRemove={handleRemove}
-        onGenerateResumes={() => void generateBulk(selectedJobs)}
+        onGenerateResumes={() => {
+          const marketJobs = selectedJobs.filter((job) => !isExternalJob(job));
+          if (!marketJobs.length) {
+            toast.message("Résumé generation is only available for job market listings.");
+            return;
+          }
+          void generateBulk(marketJobs);
+        }}
         onStopGenerateResumes={cancelBulk}
         resumeGenerating={bulkRunning}
         resumeProgress={bulkProgress ?? undefined}
@@ -208,7 +221,10 @@ export function JobSearchPage() {
               onCancel={(job) => void cancelJobStatus(job)}
               onJobScoresUpdated={patchJob}
               resumeStates={resumeStates}
-              onGenerateResume={(job) => void generateForJob(job)}
+              onGenerateResume={(job) => {
+                if (isExternalJob(job)) return;
+                void generateForJob(job);
+              }}
             />
           </TabTransition>
         </div>

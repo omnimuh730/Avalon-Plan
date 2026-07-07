@@ -1,4 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { buildCallLogEntry, tokensToRawUsage } from '@nextoffer/shared/ai-usage';
+import { createLogger } from '@nextoffer/shared/terminal-log';
 import { calculateCost, resolveModelPricing, listModels } from './pricing.js';
 import type {
   AiKitConfig,
@@ -10,6 +13,9 @@ import type {
 import { normalizeApiKey } from './api-keys.js';
 import type { AiProvider } from './providers/base.js';
 import { createProviders, resolveProvider } from './providers/registry.js';
+import { getRecordCallLog } from './db.js';
+
+const log = createLogger('ai-bff');
 
 export class AiKit {
   private readonly config: AiKitConfig;
@@ -36,7 +42,8 @@ export class AiKit {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const model = request.model ?? this.config.defaultModel ?? 'gpt-4o-mini';
+    const requestedModel = request.model ?? this.config.defaultModel ?? 'gpt-4o-mini';
+    const requestId = request.requestId || randomUUID();
     const providers = request.apiKeys
       ? createProviders({
           ...this.config,
@@ -46,27 +53,39 @@ export class AiKit {
             normalizeApiKey(request.apiKeys.deepseek) ?? this.config.deepseekApiKey,
         })
       : this.providers;
-    const provider = resolveProvider(providers, model);
-    const pricing = resolveModelPricing(model);
+    const provider = resolveProvider(providers, requestedModel);
+    const pricing = resolveModelPricing(requestedModel);
 
     if (request.responseSchema && !pricing.supportsStructuredOutput) {
-      throw new Error(`Model "${model}" does not support structured output schemas`);
+      throw new Error(`Model "${requestedModel}" does not support structured output schemas`);
     }
 
     const hasImages = request.messages.some((m) => m.images?.length);
     if (hasImages && !pricing.supportsVision) {
-      throw new Error(`Model "${model}" does not support image input`);
+      throw new Error(`Model "${requestedModel}" does not support image input`);
     }
 
     const messages = buildMessages(request);
     const promptChars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
     const startedAt = Date.now();
-    console.log(`[llm] → ai-bff · ${provider.id}/${model} — ${messages.length} msg (${promptChars} chars)`);
+    const feature = request.feature || 'ai-bff-chat';
+
+    log.llm({
+      msg: 'chat started',
+      requestId,
+      feature,
+      provider: provider.id,
+      requestedModel,
+      runId: request.runId,
+      applierName: request.applierName,
+      messageCount: messages.length,
+      promptChars,
+    });
 
     let result;
     try {
       result = await provider.chat({
-        model,
+        model: requestedModel,
         messages,
         temperature: request.temperature,
         maxTokens: request.maxTokens,
@@ -80,29 +99,78 @@ export class AiKit {
     } catch (err) {
       const elapsedMs = Date.now() - startedAt;
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[llm] ✖ ai-bff · ${provider.id}/${model} — failed after ${elapsedMs}ms: ${message}`);
+      log.error('llm', 'chat failed', {
+        requestId,
+        feature,
+        provider: provider.id,
+        requestedModel,
+        durationMs: elapsedMs,
+        error: message,
+      });
       throw err;
     }
 
     const elapsedMs = Date.now() - startedAt;
-    const usage = {
+    const billedModel = result.model || requestedModel;
+    const tokenUsage = {
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
       totalTokens: result.totalTokens,
-      cost: calculateCost(model, {
-        promptTokens: result.promptTokens,
-        completionTokens: result.completionTokens,
-        totalTokens: result.totalTokens,
-      }),
+      cachedTokens: result.cachedTokens,
     };
-    console.log(
-      `[llm] ← ai-bff · ${provider.id}/${model} — in ${usage.promptTokens} out ${usage.completionTokens} · $${usage.cost.totalUsd.toFixed(4)} · ${elapsedMs}ms`,
-    );
+    const usage = {
+      ...tokenUsage,
+      cost: calculateCost(billedModel, tokenUsage),
+    };
+
+    const callLogEntry = buildCallLogEntry({
+      requestId,
+      service: 'ai-bff',
+      feature,
+      provider: provider.id,
+      requestedModel,
+      billedModel,
+      rawUsage: tokensToRawUsage(tokenUsage),
+      durationMs: elapsedMs,
+      success: true,
+      runId: request.runId,
+      applierName: request.applierName,
+      jobId: request.jobId,
+      path: '/v1/chat',
+    });
+
+    try {
+      await getRecordCallLog()(callLogEntry);
+    } catch (recordErr) {
+      const message = recordErr instanceof Error ? recordErr.message : String(recordErr);
+      log.warn('mongo', 'llm_call_log write failed', { requestId, error: message });
+    }
+
+    log.llm({
+      msg: 'chat completed',
+      requestId,
+      feature,
+      provider: provider.id,
+      requestedModel,
+      billedModel,
+      inputTokens: usage.promptTokens,
+      cachedInputTokens: usage.cachedTokens ?? 0,
+      outputTokens: usage.completionTokens,
+      costUsd: usage.cost.totalUsd,
+      durationMs: elapsedMs,
+      runId: request.runId,
+      applierName: request.applierName,
+      modelMismatch: requestedModel !== billedModel,
+    });
 
     return {
       id: result.id,
+      requestId,
+      requestedModel,
+      billedModel,
+      modelMismatch: requestedModel !== billedModel,
       provider: provider.id,
-      model: result.model,
+      model: billedModel,
       content: result.content,
       structured: result.structured,
       finishReason: result.finishReason,

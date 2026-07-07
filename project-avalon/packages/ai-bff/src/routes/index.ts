@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { parseCorrelationHeaders } from '@nextoffer/shared/ai-usage';
 import { calculateCost, resolveModelPricing } from '../pricing.js';
 import type { AiKit } from '../kit.js';
 import { asyncHandler, HttpError } from '../middleware/error.js';
@@ -30,7 +31,7 @@ export function createRoutes(kit: AiKit) {
   router.post(
     '/v1/chat',
     asyncHandler(async (req, res) => {
-      const body = parseChatRequest(req.body);
+      const body = mergeCorrelation(req, parseChatRequest(req.body));
       if (body.stream) {
         throw new HttpError(501, 'Streaming is not implemented yet. Set stream: false.');
       }
@@ -44,7 +45,7 @@ export function createRoutes(kit: AiKit) {
     '/v1/chat/completions',
     asyncHandler(async (req, res) => {
       const openAiBody = req.body as Record<string, unknown>;
-      const mapped = parseChatRequest({
+      const mapped = mergeCorrelation(req, parseChatRequest({
         model: openAiBody.model,
         system: extractSystemFromOpenAi(openAiBody.messages),
         messages: normalizeOpenAiMessages(openAiBody.messages),
@@ -56,7 +57,7 @@ export function createRoutes(kit: AiKit) {
         toolChoice: openAiBody.tool_choice ?? openAiBody.toolChoice,
         responseSchema: openAiBody.response_schema ?? openAiBody.responseSchema,
         stream: openAiBody.stream,
-      });
+      }));
 
       if (mapped.stream) {
         throw new HttpError(501, 'Streaming is not implemented yet. Set stream: false.');
@@ -90,6 +91,18 @@ export function createRoutes(kit: AiKit) {
   );
 
   return router;
+}
+
+function mergeCorrelation(req: import('express').Request, body: import('../types.js').ChatRequest) {
+  const headers = parseCorrelationHeaders(req);
+  return {
+    ...body,
+    requestId: body.requestId || headers.requestId,
+    runId: body.runId || headers.runId,
+    applierName: body.applierName || headers.applierName,
+    jobId: body.jobId || headers.jobId,
+    feature: body.feature || headers.feature,
+  };
 }
 
 function extractSystemFromOpenAi(messages: unknown): string | undefined {
@@ -181,8 +194,15 @@ function toOpenAiCompletion(result: Awaited<ReturnType<AiKit['chat']>>) {
       prompt_tokens: result.usage.promptTokens,
       completion_tokens: result.usage.completionTokens,
       total_tokens: result.usage.totalTokens,
+      ...(result.usage.cachedTokens
+        ? { prompt_tokens_details: { cached_tokens: result.usage.cachedTokens } }
+        : {}),
     },
     avalon: {
+      requestId: result.requestId,
+      requestedModel: result.requestedModel,
+      billedModel: result.billedModel,
+      modelMismatch: result.modelMismatch,
       provider: result.provider,
       structured: result.structured,
       cost: result.usage.cost,

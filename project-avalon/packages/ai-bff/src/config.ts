@@ -24,4 +24,6 @@ export function loadConfigFromEnv(): AiKitConfig {
 export const serverConfig = {
   port: readNumber(process.env.PORT, 3920),
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
+  mongoUri: process.env.MONGO_URL || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017',
+  mongoDb: process.env.MONGO_DB || 'AthensDB',
 };

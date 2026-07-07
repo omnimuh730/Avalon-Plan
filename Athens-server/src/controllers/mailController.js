@@ -32,6 +32,7 @@ import {
 } from '../services/mail/mailSyncService.js';
 import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
 import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js';
+import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
 
 const OTP_EMAIL_LIMIT = 10;
 
@@ -271,7 +272,7 @@ export async function getVerificationCode(req, res) {
 		);
 
 		const acc = await findAccountByApplierName(applierName);
-		const ai = await aiExtractVerification(emails, acc?.autoBidProfile || {}, {
+		const ai = await aiExtractVerification(emails, decryptProfileApiKeys(acc?.autoBidProfile || {}), {
 			companyName,
 			jobTitle,
 		});

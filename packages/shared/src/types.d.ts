@@ -36,12 +36,51 @@ declare module '@nextoffer/shared/terminal-log' {
   export const TAG_COLORS: Record<string, string>;
   export const LEVEL_STYLES: Record<string, { icon: string; color: string }>;
   export function stripAnsi(text: string): string;
+  export function formatFields(fields?: Record<string, unknown>): string;
+  export function formatPlainLine(
+    level: 'INFO' | 'WARN' | 'ERROR',
+    service: string,
+    tag: string,
+    msg: string,
+    extra?: Record<string, unknown>,
+  ): string;
   export function extractBracketTag(text: string): { tag: string | null; body: string };
-  export function formatLogLine(level: 'info' | 'warn' | 'error', args: unknown[], defaultTag?: string): string;
+  export function formatLogLine(level: 'info' | 'warn' | 'error', args: unknown[], service?: string): string;
   export function parseStyledLine(
     line: string,
     serviceName?: string,
   ): { time: string; level: 'info' | 'warn' | 'error'; tag: string; message: string; service: string };
-  export function installTerminalLogger(defaultTag?: string): void;
+  export function installTerminalLogger(service?: string): void;
+  export interface Logger {
+    info(tag: string, msg: string, extra?: Record<string, unknown>): void;
+    warn(tag: string, msg: string, extra?: Record<string, unknown>): void;
+    error(tag: string, msg: string, extra?: Record<string, unknown>): void;
+    llm(fields: Record<string, unknown> & { msg?: string }): void;
+  }
+  export function createLogger(service: string): Logger;
   export function printBanner(title: string, lines?: string[]): void;
+  export function requestLogger(tag?: string): (req: any, res: any, next: () => void) => void;
+}
+
+declare module '@nextoffer/shared/ai-usage' {
+  export const LLM_CALL_LOG_COLLECTION: string;
+  export function buildCallLogEntry(params: Record<string, unknown>): Record<string, unknown>;
+  export function calculateBilledCost(billedModel: string, rawUsage: Record<string, unknown>): {
+    inputTokens: number;
+    cachedTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    costUsd: number;
+    priced: boolean;
+  };
+  export function createCallLogRecorder(collection: unknown): (entry: Record<string, unknown>) => Promise<unknown>;
+  export function ensureCallLogIndexes(collection: unknown): Promise<void>;
+  export function parseCorrelationHeaders(req: { headers?: Record<string, string | string[] | undefined> }): {
+    requestId?: string;
+    runId?: string;
+    applierName?: string;
+    feature?: string;
+    jobId?: string;
+  };
+  export function tokensToRawUsage(tokens: Record<string, unknown>): Record<string, unknown>;
 }

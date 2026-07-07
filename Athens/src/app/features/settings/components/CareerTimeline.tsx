@@ -1,6 +1,6 @@
 import React from "react";
 import { Briefcase, GraduationCap, Plus, Sparkles, Trash2 } from "lucide-react";
-import { AthensInput, AthensSelect } from "../../../components/forms";
+import { AthensInput, AthensSelect, AthensTextarea } from "../../../components/forms";
 import { cn } from "../../../lib/utils";
 import { CAREER_END_MONTH_OPTIONS, MONTH_OPTIONS } from "../../../data/settings/profileConstants";
 import type { CareerEntry, EducationEntry } from "../../../data/settings/profile";
@@ -179,6 +179,13 @@ function TimelineNode({
           <div className="space-y-2">
             <AthensInput placeholder="Company" value={item.data.company} onChange={(e) => onUpdateCareer(item.index, { company: e.target.value })} className="h-9 text-xs" />
             <AthensInput placeholder="Title" value={item.data.title} onChange={(e) => onUpdateCareer(item.index, { title: e.target.value })} className="h-9 text-xs" />
+            <AthensTextarea
+              placeholder="Product, domain, project, or responsibilities…"
+              value={item.data.description}
+              onChange={(e) => onUpdateCareer(item.index, { description: e.target.value })}
+              rows={3}
+              className="text-xs min-h-[72px]"
+            />
             <DateRow
               startMonth={item.data.startMonth}
               startYear={item.data.startYear}

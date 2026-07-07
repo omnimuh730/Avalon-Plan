@@ -7,9 +7,11 @@
 	"scripts": {
 		"start": "nodemon index.js",
 		"test:matching": "node --test ../packages/shared/src/pricing.test.mjs ../packages/shared/src/matching.test.mjs",
+		"test:external-jobs": "node --test src/services/externalScrapedJobsListQuery.test.mjs",
 		"test:resume-templates": "node --test src/services/resumeTemplate.test.mjs",
 		"migrate": "node src/db/migration.js",
 		"migrate-passwords": "node src/db/migratePasswords.js",
+		"migrate-api-keys": "node src/db/migrateApiKeys.js",
 		"backfill-job-skills": "node src/scripts/backfillJobSkills.js",
 		"backfill-match-scores": "node src/scripts/backfillMatchScores.js",
 		"reset-skills": "node src/scripts/resetSkills.js",

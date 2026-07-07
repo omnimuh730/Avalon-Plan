@@ -239,20 +239,14 @@ export function ProfileJobBidCard({
   onChange,
   keyChecks,
   onTestKey,
-  openaiModels,
 }: {
   profile: UserProfile;
   onChange: (patch: Partial<UserProfile>) => void;
   keyChecks: { openai: KeyCheck; deepseek: KeyCheck };
   onTestKey: (provider: "openai" | "deepseek") => void;
-  openaiModels: string[];
 }) {
-  const modelOptions = (openaiModels.includes(profile.openaiModel) ? openaiModels : [profile.openaiModel, ...openaiModels].filter(Boolean)).map(
-    (m) => ({ value: m, label: m }),
-  );
-
   return (
-    <SectionCard title="Job Bid Assistant" subtitle="Salary, API keys, resume path, and model">
+    <SectionCard title="Job Bid Assistant" subtitle="Salary, API keys, and resume path">
       <FormField label="Desired salary (annual)">
         <AthensInput
           inputMode="numeric"
@@ -272,24 +266,15 @@ export function ProfileJobBidCard({
         />
         <KeyTestRow check={keyChecks.openai} onTest={() => onTestKey("openai")} />
       </FormField>
-      <div className={grid2}>
-        <FormField label="OpenAI model">
-          {openaiModels.length > 0 ? (
-            <AthensSelect size="sm" value={profile.openaiModel} onChange={(v) => onChange({ openaiModel: v })} options={modelOptions} placeholder="Model" />
-          ) : (
-            <AthensInput value={profile.openaiModel} onChange={(e) => onChange({ openaiModel: e.target.value })} placeholder="gpt-5-nano" className="h-9 text-sm" />
-          )}
-        </FormField>
-        <FormField label="DeepSeek API key">
-          <AthensInput
-            type="password"
-            value={profile.deepseekApiKey}
-            onChange={(e) => onChange({ deepseekApiKey: e.target.value })}
-            placeholder="DeepSeek key"
-            className="h-9 text-sm"
-          />
-        </FormField>
-      </div>
+      <FormField label="DeepSeek API key">
+        <AthensInput
+          type="password"
+          value={profile.deepseekApiKey}
+          onChange={(e) => onChange({ deepseekApiKey: e.target.value })}
+          placeholder="DeepSeek key"
+          className="h-9 text-sm max-w-md"
+        />
+      </FormField>
       <KeyTestRow check={keyChecks.deepseek} onTest={() => onTestKey("deepseek")} />
       <FormField label="Default account password">
         <AthensInput
