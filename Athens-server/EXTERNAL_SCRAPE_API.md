@@ -35,7 +35,8 @@ curl -X POST http://{SERVER_IP}/api/expose/jobs \
     "jobTitle": "Senior Engineer",
     "jobDescription": "Full job description text…",
     "jobLink": "https://jobs.example.com/123",
-    "source": "linkedin"
+    "source": "linkedin",
+    "postedAgo": "2 days ago"
   }'
 ```
 
@@ -56,6 +57,7 @@ Send `{ "jobs": [ … ] }`. Each element uses the same shape as a single job. Th
 | `jobLink` | yes | `job_link`, `applyLink`, `url` | Must be a valid `http://` or `https://` URL |
 | `companyIcon` | no | `company_icon` | If present, must be a valid `http(s)` URL |
 | `source` | no | — | Optional tag (e.g. board name) |
+| `postedAgo` | no | `posted_ago`, `postedAt` | Human-readable relative posting time (e.g. `"8 months ago"`) |
 
 Validation lives in `src/services/scrapedJobIngestService.js` (`validateScrapedJobInput`).
 
@@ -127,7 +129,7 @@ For batch requests, errors include the array index: `jobs[2]: jobLink must be a 
 
 Collection: **`external_scraped_jobs`** (`src/db/mongo.js`).
 
-Each document stores the normalized job fields plus:
+Each document stores the normalized job fields (`sender`, `companyName`, `companyIcon`, `jobTitle`, `jobDescription`, `jobLink`, `source`, `postedAgo`) plus:
 
 - `createdAt` — insert time
 - `updatedAt` — insert time (same as `createdAt` on first write)

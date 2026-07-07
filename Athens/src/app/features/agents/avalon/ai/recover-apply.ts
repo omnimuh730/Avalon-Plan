@@ -104,8 +104,20 @@ export interface RecoveryResult {
   script: string;
   done: boolean;
   usage?: {
+    model?: string | null;
+    provider?: string | null;
+    promptTokens: number;
+    cachedTokens?: number;
+    completionTokens: number;
     totalTokens: number;
-    cost?: { totalUsd: number; currency: string };
+    cost?: {
+      totalUsd: number;
+      currency: string;
+      rates?: {
+        promptPer1M: number;
+        completionPer1M: number;
+      };
+    };
   };
 }
 
@@ -181,9 +193,18 @@ export async function generateRecoveryScript(
     done: structured?.done !== false,
     usage: response.usage
       ? {
+          model: response.model,
+          provider: response.provider,
+          promptTokens: response.usage.promptTokens,
+          cachedTokens: response.usage.cachedTokens,
+          completionTokens: response.usage.completionTokens,
           totalTokens: response.usage.totalTokens,
           cost: response.usage.cost
-            ? { totalUsd: response.usage.cost.totalUsd, currency: response.usage.cost.currency }
+            ? {
+                totalUsd: response.usage.cost.totalUsd,
+                currency: response.usage.cost.currency,
+                rates: response.usage.cost.rates,
+              }
             : undefined,
         }
       : undefined,

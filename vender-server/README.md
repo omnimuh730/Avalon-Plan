@@ -15,7 +15,7 @@ npm install
 Configure `.env`:
 
 - `MONGO_URL` / `MONGO_DB` — same MongoDB as lancer-backend
-- `APPLIER_NAME` — account name from lancer sidebar (e.g. `Eli Taylor`)
+- `APPLIER_NAME` — account name from the MongoDB `account_info` collection
 - OpenAI API key + model — set in **lancer-frontend → Settings → Profile** (MongoDB), not in this `.env`
 - `PROMPT_MD_PATH` / `RESUMES_JSON_PATH` — defaults to `../bid-assistant/` assets
 

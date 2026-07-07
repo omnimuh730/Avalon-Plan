@@ -89,13 +89,17 @@ export async function analyzeFormFields(
 
     usage = response.usage
       ? {
+          model: response.model,
+          provider: response.provider,
           promptTokens: response.usage.promptTokens,
+          cachedTokens: response.usage.cachedTokens,
           completionTokens: response.usage.completionTokens,
           totalTokens: response.usage.totalTokens,
           cost: response.usage.cost
             ? {
                 totalUsd: response.usage.cost.totalUsd,
                 currency: response.usage.cost.currency,
+                rates: response.usage.cost.rates,
               }
             : undefined,
         }

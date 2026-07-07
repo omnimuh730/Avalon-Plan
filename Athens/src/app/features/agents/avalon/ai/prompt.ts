@@ -180,9 +180,9 @@ export function buildAnalysisUserMessage(
   ].filter(Boolean);
 
   if (applicantContext?.trim()) {
-    parts.push("", "Applicant profile (profile.json / autoBidProfile):", "```json", applicantContext.trim(), "```");
+    parts.push("", "Applicant profile (MongoDB autoBidProfile):", "```json", applicantContext.trim(), "```");
   } else {
-    parts.push("", "No profile.json — use realistic generic values where needed.");
+    parts.push("", "No applicant profile was provided — use realistic generic values where needed.");
   }
 
   return parts.join("\n");

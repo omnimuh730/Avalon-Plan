@@ -36,6 +36,8 @@ import type { JobPipelineState, useAvalonRelay } from "../hooks/useAvalonRelay";
 import { ApplyStatusPanel } from "./ApplyStatusPanel";
 import { DEFAULT_JOB_BUDGET_USD } from "../lib/agentBudget";
 import { AgentResumePdfPreview, agentJobResumePdfUrl } from "./AgentResumePdfPreview";
+import { resolveProfileDefaultModel } from "../avalon/ai/model";
+import { formatAgentRate, resolveAgentModelPricing, type AgentPricingRates } from "../avalon/ai/pricing";
 
 const WORKSPACE_PANEL =
   "rounded-2xl border border-border/80 bg-card shadow-sm flex flex-col min-w-0 overflow-hidden";
@@ -111,17 +113,24 @@ function workflowIconState(step: WorkflowStep): WorkflowIconState {
   return "idle";
 }
 
-/** Keyed icon slot — avoids lucide SVG swap insertBefore crashes during rapid pipeline updates. */
+function formatPricingPolicy(rates?: AgentPricingRates | null): string {
+  if (!rates) return "Pricing pending";
+  return `${formatAgentRate(rates.promptPer1M)} in / ${formatAgentRate(rates.completionPer1M)} out per 1M`;
+}
+
+/** Stable CSS-only icon slot — avoids SVG swaps while extensions may wrap nearby text nodes. */
 function WorkflowStepIcon({ state }: { state: WorkflowIconState }) {
   return (
-    <span className="inline-flex shrink-0" aria-hidden>
-      {state === "done" ? (
-        <CheckCircle2 className="w-3.5 h-3.5" />
-      ) : state === "active" ? (
-        <Circle className="w-3 h-3 fill-violet-500 text-violet-500" />
-      ) : (
-        <Circle className="w-3 h-3" />
+    <span
+      className={cn(
+        "inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border text-[9px] leading-none transition-colors",
+        state === "done" && "border-emerald-500 bg-emerald-500 text-white",
+        state === "active" && "border-violet-500 bg-violet-500",
+        state === "idle" && "border-current text-muted-foreground",
       )}
+      aria-hidden
+    >
+      <span className={cn("hidden h-1.5 w-2 -rotate-45 border-b border-l border-white", state === "done" && "block")} />
     </span>
   );
 }
@@ -139,8 +148,8 @@ function WorkflowRail({ steps }: { steps: WorkflowStep[] }) {
               !step.done && !step.active && "text-muted-foreground",
             )}
           >
-            <WorkflowStepIcon key={workflowIconState(step)} state={workflowIconState(step)} />
-            {step.label}
+            <WorkflowStepIcon state={workflowIconState(step)} />
+            <span className="whitespace-nowrap">{step.label}</span>
           </div>
           {i < steps.length - 1 && <span className="w-3 h-px bg-border mx-0.5 shrink-0" aria-hidden />}
         </div>
@@ -180,6 +189,23 @@ export function AvalonControllerView({
       : null;
 
   const activeJob = relay.jobQueue[relay.activeJobIndex];
+  const profileDefaultModel = useMemo(
+    () => resolveProfileDefaultModel(applier?.autoBidProfile as Record<string, unknown> | undefined),
+    [applier?.autoBidProfile],
+  );
+  const latestRateRequest = useMemo(
+    () => [...relay.jobUsage.requests].reverse().find((request) => request.pricingRates),
+    [relay.jobUsage.requests],
+  );
+  const latestModelRequest = useMemo(
+    () => [...relay.jobUsage.requests].reverse().find((request) => request.model),
+    [relay.jobUsage.requests],
+  );
+  const activeAiModel = latestRateRequest?.model || profileDefaultModel || latestModelRequest?.model || "AI BFF default";
+  const inferredPricing = resolveAgentModelPricing(activeAiModel);
+  const activePricingRates = latestRateRequest?.pricingRates ?? inferredPricing?.rates ?? null;
+  const activeProvider = latestRateRequest?.provider ?? inferredPricing?.provider ?? null;
+  const activePricingPolicy = formatPricingPolicy(activePricingRates);
   const pipeline = relay.activePipeline;
   const hasTree = pipeline.scanned && Boolean(relay.actionableTree?.length);
   const hasPlan = pipeline.analyzed && Boolean(relay.formAnalysis?.fields.length);
@@ -245,7 +271,7 @@ export function AvalonControllerView({
   };
 
   return (
-    <div className="space-y-4 min-w-0">
+    <div translate="no" className="notranslate space-y-4 min-w-0">
       <Dialog
         open={Boolean(relay.submissionKitPrompt)}
         onOpenChange={(open) => {
@@ -319,6 +345,13 @@ export function AvalonControllerView({
                 profile <span className="font-semibold text-foreground">{applier.name}</span>
               </span>
             )}
+            <span className="text-[11px] text-muted-foreground">
+              AI{" "}
+              <span className="font-semibold text-foreground">{activeAiModel}</span>
+              {activeProvider ? ` · ${activeProvider}` : ""}
+              {" · "}
+              {activePricingPolicy}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -404,6 +437,11 @@ export function AvalonControllerView({
               {activeJob && <span className="text-xs font-normal text-muted-foreground truncate max-w-[180px]">· {activeJob.title}</span>}
             </h2>
             <div className="flex items-center gap-3 text-xs flex-wrap">
+              <span className="text-muted-foreground">
+                {activeAiModel}
+                {activeProvider ? ` · ${activeProvider}` : ""}
+              </span>
+              <span className="text-muted-foreground">{activePricingPolicy}</span>
               <span className="font-bold text-foreground">
                 {relay.jobUsage.totalTokens.toLocaleString()} tokens
               </span>
@@ -427,6 +465,7 @@ export function AvalonControllerView({
               <thead>
                 <tr className="text-muted-foreground text-left">
                   <th className="font-semibold px-2 py-1">Request</th>
+                  <th className="font-semibold px-2 py-1">Model / pricing</th>
                   <th className="font-semibold px-2 py-1 text-right">In</th>
                   <th className="font-semibold px-2 py-1 text-right">Cached</th>
                   <th className="font-semibold px-2 py-1 text-right">Out</th>
@@ -435,22 +474,39 @@ export function AvalonControllerView({
                 </tr>
               </thead>
               <tbody>
-                {relay.jobUsage.requests.map((r, i) => (
-                  <tr key={`${r.label}-${i}`} className="border-t border-border/40">
-                    <td className="px-2 py-1 text-foreground truncate max-w-[180px]" title={`${r.label} · ${r.at}`}>
-                      {r.label}
-                    </td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">{r.promptTokens.toLocaleString()}</td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">{r.cachedTokens ? r.cachedTokens.toLocaleString() : "—"}</td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">{r.completionTokens.toLocaleString()}</td>
-                    <td className="px-2 py-1 text-right font-medium text-foreground">{r.totalTokens.toLocaleString()}</td>
-                    <td className="px-2 py-1 text-right font-medium text-violet-700">${r.costUsd.toFixed(5)}</td>
-                  </tr>
-                ))}
+                {relay.jobUsage.requests.map((r, i) => {
+                  const rowPricingPolicy = r.pricingRates
+                    ? formatPricingPolicy(r.pricingRates)
+                    : r.costUsd > 0
+                      ? "Priced by server response"
+                      : activePricingPolicy;
+                  return (
+                    <tr key={`${r.label}-${i}`} className="border-t border-border/40">
+                      <td className="px-2 py-1 text-foreground truncate max-w-[180px]" title={`${r.label} · ${r.at}`}>
+                        {r.label}
+                      </td>
+                      <td className="px-2 py-1 text-muted-foreground">
+                        <div className="max-w-[220px] truncate" title={`${r.provider ? `${r.provider} · ` : ""}${r.model ?? activeAiModel}`}>
+                          {r.model ?? activeAiModel}
+                          {r.provider ? ` · ${r.provider}` : ""}
+                        </div>
+                        <div className="text-[10px] truncate" title={rowPricingPolicy}>
+                          {rowPricingPolicy}
+                        </div>
+                      </td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">{r.promptTokens.toLocaleString()}</td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">{r.cachedTokens ? r.cachedTokens.toLocaleString() : "—"}</td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">{r.completionTokens.toLocaleString()}</td>
+                      <td className="px-2 py-1 text-right font-medium text-foreground">{r.totalTokens.toLocaleString()}</td>
+                      <td className="px-2 py-1 text-right font-medium text-violet-700">${r.costUsd.toFixed(5)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t border-border/60 font-bold">
                   <td className="px-2 py-1 text-foreground">Total</td>
+                  <td className="px-2 py-1 text-muted-foreground font-medium">{activePricingPolicy}</td>
                   <td className="px-2 py-1 text-right">{relay.jobUsage.promptTokens.toLocaleString()}</td>
                   <td className="px-2 py-1 text-right">{relay.jobUsage.cachedTokens.toLocaleString()}</td>
                   <td className="px-2 py-1 text-right">{relay.jobUsage.completionTokens.toLocaleString()}</td>

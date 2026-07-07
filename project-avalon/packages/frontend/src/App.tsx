@@ -793,7 +793,7 @@ export default function App() {
           ) : null}
           <p className="hint">Click a target to prefill the selector and highlight it on the page.</p>
           <div className="field">
-            <label>Profile — profile.json</label>
+            <label>Profile — autoBidProfile JSON</label>
             <div className="profile-input-row">
               <input
                 ref={profileFileRef}
@@ -807,7 +807,7 @@ export default function App() {
                 className="secondary"
                 onClick={() => profileFileRef.current?.click()}
               >
-                Upload profile.json
+                Upload profile JSON
               </button>
               {profileFileName ? <span className="hint profile-file-name">{profileFileName}</span> : null}
             </div>
@@ -815,7 +815,7 @@ export default function App() {
               className="applicant-context"
               value={applicantContext}
               onChange={(e) => handleProfilePaste(e.target.value)}
-              placeholder={'Paste profile.json contents here, or upload the file above.\n\nExample: copy from project root profile.json (uses autoBidProfile fields).'}
+              placeholder={'Paste exported profile JSON here, or upload a file containing autoBidProfile fields.'}
               rows={5}
             />
           </div>

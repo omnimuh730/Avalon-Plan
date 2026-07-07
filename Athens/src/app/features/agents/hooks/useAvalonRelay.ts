@@ -81,22 +81,42 @@ export interface ManualVerifyResult {
 export interface UsageEntry {
   label: string;
   at: string;
+  model?: string | null;
+  provider?: string | null;
   promptTokens: number;
   cachedTokens: number;
   completionTokens: number;
   totalTokens: number;
   costUsd: number;
+  pricingRates?: {
+    promptPer1M: number;
+    completionPer1M: number;
+  };
 }
 
 /** Loose usage shape accepted from any AI call (ai-bff, résumé gen, analyze). */
 type UsageLike =
   | {
+      model?: string | null;
+      provider?: string | null;
       promptTokens?: number;
       cachedTokens?: number;
       completionTokens?: number;
       totalTokens?: number;
       costUsd?: number;
-      cost?: { totalUsd?: number } | number;
+      pricingRates?: {
+        promptPer1M?: number;
+        completionPer1M?: number;
+      };
+      cost?:
+        | {
+            totalUsd?: number;
+            rates?: {
+              promptPer1M?: number;
+              completionPer1M?: number;
+            };
+          }
+        | number;
     }
   | undefined
   | null;
@@ -441,6 +461,14 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     if (!u) return { exceeded: checkBudgetExceeded() };
     const costUsd =
       u.costUsd ?? (typeof u.cost === "number" ? u.cost : u.cost?.totalUsd) ?? 0;
+    const rawRates = u.pricingRates ?? (typeof u.cost === "number" ? undefined : u.cost?.rates);
+    const pricingRates =
+      rawRates?.promptPer1M != null && rawRates?.completionPer1M != null
+        ? {
+            promptPer1M: rawRates.promptPer1M,
+            completionPer1M: rawRates.completionPer1M,
+          }
+        : undefined;
     if ((u.totalTokens ?? 0) === 0 && costUsd === 0) return { exceeded: checkBudgetExceeded() };
     jobRunCostRef.current += costUsd;
     setUsageRequests((prev) => [
@@ -448,11 +476,14 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       {
         label,
         at: new Date().toLocaleTimeString(),
+        model: u.model,
+        provider: u.provider,
         promptTokens: u.promptTokens ?? 0,
         cachedTokens: u.cachedTokens ?? 0,
         completionTokens: u.completionTokens ?? 0,
         totalTokens: u.totalTokens ?? 0,
         costUsd,
+        pricingRates,
       },
     ]);
     return { exceeded: checkBudgetExceeded() };
@@ -862,7 +893,13 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         },
         runSignal(),
       );
-      if (!gen.reused) recordUsage(`Résumé generation${gen.model ? ` (${gen.model})` : ""}`, gen.usage);
+      if (!gen.reused) {
+        recordUsage(`Résumé generation${gen.model ? ` (${gen.model})` : ""}`, {
+          ...(gen.usage ?? {}),
+          model: gen.model,
+          provider: gen.provider,
+        });
+      }
       const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
       setResumesByJobId((prev) => ({
         ...prev,

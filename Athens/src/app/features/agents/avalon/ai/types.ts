@@ -27,10 +27,20 @@ export interface FieldActionPlan {
 export interface FormAnalysisResult {
   fields: FieldActionPlan[];
   usage?: {
+    model?: string | null;
+    provider?: string | null;
     promptTokens: number;
+    cachedTokens?: number;
     completionTokens: number;
     totalTokens: number;
-    cost?: { totalUsd: number; currency: string };
+    cost?: {
+      totalUsd: number;
+      currency: string;
+      rates?: {
+        promptPer1M: number;
+        completionPer1M: number;
+      };
+    };
   };
 }
 

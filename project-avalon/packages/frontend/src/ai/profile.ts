@@ -1,4 +1,4 @@
-/** Shape of profile.json at repo root (autoBidProfile is what we use for form filling). */
+/** Shape of exported profile JSON (autoBidProfile is what we use for form filling). */
 export interface AutoBidProfile {
   fullName?: string;
   firstName?: string;
@@ -67,7 +67,7 @@ function stripSensitive(obj: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-/** Extract autoBidProfile from pasted/uploaded profile.json text. */
+/** Extract autoBidProfile from pasted/uploaded profile JSON text. */
 export function extractAutoBidProfile(raw: string): AutoBidProfile | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;

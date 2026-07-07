@@ -3,16 +3,10 @@
  * Usage: node scripts/debug-ashby-file-attach.mjs [url]
  */
 import { chromium } from 'playwright';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 
 const url =
   process.argv[2] ||
   'https://jobs.ashbyhq.com/forma/b52609ac-6e33-4072-84bb-0c27a10488bf/application?utm_source=jobright';
-
-const __dir = dirname(fileURLToPath(import.meta.url));
-const samplePdf = join(__dir, '../public/Eli Taylor.docx'); // fallback small file
 
 async function main() {
   const browser = await chromium.launch({ headless: true });

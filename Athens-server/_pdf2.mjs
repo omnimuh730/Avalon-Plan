@@ -11,7 +11,7 @@ const role = (title, company, dates, n) => `
     </ul>
   </div>`;
 const html = `
-  <div style="text-align:center;margin-bottom:18px"><div style="font-size:24pt;font-weight:700">Eli Taylor</div></div>
+  <div style="text-align:center;margin-bottom:18px"><div style="font-size:24pt;font-weight:700">Sample Candidate</div></div>
   <div style="margin-bottom:14px"><div style="font-weight:700;break-after:avoid">EXPERIENCE</div>
     ${role('Senior Software Engineer','Accolade, Inc.','2022 – Present',12)}
     ${role('Software Engineer','WSECU','2021 – 2022',12)}

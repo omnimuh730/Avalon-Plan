@@ -91,7 +91,6 @@ export interface InjectionHelpers {
     text: string,
     options?: { delayMs?: number; optionsTimeoutMs?: number },
   ): Promise<boolean>;
-  attachDefaultFile(input: HTMLInputElement): Promise<void>;
   wait(ms: number): Promise<void>;
   q(selector: string, root?: Element): Element | null;
   qa(selector: string, root?: Element): Element[];
@@ -149,21 +148,6 @@ export function createInjectionHelpers(): InjectionHelpers {
     async typeCombobox(input, text, options = {}) {
       await typeComboboxText(input, text, options.delayMs ?? 35);
       return waitForComboboxOptions(input, options.optionsTimeoutMs ?? 4000);
-    },
-    async attachDefaultFile(input: HTMLInputElement) {
-      if (!input) throw new Error('File input not found');
-      const name = 'Eli Taylor.docx';
-      const mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      const url = browser.runtime.getURL(name);
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Could not load ${name}`);
-      const blob = await response.blob();
-      const file = new File([blob], name, { type: mimeType });
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      input.files = dt.files;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
     },
     wait(ms: number) {
       return new Promise((resolve) => setTimeout(resolve, ms));

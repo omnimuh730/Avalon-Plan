@@ -100,6 +100,12 @@ export function SignInPage() {
             "Sign in"
           )}
         </Button>
+        <p className="text-center text-sm text-muted-foreground mt-8">
+        No account?{" "}
+        <Link to="/signup" className="text-primary font-semibold hover:underline">
+          Create one
+        </Link>
+      </p>
       </form>
     </AuthSplitLayout>
   );

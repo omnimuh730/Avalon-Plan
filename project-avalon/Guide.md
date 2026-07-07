@@ -25,7 +25,7 @@ if (label.includes('country')) return profile.country
 if (label.includes('salary')) value = '120000'
 ```
 
-**Apply-time profile overrides** are also hardcoding: they second-guess the AI plan with local rules. The AI receives `profile.json` at **Analyze** time and decides every value and `shouldSkip`; **Apply** only executes that decision.
+**Apply-time profile overrides** are also hardcoding: they second-guess the AI plan with local rules. The AI receives the active `autoBidProfile` at **Analyze** time and decides every value and `shouldSkip`; **Apply** only executes that decision.
 
 > Note: dispatching a *typed, generic* op in the executor (`setValue` vs `click` vs `typeCombobox` vs `attachFile`) is **not** hardcoding — those are portable control verbs, not vendors. What's forbidden is branching on a **site/label/value**, not on a generic control type.
 

@@ -8,6 +8,7 @@ import {
 } from "../db/mongo.js";
 import { isJobBlocked, buildMongoQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
 import { attachStaticScoreFields } from '../services/jobListPipeline.js';
+import { JOB_MARKET_MODEL_VERSION, stripScraperOnlyJobFields } from '../config/jobMarketSchema.js';
 import {
 	buildJobsListQuery,
 	STATUS_TABS,
@@ -109,9 +110,11 @@ export async function createJob(req, res) {
 			}
 		}
 
+		stripScraperOnlyJobFields(job);
+
 		job._createdAt = createdAt;
 		job.postedAt = postedAt;
-		job.modelVersion = '1.12.8';
+		job.modelVersion = JOB_MARKET_MODEL_VERSION;
 		// Company page URL scraped by the extension; normalize to a trimmed string
 		// (default "") so the field is always present and consistent in storage.
 		job.companyLink = typeof job.companyLink === 'string' ? job.companyLink.trim() : '';
@@ -135,8 +138,6 @@ export async function createJob(req, res) {
 			console.warn('Failed to upsert company categories', e);
 		}
 
-		// MongoDB only on ingest — world graph enrichment runs from Knowledge Graph page.
-		job.skillAnalysis = { status: 'pending' };
 		// Match-score worker fans this job out to every user profile.
 		job.matchScoreStatus = 'pending';
 		// Queue for AI skill extraction (run manually from the Extract skills button).
@@ -153,7 +154,6 @@ export async function createJob(req, res) {
 			success: true,
 			created: true,
 			insertedId: result ? result.insertedId : null,
-			skillAnalysis: job.skillAnalysis,
 		});
 	} catch (err) {
 		console.error('POST /api/jobs error', err);

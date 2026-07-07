@@ -17,14 +17,24 @@ export interface ChatRequest {
 }
 
 export interface ChatResponse {
+  provider?: string;
+  model?: string;
   structured?: {
     fields?: Array<Record<string, unknown>> | Array<{ id: string; script: string }>;
     script?: string;
   };
   usage?: {
     promptTokens: number;
+    cachedTokens?: number;
     completionTokens: number;
     totalTokens: number;
-    cost?: { totalUsd: number; currency: string };
+    cost?: {
+      totalUsd: number;
+      currency: string;
+      rates?: {
+        promptPer1M: number;
+        completionPer1M: number;
+      };
+    };
   };
 }

@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type Context,
   type MutableRefObject,
   type ReactNode,
 } from "react";
@@ -36,6 +37,15 @@ import { QUEUE_STORAGE_PREFIX, useAvalonRelay, type QueuedJob } from "../hooks/u
  */
 
 type Relay = ReturnType<typeof useAvalonRelay>;
+
+declare global {
+  // Keep context identity stable across Vite Fast Refresh. Without this, a hot
+  // update can leave the mounted provider on the previous module instance while
+  // AgentsPage imports the refreshed hook, producing a false "missing provider"
+  // crash even though AgentSessionsProvider is visibly in the tree.
+  var __athensSessionRelayContext: Context<Relay | null> | undefined;
+  var __athensAgentSessionsContext: Context<AgentSessionsContextValue | null> | undefined;
+}
 
 export interface AgentSessionMeta {
   id: string;
@@ -71,7 +81,8 @@ interface AgentSessionsContextValue {
 }
 
 /** Live relay for the session whose controller is currently rendered. */
-const SessionRelayContext = createContext<Relay | null>(null);
+const SessionRelayContext =
+  globalThis.__athensSessionRelayContext ?? (globalThis.__athensSessionRelayContext = createContext<Relay | null>(null));
 
 export function useSessionRelay(): Relay {
   const ctx = useContext(SessionRelayContext);
@@ -79,7 +90,9 @@ export function useSessionRelay(): Relay {
   return ctx;
 }
 
-const AgentSessionsContext = createContext<AgentSessionsContextValue | null>(null);
+const AgentSessionsContext =
+  globalThis.__athensAgentSessionsContext ??
+  (globalThis.__athensAgentSessionsContext = createContext<AgentSessionsContextValue | null>(null));
 
 export function useAgentSessions(): AgentSessionsContextValue {
   const ctx = useContext(AgentSessionsContext);

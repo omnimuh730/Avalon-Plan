@@ -33,12 +33,6 @@ export default defineConfig({
     side_panel: {
       default_path: 'sidepanel.html',
     },
-    web_accessible_resources: [
-      {
-        resources: ['Eli Taylor.docx'],
-        matches: ['<all_urls>'],
-      },
-    ],
   },
   runner: {
     chromiumArgs: ['--auto-open-devtools-for-tabs'],

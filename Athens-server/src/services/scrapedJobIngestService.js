@@ -27,6 +27,7 @@ export function validateScrapedJobInput(raw) {
 	const jobLink = clean(raw.jobLink ?? raw.job_link ?? raw.applyLink ?? raw.url);
 	const source = clean(raw.source);
 	const sender = clean(raw.sender ?? raw.Sender);
+	const postedAgo = clean(raw.postedAgo ?? raw.posted_ago ?? raw.postedAt);
 
 	if (!companyName) return { ok: false, error: "companyName is required" };
 	if (!sender) return { ok: false, error: "sender is required" };
@@ -48,6 +49,7 @@ export function validateScrapedJobInput(raw) {
 			jobDescription,
 			jobLink,
 			...(source ? { source } : {}),
+			...(postedAgo ? { postedAgo } : {}),
 		},
 	};
 }

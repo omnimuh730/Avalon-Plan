@@ -47,11 +47,17 @@ export const APPLY_VERIFY_SCHEMA: JsonSchemaDefinition = {
 };
 
 export interface AiUsage {
+  model?: string | null;
+  provider?: string | null;
   promptTokens: number;
   cachedTokens?: number;
   completionTokens: number;
   totalTokens: number;
   costUsd?: number;
+  pricingRates?: {
+    promptPer1M: number;
+    completionPer1M: number;
+  };
 }
 
 export interface ApplyVerifyResult {
@@ -63,15 +69,39 @@ export interface ApplyVerifyResult {
 /** Normalize an ai-bff usage block (with optional cached-token detail) to AiUsage. */
 export function toAiUsage(u: unknown): AiUsage | undefined {
   const usage = u as
-    | { promptTokens?: number; completionTokens?: number; totalTokens?: number; cachedTokens?: number; cost?: { totalUsd?: number } }
+    | {
+        model?: string | null;
+        provider?: string | null;
+        promptTokens?: number;
+        completionTokens?: number;
+        totalTokens?: number;
+        cachedTokens?: number;
+        cost?: {
+          totalUsd?: number;
+          rates?: {
+            promptPer1M?: number;
+            completionPer1M?: number;
+          };
+        };
+      }
     | undefined;
   if (!usage) return undefined;
+  const rates = usage.cost?.rates;
   return {
+    model: usage.model,
+    provider: usage.provider,
     promptTokens: usage.promptTokens ?? 0,
     cachedTokens: usage.cachedTokens,
     completionTokens: usage.completionTokens ?? 0,
     totalTokens: usage.totalTokens ?? 0,
     costUsd: usage.cost?.totalUsd,
+    pricingRates:
+      rates?.promptPer1M != null && rates?.completionPer1M != null
+        ? {
+            promptPer1M: rates.promptPer1M,
+            completionPer1M: rates.completionPer1M,
+          }
+        : undefined,
   };
 }
 

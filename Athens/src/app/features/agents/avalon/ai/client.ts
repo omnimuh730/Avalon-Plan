@@ -36,5 +36,6 @@ export async function chatCompletion(request: ChatRequest): Promise<ChatResponse
     throw new Error(body.error ?? `AI request failed (${response.status})`);
   }
 
-  return (await response.json()) as ChatResponse;
+  const data = (await response.json()) as ChatResponse;
+  return { ...data, model: data.model ?? model };
 }
