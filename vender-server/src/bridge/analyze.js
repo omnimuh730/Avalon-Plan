@@ -128,7 +128,7 @@ async function callOpenAi(
   apiKey,
   model,
   messages,
-  { jsonMode = false, cacheKey, reasoningEffort = 'minimal' } = {},
+  { jsonMode = false, cacheKey, reasoningEffort = 'none' } = {},
 ) {
   if (!apiKey) {
     throw new Error(
@@ -143,7 +143,7 @@ async function callOpenAi(
 
   if (model.startsWith('gpt-5')) {
     // gpt-5* are reasoning models; the API defaults to "medium" effort, which
-    // adds seconds of hidden reasoning. "minimal" keeps nano fast (~sub-second).
+    // adds seconds of hidden reasoning. "none" keeps nano fast (~sub-second).
     body.reasoning_effort = reasoningEffort;
   } else {
     body.temperature = 0.2;

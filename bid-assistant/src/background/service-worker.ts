@@ -650,10 +650,11 @@ async function recordBidProcessClick(
   }
 
   // Kick off the capture before anything else — the page is navigating away.
-  // Best-effort full page (captureTabScreenshot stitches via CDP, falling back
-  // to a viewport grab if the tab navigates before stitching finishes).
+  // Use a viewport-only grab (no CDP): attaching chrome.debugger mid-click
+  // interrupts the page's own event handling, so the SPA's submit handler never
+  // runs and the browser falls back to a native form submission (full refresh).
   const windowId = sender.tab?.windowId;
-  const screenshotPromise = captureTabScreenshot(tabId, windowId);
+  const screenshotPromise = captureTabScreenshot(tabId, windowId, { fullPage: false });
 
   const session = await getStoredBidSession(tabId);
   if (session.status !== 'active' || !session.sessionId) {

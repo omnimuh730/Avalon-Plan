@@ -319,9 +319,10 @@ export function jobSearchFilterFn(job: Job, query: string) {
 }
 
 export function exportJobsCsv(jobs: Job[]): string {
-  const header = "Title,Company,Location,Status,Match,Skill,Posted,Salary,Source";
+  const header = "Link,Title,Company,Location,Status,Match,Skill,Posted,Salary,Source";
   const rows = jobs.map((j) =>
     [
+      j.applyUrl,
       j.title,
       j.company,
       j.location,
