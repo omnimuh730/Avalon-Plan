@@ -1,5 +1,6 @@
 import { MongoClient } from 'mongodb';
 import { getMongoDbName, getMongoUrl } from '../config/mongoConfig.js';
+import { connectCloudMongo } from '../config/mongoConnection.js';
 
 let mongoClient;
 let localMongoClient;
@@ -30,8 +31,7 @@ async function initMongo() {
   const cloudMongoUrl = getMongoUrl();
   const cloudMongoDbName = getMongoDbName();
   try {
-    mongoClient = new MongoClient(cloudMongoUrl);
-    await mongoClient.connect();
+    mongoClient = await connectCloudMongo(cloudMongoUrl);
     const db = mongoClient.db(cloudMongoDbName);
     accountInfoCollection = db.collection('account_info');
     personalInfoCollection = db.collection('personal_info');

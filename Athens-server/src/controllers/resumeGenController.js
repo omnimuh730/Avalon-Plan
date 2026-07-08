@@ -77,12 +77,30 @@ function parseJsonLoose(text) {
 
 const PURPOSES = new Set(["summary", "skills", "experience", "education"]);
 
+// Format one career entry as a natural sentence for {companyN} tokens:
+// "Senior Software Engineer at McGrow Hill (2026.2 – Present) — E-learning platform"
+export function formatCompanyToken(c) {
+  const title = cleanString(c?.title);
+  const company = cleanString(c?.company);
+  const period = cleanString(c?.period);
+  const description = cleanString(c?.description);
+
+  let head = "";
+  if (title && company) head = `${title} at ${company}`;
+  else head = title || company;
+
+  if (period && head) head = `${head} (${period})`;
+  else if (period) head = period;
+
+  return description && head ? `${head} — ${description}` : head || description;
+}
+
 // Resolve the reference tokens a prompt may use into concrete strings, derived
 // from the candidate profile + JD. `{career}` is a newline-joined summary of all
-// roles; `{companyN_*}` expose each role's fields (N is 1-based, by recency order
-// as stored on the profile). `{job_skills}` are the skills already extracted for
-// a structured (MongoDB) job — empty for free-text generation.
-function buildTokenMap(identity, jobDescription, jobSkills) {
+// roles; `{companyN}` is a natural-sentence summary of the Nth career (N is
+// 1-based, by order stored on the profile). `{job_skills}` are the skills
+// already extracted for a structured (MongoDB) job — empty for free-text generation.
+export function buildTokenMap(identity, jobDescription, jobSkills) {
   const careers = Array.isArray(identity?.careers) ? identity.careers : [];
   const field = (v) => cleanString(v);
   const skills = Array.isArray(jobSkills) ? jobSkills.map(field).filter(Boolean) : [];
@@ -99,11 +117,7 @@ function buildTokenMap(identity, jobDescription, jobSkills) {
       .join("\n"),
   };
   careers.forEach((c, i) => {
-    const n = i + 1;
-    map[`company${n}_name`] = field(c?.company);
-    map[`company${n}_title`] = field(c?.title);
-    map[`company${n}_duration`] = field(c?.period);
-    map[`company${n}_description`] = field(c?.description);
+    map[`company${i + 1}`] = formatCompanyToken(c);
   });
   return map;
 }
@@ -157,7 +171,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
   //   {job_description}                          → the JD text the user typed
   //   {job_skills}                               → skills pre-fetched for a structured job
   //   {career}                                   → all roles, one per line
-  //   {companyN_name|title|duration} (N = 1,2,…) → fields of the Nth career
+  //   {companyN} (N = 1,2,…) → natural-sentence summary of the Nth career
   const tokenMap = buildTokenMap(identity, jobDescription, jobSkills);
   const applyTokens = (text) =>
     String(text ?? "").replace(/\{[a-z0-9_]+\}/gi, (match) => {

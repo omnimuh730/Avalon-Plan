@@ -9,7 +9,8 @@ const outPath = path.join(root, 'src/config/mongoSecrets.js');
 // Cloud MongoDB — embedded at build/dev prep time, XOR-encoded in the output module.
 // Non-SRV connection string (direct host seed list) so it works without a DNS
 // SRV lookup, which some networks refuse (querySrv ECONNREFUSED).
-const MONGO_URL = 'mongodb://eatsy:Test.1234!@ac-roxo4g6-shard-00-00.qhizoya.mongodb.net:27017,ac-roxo4g6-shard-00-01.qhizoya.mongodb.net:27017,ac-roxo4g6-shard-00-02.qhizoya.mongodb.net:27017/?ssl=true&replicaSet=atlas-yphruo-shard-0&authSource=admin';
+// directConnection to one shard — multi-host replicaSet seed lists time out on Atlas shared tiers.
+const MONGO_URL = 'mongodb://eatsy:Test.1234!@ac-iuyb1ae-shard-00-02.7n3pyfv.mongodb.net:27017/?ssl=true&authSource=admin&directConnection=true';
 const MONGO_DB = 'AthensDB';
 const XOR_KEY = 'foxhire-bridge-v1';
 

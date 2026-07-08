@@ -18,6 +18,7 @@ const {
   calendar: CalendarPage,
   interviews: InterviewPrepPage,
   reports: AnalyticsPage,
+  "ai-usage": AiUsagePage,
   "vendor-monitor": VendorMonitorPage,
   settings: SettingsPage,
 } = VIEW_COMPONENTS;
@@ -74,6 +75,7 @@ export function AppRoutes() {
             <AnalyticsPage />
           }
         />
+        <Route path={PATHS.aiUsage.slice(1)} element={<AiUsagePage />} />
         <Route
           path={PATHS.vendorMonitor.slice(1)}
           element={

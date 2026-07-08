@@ -15,6 +15,7 @@ export const PATHS = {
   calendar: "/calendar",
   interviews: "/interviews",
   reports: "/reports",
+  aiUsage: "/ai-usage",
   vendorMonitor: "/vendor-monitor",
   settings: "/settings",
   signin: "/signin",
@@ -45,6 +46,7 @@ const VIEW_TO_BASE: Record<View, string> = {
   calendar: PATHS.calendar,
   interviews: PATHS.interviews,
   reports: PATHS.reports,
+  "ai-usage": PATHS.aiUsage,
   "vendor-monitor": PATHS.vendorMonitor,
   settings: PATHS.settings,
 };
@@ -89,6 +91,7 @@ export function viewFromPathname(pathname: string): View {
   if (p.startsWith(PATHS.calendar)) return "calendar";
   if (p.startsWith(PATHS.interviews)) return "interviews";
   if (p.startsWith(PATHS.reports)) return "reports";
+  if (p.startsWith(PATHS.aiUsage)) return "ai-usage";
   if (p.startsWith(PATHS.vendorMonitor)) return "vendor-monitor";
   if (p.startsWith(PATHS.settings)) return "settings";
   return "dashboard";

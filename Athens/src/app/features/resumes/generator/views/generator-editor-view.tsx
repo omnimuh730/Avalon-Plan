@@ -362,7 +362,7 @@ export function GeneratorEditorView({ vm }: { vm: GeneratorPageVm }) {
               onChange={(v) => setConfig((c) => ({ ...c, systemInstruction: v }))}
               tokenValues={tokenValues}
               rows={6}
-              placeholder="System instruction… use {job_description}, {career}, {company1_title}…"
+              placeholder="System instruction… use {job_description}, {career}, {company1}…"
             />
           </div>
 

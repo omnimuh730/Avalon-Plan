@@ -44,6 +44,22 @@ import { isUploadedTemplateId, PURPOSES, SECTION_LABEL, uploadedTemplateMongoId 
 import { applyHistoryRun } from "./load-history-run";
 import type { FullRun } from "../history/history-types";
 
+function formatCompanyToken(c: { title?: string; company?: string; period?: string; description?: string }): string {
+  const title = (c.title ?? "").trim();
+  const company = (c.company ?? "").trim();
+  const period = (c.period ?? "").trim();
+  const description = (c.description ?? "").trim();
+
+  let head = "";
+  if (title && company) head = `${title} at ${company}`;
+  else head = title || company;
+
+  if (period && head) head = `${head} (${period})`;
+  else if (period) head = period;
+
+  return description && head ? `${head} — ${description}` : head || description;
+}
+
 export type GeneratorPageVm = ReturnType<typeof useGeneratorPage>;
 
 export function useGeneratorPage() {
@@ -85,7 +101,7 @@ export function useGeneratorPage() {
 
   // Reference tokens a prompt can use, resolved from the JD + profile careers.
   // Mirrors the backend substitution in resumeGenController so the chip previews
-  // match what generation will actually inject. {companyN_*} are 1-based by role.
+  // match what generation will actually inject. {companyN} are 1-based by role.
   const tokenValues: Record<string, string> = (() => {
     const careers = identity?.careers ?? [];
     const map: Record<string, string> = {
@@ -103,11 +119,7 @@ export function useGeneratorPage() {
         .join("\n"),
     };
     careers.forEach((c, i) => {
-      const n = i + 1;
-      map[`company${n}_name`] = c.company || "";
-      map[`company${n}_title`] = c.title || "";
-      map[`company${n}_duration`] = c.period || "";
-      map[`company${n}_description`] = c.description || "";
+      map[`company${i + 1}`] = formatCompanyToken(c);
     });
     return map;
   })();

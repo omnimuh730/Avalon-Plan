@@ -10,6 +10,7 @@ import {
   Calendar,
   Video,
   BarChart2,
+  Cpu,
   Activity,
   Settings,
 } from "lucide-react";
@@ -35,6 +36,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "interviews", label: "Interview Prep", icon: Video, comingSoon: true },
   { id: "vendor-monitor", label: "Vendor Monitor", icon: Activity, pro: true },
   { id: "reports", label: "Analytics", icon: BarChart2, comingSoon: true },
+  { id: "ai-usage", label: "AI API Usage", icon: Cpu },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -42,7 +44,7 @@ export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
   { label: "WORKSPACE", ids: ["dashboard", "job-board", "resumes"] },
   { label: "PIPELINE", ids: ["ats", "copilot"] },
   { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews", "vendor-monitor"] },
-  { label: "INSIGHTS", ids: ["reports"] },
+  { label: "INSIGHTS", ids: ["reports", "ai-usage"] },
   { label: null, ids: ["settings"] },
 ];
 
@@ -57,6 +59,7 @@ export const VIEW_TITLES: Record<View, string> = {
   calendar: "Calendar",
   interviews: "Interview Prep",
   reports: "Job Search Analytics",
+  "ai-usage": "AI API Usage",
   "vendor-monitor": "Vendor Monitor",
   settings: "Settings",
 };

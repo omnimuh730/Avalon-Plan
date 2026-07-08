@@ -135,7 +135,7 @@ export function StepCard({
           onChange={(prompt) => onChange({ prompt })}
           tokenValues={tokenValues}
           rows={3}
-          placeholder="User-turn prompt… use {job_description}, {job_skills}, {career}, {company1_title}…"
+          placeholder="User-turn prompt… use {job_description}, {job_skills}, {career}, {company1}…"
         />
       </Field>
 

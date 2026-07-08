@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { installTerminalLogger } from '@nextoffer/shared/terminal-log';
+import { installTerminalLogger } from '../src/lib/terminal-log.js';
 
 installTerminalLogger('vender');
 

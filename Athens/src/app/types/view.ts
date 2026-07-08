@@ -9,5 +9,6 @@ export type View =
   | "calendar"
   | "interviews"
   | "reports"
+  | "ai-usage"
   | "vendor-monitor"
   | "settings";
