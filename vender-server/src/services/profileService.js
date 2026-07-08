@@ -250,14 +250,24 @@ async function findAccountByApplierName(accountInfoCollection, nameRaw) {
 
   let acc = await accountInfoCollection.findOne(
     { name: trimmed },
-    { projection: { name: 1, autoBidProfile: 1, resumeCatalog: 1, vendorAllowed: 1 } },
+    {
+      projection: { name: 1, autoBidProfile: 1, resumeCatalog: 1, resumeAnalysisCatalog: 1, vendorAllowed: 1 },
+    },
   );
   if (acc) return acc;
 
   const esc = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   acc = await accountInfoCollection.findOne(
     { name: { $regex: new RegExp(`^${esc}$`, 'i') } },
-    { projection: { name: 1, autoBidProfile: 1, resumeCatalog: 1, vendorAllowed: 1 } },
+    {
+      projection: {
+        name: 1,
+        autoBidProfile: 1,
+        resumeCatalog: 1,
+        resumeAnalysisCatalog: 1,
+        vendorAllowed: 1,
+      },
+    },
   );
   return acc || null;
 }
@@ -292,12 +302,18 @@ export async function loadProfileBundle(accountInfoCollection, personalInfoColle
       ? account.resumeCatalog
       : {};
 
+  const resumeAnalysisCatalog =
+    account.resumeAnalysisCatalog && typeof account.resumeAnalysisCatalog === 'object' && !Array.isArray(account.resumeAnalysisCatalog)
+      ? account.resumeAnalysisCatalog
+      : {};
+
   return {
     profileId: account._id ? String(account._id) : null,
     applierName: account.name,
     profile,
     skills,
     resumeCatalog,
+    resumeAnalysisCatalog,
     imapCredentials: {
       email: String(rawProfile.email ?? '').trim(),
       password: String(rawProfile.gmailAppPassword ?? '').replace(/\s/g, ''),
@@ -356,12 +372,18 @@ export async function verifyApplierProfile(
       ? account.resumeCatalog
       : {};
 
+  const resumeAnalysisCatalog =
+    account.resumeAnalysisCatalog && typeof account.resumeAnalysisCatalog === 'object' && !Array.isArray(account.resumeAnalysisCatalog)
+      ? account.resumeAnalysisCatalog
+      : {};
+
   const bundle = {
     applierName: account.name,
     vendorAllowed: Boolean(account.vendorAllowed),
     profile,
     skills,
     resumeCatalog,
+    resumeAnalysisCatalog,
     imapCredentials: {
       email: String(rawProfile.email ?? '').trim(),
       password: String(rawProfile.gmailAppPassword ?? '').replace(/\s/g, ''),

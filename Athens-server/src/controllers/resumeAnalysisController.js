@@ -63,9 +63,14 @@ export async function analyzeResumeMatch(req, res) {
     }
 
     const profile = acc.autoBidProfile || {};
-    const catalog = acc.resumeCatalog && typeof acc.resumeCatalog === "object"
-      ? acc.resumeCatalog
-      : emptyResumeCatalog();
+    // Prefer the detailed analyzed-catalog (used by bid-assistant/vender-server),
+    // but fall back to the legacy minimized resumeCatalog if needed.
+    const catalog =
+      acc.resumeAnalysisCatalog && typeof acc.resumeAnalysisCatalog === "object"
+        ? acc.resumeAnalysisCatalog
+        : acc.resumeCatalog && typeof acc.resumeCatalog === "object"
+          ? acc.resumeCatalog
+          : emptyResumeCatalog();
 
 		const analysis = await analyzeJobDescription(jobDescription, profile, applierName);
     const rankedStacks = rankResumes(analysis.skillProfileText, catalog, topN);

@@ -61,6 +61,10 @@ async function initMongo() {
     localMongoClient = new MongoClient(localMongoUrl);
     await localMongoClient.connect();
     const localDb = localMongoClient.db(localMongoDbName);
+    // If cloud is down, still serve profile/inbox/bid features using the
+    // local `account_info` and `personal_info`.
+    if (!accountInfoCollection) accountInfoCollection = localDb.collection('account_info');
+    if (!personalInfoCollection) personalInfoCollection = localDb.collection('personal_info');
     localBidRecordsCollection = localDb.collection('bid_records');
     await localBidRecordsCollection.createIndex({ sessionId: 1, createdAt: 1 });
     localMongoReady = true;

@@ -50,7 +50,7 @@ async function findProfile(applierNameRaw) {
 async function findAccountForKit(applierNameRaw) {
   const name = cleanString(applierNameRaw);
   if (!name || !accountInfoCollection) return null;
-  const projection = { autoBidProfile: 1, resumeCatalog: 1 };
+  const projection = { autoBidProfile: 1, resumeCatalog: 1, resumeAnalysisCatalog: 1 };
   let acc = await accountInfoCollection.findOne({ name }, { projection });
   if (!acc) {
     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -152,12 +152,23 @@ function profileToKitSections(identity, account) {
     companies.length ? `across ${companies.slice(0, 3).join(", ")}` : "",
   ].filter(Boolean);
   const catalogSkills = new Set();
-  const catalog = account?.resumeCatalog && typeof account.resumeCatalog === "object" ? account.resumeCatalog : {};
-  for (const stack of Object.values(catalog)) {
-    if (!stack || typeof stack !== "object") continue;
-    for (const skill of Object.keys(stack)) {
-      const clean = cleanString(skill);
-      if (clean) catalogSkills.add(clean);
+  // Prefer detailed analyzed catalog when available.
+  if (account?.resumeAnalysisCatalog && typeof account.resumeAnalysisCatalog === "object" && !Array.isArray(account.resumeAnalysisCatalog)) {
+    for (const stackSkills of Object.values(account.resumeAnalysisCatalog)) {
+      if (!Array.isArray(stackSkills)) continue;
+      for (const s of stackSkills) {
+        const clean = cleanString(s?.name);
+        if (clean) catalogSkills.add(clean);
+      }
+    }
+  } else {
+    const catalog = account?.resumeCatalog && typeof account.resumeCatalog === "object" ? account.resumeCatalog : {};
+    for (const stack of Object.values(catalog)) {
+      if (!stack || typeof stack !== "object") continue;
+      for (const skill of Object.keys(stack)) {
+        const clean = cleanString(skill);
+        if (clean) catalogSkills.add(clean);
+      }
     }
   }
 

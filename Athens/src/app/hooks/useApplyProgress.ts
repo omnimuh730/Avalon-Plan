@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { DEFAULT_SESSION_ID, SOCKET_EVENTS, type ApplyProgress } from "@avalon/shared";
+import { useAuth } from "@/context/auth-context";
 import {
   avalonRelayUrl,
   createAvalonSocket,
@@ -18,6 +19,9 @@ const TERMINAL_PHASES: ApplyProgress["phase"][] = ["submitted", "done", "error"]
  * take the controller slot, so it never interferes with the Avalon frontend.
  */
 export function useApplyProgress(sessionId?: string): ApplyProgress | null {
+  const { user } = useAuth();
+  const profileId = user?._id != null ? String(user._id) : "";
+
   const [progress, setProgress] = useState<ApplyProgress | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -34,7 +38,12 @@ export function useApplyProgress(sessionId?: string): ApplyProgress | null {
       socket = createAvalonSocket(avalonRelayUrl());
 
       socket.on("connect", () => {
-        socket?.emit(SOCKET_EVENTS.REGISTER, { role: "observer", sessionId: effectiveSessionId });
+        if (!profileId) return;
+        socket?.emit(SOCKET_EVENTS.REGISTER, {
+          role: "observer",
+          sessionId: effectiveSessionId,
+          profileId,
+        });
       });
 
       socket.on(SOCKET_EVENTS.APPLY_PROGRESS, (update: ApplyProgress) => {
@@ -52,7 +61,7 @@ export function useApplyProgress(sessionId?: string): ApplyProgress | null {
       socket?.removeAllListeners();
       socket?.disconnect();
     };
-  }, [sessionId]);
+  }, [sessionId, profileId]);
 
   return progress;
 }

@@ -8,6 +8,10 @@ export interface ResumeMatch {
 }
 
 export type ResumeCatalog = Record<string, Record<string, number>>;
+export type ResumeAnalysisCatalog = Record<
+  string,
+  { name: string; category?: string; level: number }[]
+>;
 
 function normalizeSkillName(name: string): string {
   return name
@@ -71,9 +75,21 @@ export function parseSkillProfile(skillProfileText: string): Map<string, number>
   return scores;
 }
 
-function buildResumeSkillMap(resumeProfile: Record<string, number>): Map<string, number> {
+function buildResumeSkillMap(resumeProfile: Record<string, number> | { name: string; level: number }[]) {
   const map = new Map<string, number>();
-  for (const [skill, score] of Object.entries(resumeProfile)) {
+  if (Array.isArray(resumeProfile)) {
+    for (const s of resumeProfile || []) {
+      const name = String(s?.name ?? '').trim();
+      const level = Number(s?.level);
+      if (!name || !Number.isFinite(level)) continue;
+      const clamped = Math.max(1, Math.min(5, Math.round(level)));
+      const score = Math.max(0, Math.min(10, Math.round(clamped * 2)));
+      map.set(normalizeSkillName(name), score);
+    }
+    return map;
+  }
+
+  for (const [skill, score] of Object.entries(resumeProfile || {})) {
     map.set(normalizeSkillName(skill), Number(score) || 0);
   }
   return map;
@@ -96,7 +112,10 @@ function lookupResumeScore(resumeScores: Map<string, number>, jdSkill: string): 
 // skills matter: only a few essential skills score high, everything else low.
 // So resume selection is a straight weighted-coverage match against those
 // scores — no extra hardcoded weighting.
-function scoreResume(jdScores: Map<string, number>, resumeProfile: Record<string, number>): number {
+function scoreResume(
+  jdScores: Map<string, number>,
+  resumeProfile: Record<string, number> | { name: string; level: number }[],
+): number {
   const resumeScores = buildResumeSkillMap(resumeProfile);
   let weightedSum = 0;
   let totalWeight = 0;
@@ -118,7 +137,7 @@ function scoreResume(jdScores: Map<string, number>, resumeProfile: Record<string
 /** Rank resume variants from account_info.resumeCatalog against a JD skill profile. */
 export function rankResumes(
   jdSkillProfileText: string,
-  resumesCatalog: ResumeCatalog,
+  resumesCatalog: ResumeCatalog | ResumeAnalysisCatalog,
   topN = 3,
 ): ResumeMatch[] {
   const jdScores = parseSkillProfile(jdSkillProfileText);

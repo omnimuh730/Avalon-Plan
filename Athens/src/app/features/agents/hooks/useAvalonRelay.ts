@@ -239,6 +239,8 @@ export interface AvalonRelayOptions {
    */
   persistKey?: string;
   accountTier?: string | null;
+  /** User/account namespace for relay pairing (see Project Avalon extension). */
+  profileId?: string;
 }
 
 export const QUEUE_STORAGE_PREFIX = "athens-agent-queue-";
@@ -349,10 +351,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const runEventsRef = useRef<ApplyLogEvent[]>([]);
   const runFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef(sessionId);
+  const profileIdRef = useRef(options?.profileId ?? "");
   const selectedTabIdRef = useRef(selectedTabId);
   const jobQueueRef = useRef(jobQueue);
   const activeJobIndexRef = useRef(activeJobIndex);
   sessionIdRef.current = sessionId;
+  profileIdRef.current = options?.profileId ?? "";
   selectedTabIdRef.current = selectedTabId;
   jobQueueRef.current = jobQueue;
   activeJobIndexRef.current = activeJobIndex;
@@ -380,7 +384,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const executeDisabledReason = !connected
     ? "Connect to the Avalon relay server first."
     : !peers.extension
-      ? `Extension not on session "${sessionId || DEFAULT_SESSION_ID}". Install the Avalon extension and match the session ID.`
+      ? `Extension not on your profile (id "${profileIdRef.current || 'default'}") + session "${sessionId || DEFAULT_SESSION_ID}". Install the Avalon extension, sign in, and match the session ID.`
       : null;
 
   /** Flush buffered run-log events to the backend (local JSONL + Mongo). */
@@ -614,7 +618,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       pushLog("Connected to relay server");
       next.emit(
         SOCKET_EVENTS.REGISTER,
-        { role: "controller", sessionId: sessionIdRef.current || undefined },
+        { role: "controller", sessionId: sessionIdRef.current || undefined, profileId: profileIdRef.current || undefined },
         (response: RegisteredPayload) => {
           setRegistered(response);
           setSessionId((prev) => prev || response.sessionId);
@@ -765,7 +769,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       if (!sock?.connected) return;
       sock.emit(
         SOCKET_EVENTS.REGISTER,
-        { role: "controller", sessionId: desired },
+        { role: "controller", sessionId: desired, profileId: profileIdRef.current || undefined },
         (response: RegisteredPayload) => {
           setRegistered(response);
           setPeers(response.peers);

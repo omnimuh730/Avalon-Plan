@@ -65,7 +65,20 @@ export function parseSkillProfile(skillProfileText) {
 
 function buildResumeSkillMap(resumeProfile) {
   const map = new Map();
-  for (const [skill, score] of Object.entries(resumeProfile)) {
+
+  if (Array.isArray(resumeProfile)) {
+    for (const s of resumeProfile || []) {
+      const name = String(s?.name ?? '').trim();
+      const level = Number(s?.level);
+      if (!name || !Number.isFinite(level)) continue;
+      const clamped = Math.max(1, Math.min(5, Math.round(level)));
+      const score = Math.max(0, Math.min(10, Math.round(clamped * 2)));
+      map.set(normalizeSkillName(name), score);
+    }
+    return map;
+  }
+
+  for (const [skill, score] of Object.entries(resumeProfile || {})) {
     map.set(normalizeSkillName(skill), Number(score) || 0);
   }
   return map;

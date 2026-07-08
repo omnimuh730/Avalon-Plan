@@ -348,14 +348,16 @@ export function createAnalyzer({ skillPromptTemplate, defaultModel = 'gpt-5-nano
     const skillProfile = normalizeSkillProfileOutput(content);
 
     const catalog =
-      profileBundle.resumeCatalog && typeof profileBundle.resumeCatalog === 'object'
-        ? profileBundle.resumeCatalog
-        : {};
+      profileBundle.resumeAnalysisCatalog && typeof profileBundle.resumeAnalysisCatalog === 'object'
+        ? profileBundle.resumeAnalysisCatalog
+        : profileBundle.resumeCatalog && typeof profileBundle.resumeCatalog === 'object'
+          ? profileBundle.resumeCatalog
+          : {};
 
     let topResumes = [];
     if (Object.keys(catalog).length === 0) {
       console.warn(
-        '[vender-server] Resume catalog is empty — set resumeCatalog on account_info in MongoDB.',
+        '[vender-server] Resume analysis catalog is empty — Analyze resumes first or load legacy resumes.json under Settings → Resume.',
       );
     } else if (skillProfile) {
       topResumes = rankResumes(skillProfile, catalog, 3).map((entry) => ({

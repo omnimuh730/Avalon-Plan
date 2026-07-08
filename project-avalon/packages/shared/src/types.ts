@@ -226,11 +226,18 @@ export interface ApplyProgress {
 
 export interface RegisterPayload {
   role: ClientRole;
+  /**
+   * User/account namespace for the relay session pairing.
+   * Allows multiple users to share a relay while still routing to the
+   * correct controller/extension pair.
+   */
+  profileId?: string;
   sessionId?: string;
 }
 
 export interface RegisteredPayload {
   clientId: string;
+  profileId: string;
   sessionId: string;
   role: ClientRole;
   peers: { extension: boolean; controller: boolean };

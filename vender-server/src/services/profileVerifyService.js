@@ -54,6 +54,28 @@ function checkResumeCatalog(resumeCatalog) {
   };
 }
 
+function countResumeAnalysisStacks(resumeAnalysisCatalog) {
+  if (!resumeAnalysisCatalog || typeof resumeAnalysisCatalog !== 'object' || Array.isArray(resumeAnalysisCatalog)) {
+    return 0;
+  }
+
+  return Object.values(resumeAnalysisCatalog).filter(
+    (skills) => Array.isArray(skills) && skills.length > 0,
+  ).length;
+}
+
+function checkResumeAnalysisCatalog(resumeAnalysisCatalog) {
+  const stackCount = countResumeAnalysisStacks(resumeAnalysisCatalog);
+  return {
+    ok: stackCount > 0,
+    message:
+      stackCount > 0
+        ? `${stackCount} analyzed resume stack${stackCount === 1 ? '' : 's'} available.`
+        : 'No analyzed resume stacks found. Analyze resumes in lancer-frontend first.',
+    stackCount,
+  };
+}
+
 function checkOpenAi(openAi) {
   const hasKey = Boolean(String(openAi?.apiKey ?? '').trim());
   return {
@@ -96,7 +118,9 @@ function checkVendorAccess(vendorAllowed) {
 export function buildVerificationChecks(bundle, gmailTest) {
   const vendorAccess = checkVendorAccess(bundle.vendorAllowed);
   const profile = checkProfileCompleteness(bundle.profile);
-  const resume = checkResumeCatalog(bundle.resumeCatalog);
+  const resumeAnalysis = checkResumeAnalysisCatalog(bundle.resumeAnalysisCatalog);
+  const resumeLegacy = checkResumeCatalog(bundle.resumeCatalog);
+  const resume = resumeAnalysis.ok ? resumeAnalysis : resumeLegacy;
   const openai = checkOpenAi(bundle.openAi);
   const gmailConfigured = checkGmailConfigured(bundle.imapCredentials);
 

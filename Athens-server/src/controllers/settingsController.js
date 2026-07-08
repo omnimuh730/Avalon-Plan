@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import { accountInfoCollection } from "../db/mongo.js";
+import { updateAccountInfoById } from "../services/accountInfoStore.js";
 
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -62,7 +63,7 @@ export async function updateNotificationPrefs(req, res) {
 			mail: body.mail !== false,
 		};
 
-		await accountInfoCollection.updateOne({ _id: acc._id }, { $set: { notificationPrefs: prefs } });
+		await updateAccountInfoById(acc._id, acc.name, { $set: { notificationPrefs: prefs } });
 		return res.json({ success: true, prefs });
 	} catch (err) {
 		console.error("PUT /api/settings/notifications error", err);
@@ -99,7 +100,7 @@ export async function changePassword(req, res) {
 		}
 
 		const hashedPassword = await bcrypt.hash(String(newPassword), 10);
-		await accountInfoCollection.updateOne({ _id: user._id }, { $set: { password: hashedPassword } });
+		await updateAccountInfoById(user._id, user.name, { $set: { password: hashedPassword } });
 
 		return res.json({ success: true, message: "Password updated successfully" });
 	} catch (err) {

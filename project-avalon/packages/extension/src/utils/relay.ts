@@ -16,6 +16,7 @@ import {
   AVALON_RELAY_ERROR_KEY,
   AVALON_SERVER_KEY,
   AVALON_SESSION_KEY,
+  AVALON_PROFILE_KEY,
   DEFAULT_SERVER_URL,
   EXTENSION_MESSAGES,
 } from './constants';
@@ -92,10 +93,11 @@ function bindTabListeners() {
 }
 
 async function getStoredConfig() {
-  const stored = await browser.storage.local.get([AVALON_SERVER_KEY, AVALON_SESSION_KEY]);
+  const stored = await browser.storage.local.get([AVALON_SERVER_KEY, AVALON_SESSION_KEY, AVALON_PROFILE_KEY]);
   return {
     serverUrl: (stored[AVALON_SERVER_KEY] as string | undefined) ?? DEFAULT_SERVER_URL,
     sessionId: stored[AVALON_SESSION_KEY] as string | undefined,
+    profileId: stored[AVALON_PROFILE_KEY] as string | undefined,
   };
 }
 
@@ -504,7 +506,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
 }
 
 export async function connectRelay(
-  overrides?: { serverUrl?: string; sessionId?: string },
+  overrides?: { serverUrl?: string; sessionId?: string; profileId?: string },
   onRegistered?: (payload: RegisteredPayload) => void,
   onConnectError?: (error: Error) => void,
   options?: { waitForHealth?: boolean },
@@ -515,6 +517,15 @@ export async function connectRelay(
   // without an explicit override silently re-registers this extension into the
   // shared default session, where it executes another user's commands.
   const sessionId = overrides?.sessionId?.trim() || config.sessionId?.trim() || DEFAULT_SESSION_ID;
+  const profileId = overrides?.profileId?.trim() || config.profileId?.trim() || '';
+
+  if (!profileId) {
+    const message = 'Sign in required before connecting';
+    await persistRelayConnected(false);
+    await persistRelayError(message);
+    onConnectError?.(new Error(message));
+    return null;
+  }
 
   if (options?.waitForHealth) {
     const reachable = await probeRelayHealthWithRetry(serverUrl);
@@ -562,12 +573,13 @@ export async function connectRelay(
     void persistRelayConnected(true);
     socket?.emit(
       SOCKET_EVENTS.REGISTER,
-      { role: 'extension', sessionId },
+      { role: 'extension', sessionId, profileId },
       (response: RegisteredPayload) => {
         currentSessionId = response.sessionId;
         void browser.storage.local.set({
           [AVALON_SERVER_KEY]: serverUrl,
           [AVALON_SESSION_KEY]: response.sessionId,
+          [AVALON_PROFILE_KEY]: response.profileId,
         });
         onRegistered?.(response);
         void collectTabs().then((tabs) => socket?.emit(SOCKET_EVENTS.TABS_UPDATE, tabs));
@@ -607,7 +619,7 @@ export async function connectRelay(
 
 /** Re-open the relay if the MV3 service worker woke without an in-memory socket. */
 export async function ensureRelayConnected(
-  overrides?: { serverUrl?: string; sessionId?: string },
+  overrides?: { serverUrl?: string; sessionId?: string; profileId?: string },
 ): Promise<void> {
   const existing = getRelaySocket();
   if (existing?.connected) {
@@ -625,11 +637,12 @@ export async function ensureRelayConnected(
   await connectRelay({
     serverUrl: overrides?.serverUrl ?? config.serverUrl,
     sessionId: overrides?.sessionId ?? config.sessionId,
+    profileId: overrides?.profileId ?? config.profileId,
   });
 }
 
 export function waitForRelayRegistration(
-  overrides?: { serverUrl?: string; sessionId?: string },
+  overrides?: { serverUrl?: string; sessionId?: string; profileId?: string },
   timeoutMs = 20000,
 ): Promise<RegisteredPayload> {
   return new Promise((resolve, reject) => {
@@ -680,9 +693,10 @@ export async function readStoredRelayError(): Promise<string | null> {
   return message;
 }
 
-export async function saveRelayConfig(serverUrl: string, sessionId?: string) {
+export async function saveRelayConfig(serverUrl: string, sessionId?: string, profileId?: string) {
   await browser.storage.local.set({
     [AVALON_SERVER_KEY]: serverUrl,
     ...(sessionId ? { [AVALON_SESSION_KEY]: sessionId } : {}),
+    ...(profileId ? { [AVALON_PROFILE_KEY]: profileId } : {}),
   });
 }
