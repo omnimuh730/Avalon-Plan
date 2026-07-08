@@ -28,7 +28,7 @@ function originFromServiceUrl(serviceUrl: string): string {
 function figmaAssetResolver() {
   return {
     name: 'figma-asset-resolver',
-    resolveId(id) {
+    resolveId(id: string) {
       if (id.startsWith('figma:asset/')) {
         const filename = id.replace('figma:asset/', '')
         return path.resolve(__dirname, 'src/assets', filename)
@@ -70,6 +70,7 @@ export default defineConfig(({ mode }) => {
     assetsInclude: ['**/*.svg', '**/*.csv'],
     server: {
       host: devHost,
+      allowedHosts: true,
       port: Number(env.VITE_DEV_PORT || 9030) || 9030,
       proxy: {
         '/api': {

@@ -275,6 +275,7 @@ export async function getVerificationCode(req, res) {
 		const ai = await aiExtractVerification(emails, decryptProfileApiKeys(acc?.autoBidProfile || {}), {
 			companyName,
 			jobTitle,
+			applierName,
 		});
 
 		const debug = {

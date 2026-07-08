@@ -105,8 +105,9 @@ export async function aiExtractVerification(emails, profile, context = {}) {
     return { found: false, code: null, link: null, emailIndex: null, note: "no emails to scan" };
   }
 
-  const companyName = String(context.companyName || "").trim();
-  const jobTitle = String(context.jobTitle || "").trim();
+	const companyName = String(context.companyName || "").trim();
+	const jobTitle = String(context.jobTitle || "").trim();
+	const applierName = String(context.applierName || "").trim() || undefined;
 
   // Caller already passes emails newest-first; keep that order so `emailIndex`
   // maps straight back to the caller's array (no internal re-sort / index drift).
@@ -145,6 +146,7 @@ export async function aiExtractVerification(emails, profile, context = {}) {
       model: picked.model,
       feature: "mail-otp-select",
       jsonMode: true,
+			applierName,
       messages: [
         { role: "system", content: SELECT_SYSTEM_PROMPT },
         { role: "user", content: selectUser },
@@ -201,6 +203,7 @@ export async function aiExtractVerification(emails, profile, context = {}) {
       model: picked.model,
       feature: "mail-otp-extract",
       jsonMode: true,
+			applierName,
       messages: [
         { role: "system", content: EXTRACT_SYSTEM_PROMPT },
         { role: "user", content: extractUser },

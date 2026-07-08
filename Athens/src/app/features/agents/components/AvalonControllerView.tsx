@@ -5,7 +5,6 @@ import {
   Circle,
   Copy,
   ExternalLink,
-  FileText,
   Layers,
   ListOrdered,
   Loader2,
@@ -23,14 +22,6 @@ import {
 import type { ActionableTree } from "@avalon/shared";
 import { useApplier } from "@/context/applier-context";
 import { cn } from "../../../lib/utils";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../../../components/ui/dialog";
 import { useSessionRelay } from "../context/AgentSessionsContext";
 import type { JobPipelineState, useAvalonRelay } from "../hooks/useAvalonRelay";
 import { ApplyStatusPanel } from "./ApplyStatusPanel";
@@ -221,6 +212,7 @@ export function AvalonControllerView({
   const verifyWaiting = relay.applyPhase?.phase === "verify-wait";
   const verifyWaitSeconds = verifyWaiting ? relay.applyPhase?.secondsLeft : undefined;
   const showPreviewWorkspace = hasTree || Boolean(activeJob || relay.generatingResume || relay.activeResume || relay.resumeError);
+  const kitSubmitActive = Boolean(activeJob && relay.kitSubmitJobId === activeJob.id);
 
   const highlightStep = useMemo(() => {
     if (relay.validatingTab) return 3;
@@ -276,55 +268,6 @@ export function AvalonControllerView({
 
   return (
     <div translate="no" className="notranslate space-y-4 min-w-0">
-      <Dialog
-        open={Boolean(relay.submissionKitPrompt)}
-        onOpenChange={(open) => {
-          if (!open && relay.submissionKitPrompt) relay.resolveSubmissionKitPrompt(false);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-violet-50 text-violet-700 ring-1 ring-violet-200">
-              <FileText className="h-5 w-5" />
-            </div>
-            <DialogTitle>Use Resume Generator Kit?</DialogTitle>
-            <DialogDescription>
-              Your tailored resume was generated and saved for review. This account will attach this for the submission.
-            </DialogDescription>
-          </DialogHeader>
-          {relay.submissionKitPrompt && (
-            <div className="rounded-lg border border-border bg-secondary/50 px-3 py-2 text-xs text-muted-foreground">
-              <p className="font-semibold text-foreground">
-                {relay.submissionKitPrompt.jobTitle}
-                {relay.submissionKitPrompt.company ? ` at ${relay.submissionKitPrompt.company}` : ""}
-              </p>
-              <p className="mt-1 truncate" title={relay.submissionKitPrompt.generatedFileName}>
-                Generated: {relay.submissionKitPrompt.generatedFileName}
-              </p>
-              <p className="truncate" title={relay.submissionKitPrompt.kitFileName}>
-                Will attach kit: {relay.submissionKitPrompt.kitFileName}
-              </p>
-            </div>
-          )}
-          <DialogFooter>
-            <button
-              type="button"
-              onClick={() => relay.resolveSubmissionKitPrompt(false)}
-              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-border bg-secondary px-4 py-2 text-sm font-bold text-foreground hover:bg-muted"
-            >
-              Cancel apply
-            </button>
-            <button
-              type="button"
-              onClick={() => relay.resolveSubmissionKitPrompt(true)}
-              className="inline-flex min-h-10 items-center justify-center rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90"
-            >
-              Use Kit PDF
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Status + workflow rail */}
       <div className="rounded-2xl border border-border/80 bg-card/80 backdrop-blur-sm shadow-sm overflow-hidden">
         <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b border-border/60">
@@ -860,6 +803,13 @@ export function AvalonControllerView({
             {relay.applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
             {relay.applying ? "Injecting…" : "7 · Apply fill plan"}
           </button>
+          {kitSubmitActive && (
+            <div className="mt-2">
+              <span className="inline-flex items-center justify-center w-full text-[10px] font-bold text-violet-700 bg-violet-500/10 px-2 py-0.5 rounded-full border border-violet-500/15">
+                kit submit
+              </span>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => void relay.verifyActiveResult()}

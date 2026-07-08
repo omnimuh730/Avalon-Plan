@@ -24,7 +24,7 @@ async function findAccount(applierNameRaw) {
   return acc;
 }
 
-async function extractSkillsWithLlm(extractedText, profile) {
+async function extractSkillsWithLlm(extractedText, profile, ownerName) {
   const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
     throw new Error("No LLM API key configured in profile (OpenAI or DeepSeek).");
@@ -40,6 +40,7 @@ async function extractSkillsWithLlm(extractedText, profile) {
     apiKey,
     model,
     feature: "resume-skill-analysis",
+		applierName: ownerName,
     messages: [
       { role: "system", content: RESUME_SKILL_ANALYSIS_PROMPT },
       { role: "user", content: `Resume text:\n\n${truncated}` },
@@ -123,7 +124,7 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
   let model;
 
   try {
-    const llmResult = await extractSkillsWithLlm(doc.extractedText, profile);
+		const llmResult = await extractSkillsWithLlm(doc.extractedText, profile, ownerName);
     skillProfile = llmResult.skillProfile;
     usage = llmResult.usage;
     provider = llmResult.provider;

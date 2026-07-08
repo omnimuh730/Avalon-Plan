@@ -18,7 +18,7 @@ async function findAccount(applierNameRaw) {
   return acc;
 }
 
-async function analyzeJobDescription(jobDescription, profile) {
+async function analyzeJobDescription(jobDescription, profile, applierName) {
   const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
     throw new Error("No LLM API key configured in profile (OpenAI or DeepSeek).");
@@ -29,6 +29,7 @@ async function analyzeJobDescription(jobDescription, profile) {
     apiKey,
     model,
     feature: "job-match-analysis",
+		applierName,
     messages: [
       { role: "system", content: JOB_ANALYSIS_PROMPT },
       { role: "user", content: `Job description:\n\n${jobDescription}` },
@@ -66,7 +67,7 @@ export async function analyzeResumeMatch(req, res) {
       ? acc.resumeCatalog
       : emptyResumeCatalog();
 
-    const analysis = await analyzeJobDescription(jobDescription, profile);
+		const analysis = await analyzeJobDescription(jobDescription, profile, applierName);
     const rankedStacks = rankResumes(analysis.skillProfileText, catalog, topN);
     const uploaded = await listUserResumesForOwner(applierName);
     const rankedUploads = rankUploadedResumes(analysis.skillProfileText, uploaded, catalog, topN);
