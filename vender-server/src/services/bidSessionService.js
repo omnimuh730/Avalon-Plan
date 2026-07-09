@@ -124,9 +124,6 @@ function buildRecord(sessionId, applierName, type, body) {
     usage: sanitizeUsage(body.usage),
     trace: sanitizeTrace(body.trace),
     jobSource: body.jobSource ?? detectJobSource(url),
-    // Storage target is owned by vender-server (not the extension). Bid records
-    // always go to MONGO_URL so distributed bid-assistant builds stay dumb.
-    storageTarget: 'local',
     createdAt: new Date(),
   };
 }

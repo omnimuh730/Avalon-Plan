@@ -1,5 +1,4 @@
 node_modules/
 .env
-src/config/mongoSecrets.js
 dist/
 .DS_Store

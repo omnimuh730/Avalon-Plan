@@ -1,5 +1,5 @@
 /**
- * Normalize Atlas connection strings for vender-server.
+ * Connect to MongoDB from MONGO_URL.
  *
  * Atlas shared-tier clusters often fail with multi-host seed lists + replicaSet
  * ("Server selection timed out"). SRV works when DNS allows it; otherwise use
@@ -51,7 +51,7 @@ function shardHostVariants(host) {
  * @param {string} rawUrl
  * @returns {string}
  */
-export function normalizeCloudMongoUrl(rawUrl) {
+export function normalizeMongoUrl(rawUrl) {
   const url = String(rawUrl ?? '').trim();
   if (!url) return url;
   if (url.startsWith('mongodb+srv://')) return url;
@@ -62,7 +62,10 @@ export function normalizeCloudMongoUrl(rawUrl) {
 
   const params = parseQuery(parts.rest.includes('?') ? parts.rest.slice(parts.rest.indexOf('?')) : '');
   if (params.get('directConnection') === 'true') return url;
-  if (process.env.MONGO_CLOUD_DIRECT === '0') return url;
+  if (process.env.MONGO_DIRECT === '0') return url;
+
+  // Multi-host Atlas seed lists: pin to one host + directConnection for reliability.
+  if (parts.hosts.length < 2 && !params.has('replicaSet')) return url;
 
   const firstHost = parts.hosts[0];
   params.delete('replicaSet');
@@ -76,7 +79,7 @@ export function normalizeCloudMongoUrl(rawUrl) {
 /**
  * @returns {import('mongodb').MongoClientOptions}
  */
-export function getCloudMongoClientOptions() {
+export function getMongoClientOptions() {
   const options = {
     serverSelectionTimeoutMS: Number(process.env.MONGO_SERVER_SELECTION_MS || 15_000),
   };
@@ -94,13 +97,13 @@ async function isWritablePrimary(client) {
 }
 
 /**
- * Connect to cloud MongoDB, auto-finding the primary when using directConnection.
+ * Connect to MongoDB, auto-finding a writable primary when using directConnection.
  * @param {string} rawUrl
  * @returns {Promise<MongoClient>}
  */
-export async function connectCloudMongo(rawUrl) {
-  const normalized = normalizeCloudMongoUrl(rawUrl);
-  const options = getCloudMongoClientOptions();
+export async function connectMongo(rawUrl) {
+  const normalized = normalizeMongoUrl(rawUrl);
+  const options = getMongoClientOptions();
 
   if (normalized.startsWith('mongodb+srv://')) {
     const client = new MongoClient(normalized, options);
@@ -111,7 +114,7 @@ export async function connectCloudMongo(rawUrl) {
   if (normalized.includes('directConnection=true')) {
     const parts = splitMongoUrl(normalized);
     if (!parts) {
-      throw new Error('Invalid MONGO_CLOUD_URL');
+      throw new Error('Invalid MONGO_URL');
     }
 
     const hostsToTry = [

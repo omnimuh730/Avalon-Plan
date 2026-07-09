@@ -243,16 +243,12 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/health') {
       const mongo = await pingMongo();
-      const status = getMongoStatus();
       sendJson(res, 200, {
         ok: true,
         service: 'vender-server-bridge',
         applierName: process.env.APPLIER_NAME || null,
-        // mongoConnected reflects MONGO_URL (main DB used for bid_records).
         mongoConnected: mongo.ok,
         mongoError: mongo.ok ? null : mongo.error,
-        localConnected: status.localConnected,
-        cloudConnected: status.cloudConnected,
       });
       return;
     }
@@ -325,20 +321,9 @@ const server = http.createServer(async (req, res) => {
 async function start() {
   await initMongo();
   server.listen(PORT, HOST, () => {
-    const { connected, error, localConnected, localError, cloudConnected } = getMongoStatus();
+    const { connected, error } = getMongoStatus();
     console.log(`Vender bridge listening on http://${HOST}:${PORT}`);
     console.log('Keep this running while using the bid-assistant extension.');
-    console.log(
-      `[vender-server] bid_records → MONGO_URL (${localConnected ? 'connected' : 'offline'}); cloud profiles ${
-        cloudConnected ? 'connected' : 'offline'
-      }`,
-    );
-    if (!localConnected) {
-      console.warn(
-        '[vender-server] Main MongoDB (MONGO_URL) is not connected — bid session writes will fail until fixed.',
-      );
-      if (localError) console.warn('[vender-server]', localError);
-    }
     if (!connected) {
       console.warn('[vender-server] MongoDB is not connected — profile/inbox/bid features will fail until fixed.');
       if (error) console.warn('[vender-server]', error);
