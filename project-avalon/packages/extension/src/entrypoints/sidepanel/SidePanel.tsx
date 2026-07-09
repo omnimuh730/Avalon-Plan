@@ -192,7 +192,7 @@ export default function SidePanel() {
     <div className="sidepanel">
       <div className="sidepanel-header">
         <div className="sidepanel-logo" aria-hidden>
-          ⚡
+          <img src="/logo.png" alt="" width={40} height={40} />
         </div>
         <div className="sidepanel-brand">
           <h1>Project Avalon</h1>

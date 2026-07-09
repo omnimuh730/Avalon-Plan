@@ -19,7 +19,7 @@ import {
   type BidShot,
 } from '@/lib/bid-session';
 
-const BRIDGE_URL = 'http://127.0.0.1:3848';
+const BRIDGE_URL = (import.meta.env.VITE_BRIDGE_URL ?? 'http://127.0.0.1:3848').replace(/\/$/, '');
 // Bid recordings always save to the cloud bid DB. (Local storage and the
 // per-profile model override were removed from the extension — the OpenAI model
 // is configured in lancer-frontend → Settings → Profile.)
