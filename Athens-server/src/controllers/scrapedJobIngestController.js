@@ -2,7 +2,10 @@ import {
 	validateScrapedJobInput,
 	ingestScrapedJob,
 	ingestScrapedJobs,
+	scrapedJobExistsByJobId,
 } from "../services/scrapedJobIngestService.js";
+
+const clean = (value) => String(value ?? "").trim();
 
 /** POST /api/expose/jobs — ingest one scraped job from a 3rd-party integrator. */
 export async function postExternalScrapedJob(req, res) {
@@ -49,6 +52,7 @@ export async function postExternalScrapedJob(req, res) {
 				success: true,
 				created: false,
 				duplicate: true,
+				jobID: result.jobID,
 				jobLink: result.jobLink,
 			});
 		}
@@ -57,10 +61,28 @@ export async function postExternalScrapedJob(req, res) {
 			success: true,
 			created: true,
 			id: result.id,
+			jobID: result.jobID,
 			jobLink: result.jobLink,
 		});
 	} catch (err) {
 		console.error("POST /api/expose/jobs error:", err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+/** POST /api/expose/jobs/check — whether a jobID already exists in external_scraped_jobs. */
+export async function postCheckExternalScrapedJobExists(req, res) {
+	try {
+		const body = req.body || {};
+		const jobID = clean(body.jobID ?? body.job_id ?? body.jobId);
+		if (!jobID) {
+			return res.status(400).json({ success: false, error: "jobID is required" });
+		}
+
+		const exists = await scrapedJobExistsByJobId(jobID);
+		return res.status(200).json({ success: true, exists });
+	} catch (err) {
+		console.error("POST /api/expose/jobs/check error:", err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }

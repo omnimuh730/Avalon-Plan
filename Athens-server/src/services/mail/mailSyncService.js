@@ -153,9 +153,9 @@ async function refreshFolderInBackground(applierName, folder, pageSize) {
 	}
 }
 
-export async function loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize }) {
-	const total = await countMessages(applierName, { folder, label, search });
-	const docs = await listMessages(applierName, { folder, label, search, page, pageSize });
+export async function loadLabelOrSearchPage(applierName, { folder, label, search, unlabeled, page, pageSize }) {
+	const total = await countMessages(applierName, { folder, label, search, unlabeled });
+	const docs = await listMessages(applierName, { folder, label, search, unlabeled, page, pageSize });
 	return {
 		ok: true,
 		threads: docs.map((doc) => messageToThread(doc, { includeBody: false })),

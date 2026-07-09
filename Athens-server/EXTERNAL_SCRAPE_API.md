@@ -11,10 +11,11 @@ Base URL (local default): `http://{SERVER_IP}:8979/api`
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/expose/jobs` | Ingest one job, or a batch via a `jobs` array |
+| `POST` | `/api/expose/jobs/check` | Check whether a `jobID` already exists |
 
 Route wiring:
 
-- `src/routes/scrapedJobIngestRoutes.js` — mounts `POST /expose/jobs` under `/api`
+- `src/routes/scrapedJobIngestRoutes.js` — mounts `POST /expose/jobs` and `POST /expose/jobs/check` under `/api`
 - `index.js` — `app.use('/api', scrapedJobIngestRoutes)`
 
 ---
@@ -30,6 +31,7 @@ curl -X POST http://{SERVER_IP}/api/expose/jobs \
   -H "Content-Type: application/json" \
   -d '{
     "sender": "my-scraper-v1",
+    "jobID": "linkedin-12345678",
     "companyName": "Acme Corp",
     "companyIcon": "https://example.com/logo.png",
     "jobTitle": "Senior Engineer",
@@ -51,6 +53,7 @@ Send `{ "jobs": [ … ] }`. Each element uses the same shape as a single job. Th
 | Field | Required | Aliases | Notes |
 |-------|----------|---------|-------|
 | `sender` | yes | `Sender` | Identifies the integrator / scraper |
+| `jobID` | yes | `job_id`, `jobId` | Vendor-stable job identifier; used for existence checks |
 | `companyName` | yes | `company_name` | |
 | `jobTitle` | yes | `job_title`, `title` | |
 | `jobDescription` | yes | `job_description`, `description` | |
@@ -72,19 +75,21 @@ Validation lives in `src/services/scrapedJobIngestService.js` (`validateScrapedJ
   "success": true,
   "created": true,
   "id": "<mongodb ObjectId>",
+  "jobID": "linkedin-12345678",
   "jobLink": "https://jobs.example.com/123"
 }
 ```
 
 ### Single job — duplicate (200)
 
-Duplicates are detected by unique index on `jobLink`. No new document is inserted.
+Duplicates are detected by unique indexes on `jobID` and `jobLink`. No new document is inserted.
 
 ```json
 {
   "success": true,
   "created": false,
   "duplicate": true,
+  "jobID": "linkedin-12345678",
   "jobLink": "https://jobs.example.com/123"
 }
 ```
@@ -97,8 +102,8 @@ Duplicates are detected by unique index on `jobLink`. No new document is inserte
   "created": 2,
   "duplicates": 1,
   "results": [
-    { "created": true, "id": "…", "jobLink": "…" },
-    { "created": false, "duplicate": true, "jobLink": "…" }
+    { "created": true, "id": "…", "jobID": "…", "jobLink": "…" },
+    { "created": false, "duplicate": true, "jobID": "…", "jobLink": "…" }
   ]
 }
 ```
@@ -125,11 +130,50 @@ For batch requests, errors include the array index: `jobs[2]: jobLink must be a 
 
 ---
 
+## Check job existence
+
+`POST /api/expose/jobs/check`
+
+```bash
+curl -X POST http://{SERVER_IP}/api/expose/jobs/check \
+  -H "Content-Type: application/json" \
+  -d '{ "jobID": "linkedin-12345678" }'
+```
+
+### Exists (200)
+
+```json
+{
+  "success": true,
+  "exists": true
+}
+```
+
+### Not found (200)
+
+```json
+{
+  "success": true,
+  "exists": false
+}
+```
+
+### Validation error (400)
+
+```json
+{
+  "success": false,
+  "error": "jobID is required"
+}
+```
+
+---
+
 ## Storage (MongoDB)
 
 Collection: **`external_scraped_jobs`** (`src/db/mongo.js`).
 
-Each document stores the normalized job fields (`sender`, `companyName`, `companyIcon`, `jobTitle`, `jobDescription`, `jobLink`, `source`, `postedAgo`) plus:
+Each document stores the normalized job fields (`sender`, `jobID`, `companyName`, `companyIcon`, `jobTitle`, `jobDescription`, `jobLink`, `source`, `postedAgo`) plus:
 
 - `createdAt` — insert time
 - `updatedAt` — insert time (same as `createdAt` on first write)
@@ -139,6 +183,7 @@ Indexes:
 | Index | Purpose |
 |-------|---------|
 | `{ jobLink: 1 }` unique (partial: string only) | Dedupe by apply URL |
+| `{ jobID: 1 }` unique (partial: string only) | Dedupe by vendor job ID; fast existence checks |
 | `{ createdAt: -1 }` | Recent-first listing |
 | `{ sender: 1, createdAt: -1 }` | Filter by integrator |
 | `{ source: 1, createdAt: -1 }` | Filter by source tag |
@@ -150,6 +195,6 @@ Indexes:
 | File | Role |
 |------|------|
 | `src/routes/scrapedJobIngestRoutes.js` | Express route |
-| `src/controllers/scrapedJobIngestController.js` | HTTP handler (`postExternalScrapedJob`) |
+| `src/controllers/scrapedJobIngestController.js` | HTTP handlers (`postExternalScrapedJob`, `postCheckExternalScrapedJobExists`) |
 | `src/services/scrapedJobIngestService.js` | Validation + insert / dedupe |
 | `src/db/mongo.js` | Collection + indexes |

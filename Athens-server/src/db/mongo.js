@@ -50,6 +50,10 @@ async function ensureExternalScrapedJobsIndexes() {
 		{ jobLink: 1 },
 		{ unique: true, partialFilterExpression: { jobLink: { $type: "string" } } },
 	);
+	await externalScrapedJobsCollection.createIndex(
+		{ jobID: 1 },
+		{ unique: true, partialFilterExpression: { jobID: { $type: "string" } } },
+	);
 }
 
 async function ensureMailCollectionsIndexes() {

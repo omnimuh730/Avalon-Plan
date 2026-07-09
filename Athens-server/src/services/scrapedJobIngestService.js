@@ -25,11 +25,13 @@ export function validateScrapedJobInput(raw) {
 	const jobTitle = clean(raw.jobTitle ?? raw.job_title ?? raw.title);
 	const jobDescription = clean(raw.jobDescription ?? raw.job_description ?? raw.description);
 	const jobLink = clean(raw.jobLink ?? raw.job_link ?? raw.applyLink ?? raw.url);
+	const jobID = clean(raw.jobID ?? raw.job_id ?? raw.jobId);
 	const source = clean(raw.source);
 	const sender = clean(raw.sender ?? raw.Sender);
 	const postedAgo = clean(raw.postedAgo ?? raw.posted_ago ?? raw.postedAt);
 
 	if (!companyName) return { ok: false, error: "companyName is required" };
+	if (!jobID) return { ok: false, error: "jobID is required" };
 	if (!sender) return { ok: false, error: "sender is required" };
 	if (!jobTitle) return { ok: false, error: "jobTitle is required" };
 	if (!jobDescription) return { ok: false, error: "jobDescription is required" };
@@ -43,6 +45,7 @@ export function validateScrapedJobInput(raw) {
 		ok: true,
 		job: {
 			sender,
+			jobID,
 			companyName,
 			companyIcon,
 			jobTitle,
@@ -64,13 +67,23 @@ export async function ingestScrapedJob(job) {
 
 	try {
 		const result = await externalScrapedJobsCollection.insertOne(doc);
-		return { created: true, id: result.insertedId, jobLink: job.jobLink };
+		return { created: true, id: result.insertedId, jobID: job.jobID, jobLink: job.jobLink };
 	} catch (err) {
 		if (err?.code === 11000) {
-			return { created: false, duplicate: true, jobLink: job.jobLink };
+			return { created: false, duplicate: true, jobID: job.jobID, jobLink: job.jobLink };
 		}
 		throw err;
 	}
+}
+
+export async function scrapedJobExistsByJobId(jobID) {
+	const id = clean(jobID);
+	if (!id) return false;
+	const doc = await externalScrapedJobsCollection.findOne(
+		{ jobID: id },
+		{ projection: { _id: 1 } },
+	);
+	return Boolean(doc);
 }
 
 export async function ingestScrapedJobs(jobs) {

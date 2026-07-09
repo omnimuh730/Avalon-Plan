@@ -167,3 +167,62 @@ export async function checkMailCredentials(applierName: string) {
     `mail/credentials${qs({ applierName })}`,
   );
 }
+
+export type MailLabelDefinitions = Record<string, string>;
+
+export type MailAiLabelResult = {
+  uid: number;
+  label: string | null;
+  applied: boolean;
+  error?: string;
+};
+
+export async function fetchUnlabeledThreads(
+  applierName: string,
+  opts: { page?: number; pageSize?: number } = {},
+): Promise<MailThreadsResult> {
+  const query = qs({
+    applierName,
+    folder: "inbox",
+    unlabeled: "true",
+    page: opts.page,
+    pageSize: opts.pageSize,
+    cacheOnly: "true",
+  });
+  const data = await mailFetch<MailThreadsResult>(`mail/threads${query}`);
+  return {
+    threads: data.threads,
+    total: data.total,
+    page: data.page,
+    pageSize: data.pageSize,
+    fromCache: data.fromCache,
+  };
+}
+
+export async function fetchMailLabelDefinitions(applierName: string) {
+  const data = await mailFetch<{ definitions: MailLabelDefinitions }>(
+    `mail/label-definitions${qs({ applierName })}`,
+  );
+  return data.definitions;
+}
+
+export async function saveMailLabelDefinitions(applierName: string, definitions: MailLabelDefinitions) {
+  const data = await mailFetch<{ definitions: MailLabelDefinitions }>("mail/label-definitions", {
+    method: "PUT",
+    body: JSON.stringify({ applierName, definitions }),
+  });
+  return data.definitions;
+}
+
+export async function runMailAiLabel(
+  applierName: string,
+  payload: {
+    messages: { uid: number }[];
+    labelDefinitions: MailLabelDefinitions;
+  },
+) {
+  return mailFetch<{ results: MailAiLabelResult[]; usage?: Record<string, unknown> }>("mail/ai-label", {
+    method: "POST",
+    body: JSON.stringify({ applierName, ...payload }),
+  });
+}

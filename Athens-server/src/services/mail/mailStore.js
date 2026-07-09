@@ -181,27 +181,30 @@ export async function getMessage(applierName, uid, mailbox) {
 
 export async function listMessages(
 	applierName,
-	{ folder, label, search, page = 1, pageSize = 25, limit, beforeDate, mailbox } = {},
+	{ folder, label, search, unlabeled, page = 1, pageSize = 25, limit, beforeDate, mailbox } = {},
 ) {
 	if (!mailMessagesCollection) return [];
 
-	const filter = buildMessageFilter(applierName, { folder, label, search, beforeDate, mailbox });
+	const filter = buildMessageFilter(applierName, { folder, label, search, unlabeled, beforeDate, mailbox });
 	const size = Math.min(Math.max(limit ?? pageSize, 1), 100);
 	const skip = limit ? 0 : (Math.max(page, 1) - 1) * size;
 
 	return mailMessagesCollection.find(filter).sort({ date: -1 }).skip(skip).limit(size).toArray();
 }
 
-export async function countMessages(applierName, { folder, label, search, beforeDate, mailbox } = {}) {
+export async function countMessages(applierName, { folder, label, search, unlabeled, beforeDate, mailbox } = {}) {
 	if (!mailMessagesCollection) return 0;
-	const filter = buildMessageFilter(applierName, { folder, label, search, beforeDate, mailbox });
+	const filter = buildMessageFilter(applierName, { folder, label, search, unlabeled, beforeDate, mailbox });
 	return mailMessagesCollection.countDocuments(filter);
 }
 
-function buildMessageFilter(applierName, { folder, label, search, beforeDate, mailbox } = {}) {
+function buildMessageFilter(applierName, { folder, label, search, unlabeled, beforeDate, mailbox } = {}) {
 	const filter = { applierName };
 	if (mailbox) filter.mailbox = mailbox;
 	if (folder) filter.folder = folder;
+	if (unlabeled) {
+		filter.labels = { $size: 0 };
+	}
 	if (label) {
 		const escaped = String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		filter.gmailLabels = { $regex: escaped, $options: 'i' };

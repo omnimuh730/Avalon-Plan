@@ -1,3 +1,4 @@
+import { accountInfoCollection } from '../db/mongo.js';
 import { resolveMailCredentials, findAccountByApplierName } from '../services/mail/credentials.js';
 import {
 	archiveMessage,
@@ -32,6 +33,7 @@ import {
 } from '../services/mail/mailSyncService.js';
 import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
 import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js';
+import { runMailAiLabelBatch } from '../services/mail/aiLabelService.js';
 import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
 
 const OTP_EMAIL_LIMIT = 10;
@@ -63,6 +65,7 @@ export async function getMailThreads(req, res) {
 		const folder = req.query.folder ? String(req.query.folder) : 'inbox';
 		const label = req.query.label ? String(req.query.label) : undefined;
 		const search = req.query.search ? String(req.query.search) : undefined;
+		const unlabeled = req.query.unlabeled === 'true' || req.query.unlabeled === '1';
 		const { page, pageSize } = parsePageQuery(req);
 		const cacheOnly = req.query.cacheOnly === 'true' || req.query.cacheOnly === '1';
 		const forceRefresh = req.query.force === 'true' || req.query.force === '1';
@@ -74,14 +77,28 @@ export async function getMailThreads(req, res) {
 
 		let result;
 		if (cacheOnly) {
-			if (label || search) {
-				result = await loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize });
+			if (label || search || unlabeled) {
+				result = await loadLabelOrSearchPage(applierName, {
+					folder: unlabeled ? 'inbox' : folder,
+					label,
+					search,
+					unlabeled,
+					page,
+					pageSize,
+				});
 				result.fromCache = true;
 			} else {
 				result = await loadCachedFolderPage(applierName, folder, page, pageSize);
 			}
-		} else if (label || search) {
-			result = await loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize });
+		} else if (label || search || unlabeled) {
+			result = await loadLabelOrSearchPage(applierName, {
+				folder: unlabeled ? 'inbox' : folder,
+				label,
+				search,
+				unlabeled,
+				page,
+				pageSize,
+			});
 		} else {
 			result = await loadFolderPage(applierName, folder, page, pageSize, { forceRefresh });
 		}
@@ -579,6 +596,128 @@ export async function checkMailCredentials(req, res) {
 		return res.json({ success: true, configured: true, email: creds.email });
 	} catch (err) {
 		console.error('GET /api/mail/credentials error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+function normalizeLabelDefinitions(raw) {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+	const out = {};
+	for (const [key, value] of Object.entries(raw)) {
+		const k = String(key || '').trim();
+		if (!k) continue;
+		out[k] = String(value ?? '').trim().slice(0, 2000);
+	}
+	return out;
+}
+
+export async function getMailLabelDefinitions(req, res) {
+	try {
+		const applierName = await requireApplier(req, res);
+		if (!applierName) return;
+
+		const acc = await findAccountByApplierName(applierName);
+		if (!acc) {
+			return res.status(404).json({ success: false, error: `No account named "${applierName}".` });
+		}
+
+		const definitions = normalizeLabelDefinitions(acc.autoBidProfile?.mailLabelDefinitions);
+		return res.json({ success: true, definitions });
+	} catch (err) {
+		console.error('GET /api/mail/label-definitions error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function putMailLabelDefinitions(req, res) {
+	try {
+		const applierName = await requireApplier(req, res);
+		if (!applierName) return;
+
+		if (!accountInfoCollection) {
+			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
+
+		const acc = await findAccountByApplierName(applierName);
+		if (!acc) {
+			return res.status(404).json({ success: false, error: `No account named "${applierName}".` });
+		}
+
+		const definitions = normalizeLabelDefinitions(req.body?.definitions);
+		await accountInfoCollection.updateOne(
+			{ name: acc.name },
+			{
+				$set: {
+					'autoBidProfile.mailLabelDefinitions': definitions,
+					'autoBidProfile.updatedAt': new Date().toISOString(),
+				},
+			},
+		);
+
+		return res.json({ success: true, definitions });
+	} catch (err) {
+		console.error('PUT /api/mail/label-definitions error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function postMailAiLabel(req, res) {
+	try {
+		if (!mailMessagesCollection) {
+			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
+
+		const applierName = await requireApplier(req, res);
+		if (!applierName) return;
+
+		const creds = await resolveMailCredentials(applierName);
+		if (!creds.ok) {
+			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
+		}
+
+		const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+		if (!rawMessages.length) {
+			return res.status(400).json({ success: false, error: 'messages array required' });
+		}
+		if (rawMessages.length > 50) {
+			return res.status(400).json({ success: false, error: 'Maximum 50 messages per batch' });
+		}
+
+		const acc = await findAccountByApplierName(applierName);
+		const profile = decryptProfileApiKeys(acc?.autoBidProfile || {});
+		const labelDefinitions = normalizeLabelDefinitions(
+			req.body?.labelDefinitions || acc?.autoBidProfile?.mailLabelDefinitions,
+		);
+
+		const gmailLabels = await fetchGmailLabelList(creds.email, creds.password);
+		const allowedLabels = gmailLabels.map((l) => l.path || l.name).filter(Boolean);
+		if (!allowedLabels.length) {
+			return res.status(400).json({ success: false, error: 'No custom Gmail labels found. Create labels first.' });
+		}
+
+		const messages = rawMessages.map((m) => ({ uid: Number(m.uid) })).filter((m) => Number.isFinite(m.uid));
+
+		const result = await runMailAiLabelBatch({
+			applierName,
+			profile,
+			email: creds.email,
+			password: creds.password,
+			messages,
+			allowedLabels,
+			labelDefinitions,
+		});
+
+		if (!result.ok) {
+			return res.status(400).json({ success: false, error: result.error });
+		}
+
+		return res.json({
+			success: true,
+			results: result.results,
+			usage: result.usage,
+		});
+	} catch (err) {
+		console.error('POST /api/mail/ai-label error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }

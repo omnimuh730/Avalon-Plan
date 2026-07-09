@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { checkMailCredentials, fetchMailFolderCounts, type FolderCounts } from "@/api/mail";
 import { useApplier } from "@/context/applier-context";
 import { PaginationBar } from "../../components/shared/PaginationBar";
@@ -9,6 +9,7 @@ import { PATHS } from "../../config/routes";
 import { MailSidebar } from "./components/MailSidebar";
 import { MailDetailPane } from "./components/MailDetailPane";
 import { MailComposeSheet } from "./components/MailComposeSheet";
+import { MailAiLabelDialog } from "./components/MailAiLabelDialog";
 import { ThreadList } from "./components/ThreadList";
 import { useMailThreads } from "./hooks/useMailThreads";
 import { useMailLabels } from "./hooks/useMailLabels";
@@ -30,6 +31,7 @@ export function MailPage() {
   const [folderCounts, setFolderCounts] = useState<FolderCounts | undefined>();
   const [activeThread, setActiveThread] = useState<MailThread | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [aiLabelOpen, setAiLabelOpen] = useState(false);
 
   const mail = useMailThreads(applierName);
   const { labels, createLabel, removeLabel, reload: reloadLabels } = useMailLabels(applierName);
@@ -244,6 +246,14 @@ export function MailPage() {
             />
             <button
               type="button"
+              onClick={() => setAiLabelOpen(true)}
+              className="flex items-center gap-2 bg-primary/10 hover:bg-primary/15 border border-primary/20 text-primary px-3 py-2 rounded-xl text-sm font-bold transition-colors min-h-10"
+            >
+              <Sparkles className="w-4 h-4" />
+              AI Label
+            </button>
+            <button
+              type="button"
               onClick={forceRefresh}
               disabled={isSyncing}
               className="icon-btn text-muted-foreground hover:text-foreground disabled:opacity-50"
@@ -305,6 +315,17 @@ export function MailPage() {
         onSend={handleSendCompose}
         sending={mail.sending}
         replyTo={mail.replyTo}
+      />
+
+      <MailAiLabelDialog
+        open={aiLabelOpen}
+        onOpenChange={setAiLabelOpen}
+        applierName={applierName}
+        labels={labels}
+        onComplete={() => {
+          loadCurrentPage();
+          void refreshFolderCounts();
+        }}
       />
     </div>
   );
