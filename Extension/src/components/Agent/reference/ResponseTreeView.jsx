@@ -32,19 +32,20 @@ const CustomTreeItemRoot = styled(TreeItemRoot)({
 const CustomTreeItemContent = styled(TreeItemContent)(({ theme }) => ({
 	marginBottom: theme.spacing(0.3),
 	color: (theme.vars || theme).palette.text.secondary,
-	borderRadius: theme.spacing(2),
+	borderRadius: 10,
 	paddingRight: theme.spacing(1),
 	paddingLeft: `calc(${theme.spacing(1)} + var(--TreeView-itemChildrenIndentation) * var(--TreeView-itemDepth))`,
 	fontWeight: theme.typography.fontWeightMedium,
+	fontSize: '0.8125rem',
 	'&[data-expanded]': {
 		fontWeight: theme.typography.fontWeightRegular,
 	},
 	'&:hover': {
-		backgroundColor: (theme.vars || theme).palette.action.hover,
+		backgroundColor: 'rgba(124, 110, 245, 0.08)',
 	},
 	'&[data-focused], &[data-selected], &[data-selected][data-focused]': {
-		backgroundColor: `var(--tree-view-bg-color, ${(theme.vars || theme).palette.action.selected})`,
-		color: 'var(--tree-view-color)',
+		backgroundColor: 'rgba(124, 110, 245, 0.12)',
+		color: (theme.vars || theme).palette.primary.main,
 	},
 }));
 
@@ -141,7 +142,16 @@ export default function ResponseTreeView({ data }) {
 				expandIcon: ArrowRightIcon,
 				collapseIcon: ArrowDropDownIcon,
 			}}
-			sx={{ flexGrow: 1, overflowY: 'auto' }}
+			sx={{
+				flexGrow: 1,
+				overflowY: 'auto',
+				maxHeight: 320,
+				p: 1,
+				borderRadius: 2.5,
+				bgcolor: 'secondary.main',
+				border: '1px solid',
+				borderColor: 'divider',
+			}}
 			itemChildrenIndentation={20}
 		>
 			{/* Start the rendering process by mapping over the top-level keys */}

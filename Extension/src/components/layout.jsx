@@ -3,7 +3,8 @@ import PropTypes from 'prop-types';
 import {
 	Tabs,
 	Tab,
-	Box
+	Box,
+	Typography,
 } from '@mui/material';
 
 import {
@@ -14,6 +15,7 @@ import {
 import ComponentTracker from './Tracker';
 import ScrapperPage from './Scrapper';
 import BackendTrafficLight from './BackendTrafficLight';
+import { athensDisplayFont } from '../theme/athensTheme';
 
 function CustomTabPanel(props) {
 	const { children, value, index, ...other } = props;
@@ -26,7 +28,7 @@ function CustomTabPanel(props) {
 			aria-labelledby={`simple-tab-${index}`}
 			{...other}
 		>
-			{value === index && <Box sx={{ p: 3 }}>{children}</Box>}
+			{value === index && <Box sx={{ pt: 2 }}>{children}</Box>}
 		</div>
 	);
 }
@@ -48,12 +50,12 @@ const TabInfo = [
 	{
 		label: 'Scrap',
 		content: <ScrapperPage />,
-		icon: <TravelExplore />,
+		icon: <TravelExplore sx={{ fontSize: 18 }} />,
 	},
 	{
 		label: 'Tracker',
 		content: <ComponentTracker />,
-		icon: <ZoomIn />,
+		icon: <ZoomIn sx={{ fontSize: 18 }} />,
 	},
 ];
 
@@ -65,28 +67,84 @@ export default function LayoutPage() {
 	};
 
 	return (
-		<Box sx={{ width: '100%' }}>
-			<Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-				<Box
-					component="img"
-					src="/logo.png"
-					alt="AutoLancer"
-					sx={{ width: 32, height: 32, borderRadius: 1.5, objectFit: 'cover' }}
-				/>
+		<Box sx={{ width: '100%', maxWidth: 420, mx: 'auto' }}>
+			<Box
+				sx={{
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'space-between',
+					gap: 1.5,
+					mb: 2,
+					pb: 2,
+					borderBottom: '1px solid',
+					borderColor: 'divider',
+				}}
+			>
+				<Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
+					<Box
+						component="img"
+						src="/logo.png"
+						alt="AutoLancer"
+						sx={{
+							width: 40,
+							height: 40,
+							borderRadius: 3,
+							objectFit: 'cover',
+							flexShrink: 0,
+							boxShadow: '0 4px 20px rgba(124, 110, 245, 0.22)',
+						}}
+					/>
+					<Box sx={{ minWidth: 0 }}>
+						<Typography
+							sx={{
+								fontFamily: athensDisplayFont,
+								fontSize: '1.05rem',
+								fontWeight: 700,
+								letterSpacing: '-0.02em',
+								lineHeight: 1.2,
+							}}
+						>
+							AutoLancer
+						</Typography>
+						<Typography
+							variant="caption"
+							sx={{ color: 'text.secondary', lineHeight: 1.3 }}
+						>
+							Extension · Athens design
+						</Typography>
+					</Box>
+				</Box>
 				<BackendTrafficLight />
 			</Box>
-			<Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-				<Tabs value={value} onChange={handleChange} aria-label="extension tabs" centered>
+
+			<Box
+				sx={{
+					p: 0.75,
+					borderRadius: 3,
+					bgcolor: 'background.default',
+					border: '1px solid',
+					borderColor: 'divider',
+					mb: 0.5,
+				}}
+			>
+				<Tabs
+					value={value}
+					onChange={handleChange}
+					aria-label="extension tabs"
+					variant="fullWidth"
+				>
 					{TabInfo.map((tab, index) => (
 						<Tab
 							key={index}
 							label={tab.label}
 							icon={tab.icon}
+							iconPosition="start"
 							{...a11yProps(index)}
 						/>
 					))}
 				</Tabs>
 			</Box>
+
 			{TabInfo.map((tab, index) => (
 				<CustomTabPanel key={index} value={value} index={index}>
 					{tab.content}

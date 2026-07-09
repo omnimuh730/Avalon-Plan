@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useRuntime } from '../../api/runtimeContext';
 import useNotification from '../../api/useNotification';
 import {
+	Box,
 	Paper,
 	TextField,
 	Button,
@@ -21,6 +22,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 
 import { handleAction, handleClear, handleHighlight } from "../../contentScript/interactionBridge";
 import { commonTags, commonProperties } from "../../contentScript/interactionBridge";
+import { athensCardSx, athensSectionLabelSx } from "../../theme/athensTheme";
 
 const ComponentTracker = () => {
 	// State for highlighting
@@ -56,9 +58,14 @@ const ComponentTracker = () => {
 
 	return (
 		<div>
-			<Paper elevation={3} sx={{ p: 3, borderRadius: 2 }}>
+			<Paper sx={athensCardSx}>
 				<Stack spacing={3}>
-					<Typography variant="h6">1. Find Elements</Typography>
+					<Box>
+						<Typography sx={athensSectionLabelSx} component="p" gutterBottom>
+							Step 1
+						</Typography>
+						<Typography variant="h6">Find Elements</Typography>
+					</Box>
 					<FormControl fullWidth>
 						<InputLabel>Tag Name</InputLabel>
 						<Select value={tag} label="Tag Name" onChange={(e) => setTag(e.target.value)}>
@@ -81,18 +88,23 @@ const ComponentTracker = () => {
 							placeholder="e.g., ?user-profile?"
 						/>
 					</Tooltip>
-					<Stack direction="row" spacing={2}>
+					<Stack direction="row" spacing={1.5}>
 						<Button fullWidth variant="contained" startIcon={<SearchIcon />} onClick={() => handleHighlight(tag, property, pattern)} disabled={!pattern}>
 							Highlight
 						</Button>
-						<Button fullWidth variant="outlined" color="secondary" startIcon={<ClearIcon />} onClick={handleClear}>
+						<Button fullWidth variant="outlined" startIcon={<ClearIcon />} onClick={handleClear}>
 							Clear
 						</Button>
 					</Stack>
 
-					<Divider sx={{ my: 2 }} />
+					<Divider />
 
-					<Typography variant="h6">2. Interact with Element</Typography>
+					<Box>
+						<Typography sx={athensSectionLabelSx} component="p" gutterBottom>
+							Step 2
+						</Typography>
+						<Typography variant="h6">Interact with Element</Typography>
+					</Box>
 
 					<Stack direction="row" spacing={2}>
 						<TextField
@@ -155,6 +167,8 @@ const ComponentTracker = () => {
 						startIcon={<PlayArrowIcon />}
 						onClick={() => handleAction(tag, property, pattern, order, action, actionValue, fetchType)}
 						disabled={!pattern || (isActionWithValue && !actionValue)}
+						fullWidth
+						sx={{ mt: 0.5 }}
 					>
 						Execute Action
 					</Button>

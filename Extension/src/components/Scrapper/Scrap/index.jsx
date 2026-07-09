@@ -14,8 +14,10 @@ import { PlayArrow, Stop } from '@mui/icons-material';
 import PropTypes from 'prop-types';
 import { useRuntime } from '../../../api/runtimeContext';
 import useApi from '../../../api/useApi';
+import { API_URL } from '../../../config/env';
 import useNotification from '../../../api/useNotification';
 import { handleClear, handleAction, handleHighlight } from '../../../contentScript/interactionBridge';
+import { athensCardSx, athensSectionLabelSx } from '../../../theme/athensTheme';
 
 function CircularProgressWithLabel(props) {
 	return (
@@ -56,7 +58,7 @@ const ScrapComponent = () => {
 	const [scrapFlag, setScrapFlag] = useState(false);
 
 	const { addListener, removeListener } = useRuntime();
-	const api = useApi(import.meta.env.VITE_API_URL);
+	const api = useApi(API_URL);
 	const notification = useNotification();
 	const pendingResolvers = useRef(new Map());
 
@@ -351,11 +353,16 @@ const ScrapComponent = () => {
 	};
 
 	return (
-		<Paper elevation={2} sx={{ p: 3, borderRadius: 2, maxWidth: 400, mx: 'auto' }}>
-			<Stack spacing={2}>
-				<Typography variant="h5" component="h2" gutterBottom>
-					Scraping Controls
-				</Typography>
+		<Paper sx={{ ...athensCardSx, mx: 'auto' }}>
+			<Stack spacing={2.5}>
+				<Box>
+					<Typography sx={athensSectionLabelSx} component="p" gutterBottom>
+						Automation
+					</Typography>
+					<Typography variant="h5" component="h2">
+						Scraping Controls
+					</Typography>
+				</Box>
 				<Divider />
 
 				<Stack
@@ -363,18 +370,25 @@ const ScrapComponent = () => {
 					spacing={2}
 					justifyContent="center"
 					alignItems="center"
-					sx={{ py: 2 }}
+					sx={{
+						py: 2.5,
+						borderRadius: 3,
+						bgcolor: 'secondary.main',
+						border: '1px solid',
+						borderColor: 'divider',
+					}}
 				>
-					<CircularProgressWithLabel size={60} value={progress} />
+					<CircularProgressWithLabel size={72} value={progress} thickness={4} />
 				</Stack>
 
-				<Stack direction="row" spacing={2} justifyContent="flex-end">
+				<Stack direction="row" spacing={1.5}>
 					<Button
 						variant="outlined"
 						color="error"
 						onClick={onScrapStop}
 						disabled={!scrapFlag}
 						startIcon={<Stop />}
+						fullWidth
 					>
 						Stop
 					</Button>
@@ -383,6 +397,7 @@ const ScrapComponent = () => {
 						onClick={onScrapStart}
 						disabled={scrapFlag}
 						startIcon={<PlayArrow />}
+						fullWidth
 					>
 						Start
 					</Button>

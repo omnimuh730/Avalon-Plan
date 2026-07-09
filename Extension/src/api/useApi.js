@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 
 // Minimal useApi hook for GET/POST JSON requests with loading/error state
-export default function useApi(baseUrl = import.meta.env.VITE_API_URL) {
+export default function useApi(baseUrl) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState(null);
 

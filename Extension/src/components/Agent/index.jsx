@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRuntime } from '../../api/runtimeContext';
 import useApi from '../../api/useApi';
+import { SPIRIT_API_URL, persistSpiritApiUrlToStorage } from '../../config/env';
 import { AgentUI } from './UI';
 import { highlightInteractables, executeActionsSequence } from '../../contentScript/interactionBridge';
 import { useAgentState } from './hooks';
@@ -22,17 +23,11 @@ function AgentPage() {
 
 	const { executableActions, setExecutableActions, jobDescription, setJobDescription } = useAgentState();
 
-	const spiritApi = useApi(import.meta.env.VITE_SPIRIT_API_URL);
+	const spiritApi = useApi(SPIRIT_API_URL);
 	const { get: spiritGet, post: spiritPost, baseUrl: spiritBaseUrl } = spiritApi;
 
 	useEffect(() => {
-		try {
-			if (typeof chrome !== 'undefined' && chrome.storage?.local && spiritBaseUrl) {
-				chrome.storage.local.set({ spiritApiBaseUrl: spiritBaseUrl });
-			}
-		} catch (e) {
-			console.error('Failed to persist Spirit API base URL:', e);
-		}
+		persistSpiritApiUrlToStorage();
 	}, [spiritBaseUrl]);
 
 	useEffect(() => {
@@ -135,7 +130,7 @@ function AgentPage() {
 	const analyzeComponents = useCallback(async (payload) => {
 		if (!payload) return;
 		if (!spiritBaseUrl) {
-			setError('Spirit AI service is not configured. Please set VITE_SPIRIT_API_URL and reload.');
+			setError('Spirit AI service is not configured. Set VITE_SPIRIT_API_URL in Extension/.env and reload.');
 			setAnalysisData(null);
 			setExecutableActions([]);
 			return;

@@ -1,4 +1,6 @@
 /* global chrome */
+import { persistSpiritApiUrlToStorage } from './config/env.js';
+
 chrome.sidePanel
 	.setPanelBehavior({ openPanelOnActionClick: true })
 	.catch((error) => console.error(error));
@@ -349,19 +351,7 @@ function handleJobBidMessage(message) {
 }
 
 loadJobBidStore();
-
-// Persist the backend base URL from build-time env for content scripts.
-try {
-	const envBaseUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SPIRIT_API_URL)
-		? import.meta.env.VITE_SPIRIT_API_URL
-		: '';
-	if (envBaseUrl && chrome?.storage?.local) {
-		chrome.storage.local.set({ spiritApiBaseUrl: envBaseUrl });
-	}
-} catch (e) {
-	// Best effort only.
-	console.error('Failed to persist Spirit API base URL from env', e);
-}
+persistSpiritApiUrlToStorage();
 
 // Messages coming from content scripts that should be relayed to the extension UI
 // Listen for messages from the UI and forward them to the content script or to backend

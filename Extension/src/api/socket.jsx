@@ -1,7 +1,7 @@
 import { createContext, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { SOCKET_PROTOCOL } from '../config/socket_protocol';
-import { resolveSocketUrl } from './socketUrl';
+import { SOCKET_URL } from '../config/env';
 
 export const SocketContext = createContext({
 	socket: null,
@@ -11,7 +11,7 @@ export const SocketContext = createContext({
 });
 
 export function SocketProvider({ children }) {
-	const socketUrl = resolveSocketUrl();
+	const socketUrl = SOCKET_URL;
 	const socketRef = useRef(null);
 	const [status, setStatus] = useState(socketUrl ? 'connecting' : 'unconfigured');
 	const [serverInfo, setServerInfo] = useState(null);

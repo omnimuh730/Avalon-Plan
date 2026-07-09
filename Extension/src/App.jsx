@@ -1,29 +1,29 @@
 import {
-	createTheme,
 	ThemeProvider,
 	CssBaseline,
-	Container,
 	Box,
 } from "@mui/material";
 
 import LayoutPage from "./components/layout";
+import { createAthensTheme } from "./theme/athensTheme";
 
-
-const darkTheme = createTheme({
-	palette: {
-		mode: "dark",
-	},
-});
+const athensTheme = createAthensTheme();
 
 function App() {
 	return (
-		<ThemeProvider theme={darkTheme}>
+		<ThemeProvider theme={athensTheme}>
 			<CssBaseline />
-			<Container maxWidth="sm" sx={{ py: 2 }}>
-				<Box sx={{ textAlign: 'center', mb: 3 }}>
-					<LayoutPage />
-				</Box>
-			</Container>
+			<Box
+				className="subtle-scroll"
+				sx={{
+					minHeight: '100%',
+					px: 1.5,
+					py: 1.5,
+					overflow: 'auto',
+				}}
+			>
+				<LayoutPage />
+			</Box>
 		</ThemeProvider>
 	);
 }
