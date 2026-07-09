@@ -5,13 +5,13 @@ async function findAccountByApplierName(nameRaw) {
 	if (!trimmed || !accountInfoCollection) return null;
 	let acc = await accountInfoCollection.findOne(
 		{ name: trimmed },
-		{ projection: { name: 1, autoBidProfile: 1 } },
+		{ projection: { name: 1, autoBidProfile: 1, tier: 1 } },
 	);
 	if (acc) return acc;
 	const esc = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	acc = await accountInfoCollection.findOne(
 		{ name: { $regex: new RegExp(`^${esc}$`, 'i') } },
-		{ projection: { name: 1, autoBidProfile: 1 } },
+		{ projection: { name: 1, autoBidProfile: 1, tier: 1 } },
 	);
 	return acc || null;
 }

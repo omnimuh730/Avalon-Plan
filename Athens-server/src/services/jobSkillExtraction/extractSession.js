@@ -1,58 +1,125 @@
 /**
  * Manual, concurrency-limited AI skill-extraction session with immediate Stop.
- * Triggered from the Job Search "Extract skills" button. Mirrors the embedding
- * session pattern but runs several jobs at once and aborts in-flight LLM calls
- * on Stop so it halts within a second.
+ * Triggered from the Job Search "Extract skills" button. Processes both
+ * job_market and external_scraped_jobs catalogs.
  */
 import { randomUUID } from 'crypto';
-import { jobsCollection } from '../../db/mongo.js';
+import { jobsCollection, externalScrapedJobsCollection } from '../../db/mongo.js';
 import { formatCostUsd } from '../llm/llmService.js';
-import { resolveExtractionAuth, extractAndPersistJob, recordExtractionFailure } from './aiExtractService.js';
+import {
+  resolveExtractionAuth,
+  extractAndPersistJobByCatalog,
+  recordExtractionFailure,
+} from './aiExtractService.js';
 
-// How many jobs to extract concurrently. Each is one LLM request, so this is
-// the number of simultaneous in-flight DeepSeek calls (gateway/rate-limit
-// permitting — chatCompletion backs off on 429/5xx).
 const CONCURRENCY = Math.max(1, Number(process.env.JOB_SKILL_EXTRACT_CONCURRENCY || 100));
 const PENDING_QUERY = { aiSkillStatus: 'pending' };
-const CLAIM_PROJECTION = { title: 1, description: 1, jobDescription: 1, aiSkillAttempts: 1 };
+
+const MARKET_CLAIM_PROJECTION = { title: 1, description: 1, jobDescription: 1, aiSkillAttempts: 1 };
+const EXTERNAL_CLAIM_PROJECTION = {
+  jobTitle: 1,
+  jobDescription: 1,
+  companyName: 1,
+  companyIcon: 1,
+  aiSkillAttempts: 1,
+};
 
 let activeSession = null;
 let cancelRequested = false;
-const inflight = new Set(); // live AbortControllers
+const inflight = new Set();
 
-export async function countPendingExtraction() {
-  if (!jobsCollection) return 0;
-  return jobsCollection.countDocuments(PENDING_QUERY);
+function jobSortDate(job) {
+  const raw = job._sortDate;
+  if (raw instanceof Date) return raw.getTime();
+  if (typeof raw === 'string') return new Date(raw).getTime() || 0;
+  return 0;
 }
 
-/** Claim a batch of pending jobs → 'extracting' in one round-trip. Single
- * session runs at a time, so a find+updateMany is race-free here. */
-async function claimBatch(n) {
-  const jobs = await jobsCollection
+async function countPendingInCollection(collection) {
+  if (!collection) return 0;
+  return collection.countDocuments(PENDING_QUERY);
+}
+
+export async function countPendingExtraction() {
+  const [pendingMarket, pendingExternal] = await Promise.all([
+    countPendingInCollection(jobsCollection),
+    countPendingInCollection(externalScrapedJobsCollection),
+  ]);
+  return pendingMarket + pendingExternal;
+}
+
+export async function countPendingExtractionBreakdown() {
+  const [pendingMarket, pendingExternal] = await Promise.all([
+    countPendingInCollection(jobsCollection),
+    countPendingInCollection(externalScrapedJobsCollection),
+  ]);
+  return { pending: pendingMarket + pendingExternal, pendingMarket, pendingExternal };
+}
+
+async function claimFromCollection(collection, catalog, projection, sortField, n) {
+  if (!collection || n <= 0) return [];
+  const jobs = await collection
     .find(PENDING_QUERY)
-    .project(CLAIM_PROJECTION)
-    .sort({ postedAt: -1 })
+    .project(projection)
+    .sort({ [sortField]: -1 })
     .limit(n)
     .toArray();
   if (!jobs.length) return [];
-  await jobsCollection.updateMany(
+
+  await collection.updateMany(
     { _id: { $in: jobs.map((j) => j._id) }, aiSkillStatus: 'pending' },
     { $set: { aiSkillStatus: 'extracting' } },
   );
-  return jobs;
+
+  return jobs.map((job) => ({
+    ...job,
+    catalog,
+    _sortDate: job[sortField],
+    title: catalog === 'external' ? job.jobTitle : job.title,
+  }));
 }
 
-async function requeue(jobId) {
-  await jobsCollection.updateOne({ _id: jobId }, { $set: { aiSkillStatus: 'pending' } }).catch(() => {});
+/** Claim a batch from both catalogs, interleaved by date (newest first). */
+async function claimBatch(n) {
+  const [marketJobs, externalJobs] = await Promise.all([
+    claimFromCollection(jobsCollection, 'market', MARKET_CLAIM_PROJECTION, 'postedAt', n),
+    claimFromCollection(
+      externalScrapedJobsCollection,
+      'external',
+      EXTERNAL_CLAIM_PROJECTION,
+      'createdAt',
+      n,
+    ),
+  ]);
+
+  const merged = [...marketJobs, ...externalJobs].sort((a, b) => jobSortDate(b) - jobSortDate(a));
+  return merged.slice(0, n);
+}
+
+async function requeue(job, catalog) {
+  const collection = catalog === 'external' ? externalScrapedJobsCollection : jobsCollection;
+  if (!collection) return;
+  await collection
+    .updateOne({ _id: job._id }, { $set: { aiSkillStatus: 'pending' } })
+    .catch(() => {});
 }
 
 async function processOne(session, auth, job) {
+  const catalog = job.catalog || 'market';
   const controller = new AbortController();
   inflight.add(controller);
   try {
-    const result = await extractAndPersistJob(job, auth, { signal: controller.signal });
+    const result = await extractAndPersistJobByCatalog(job, auth, {
+      signal: controller.signal,
+      catalog,
+    });
     session.extracted += 1;
-    session.lastJob = { id: result.jobId, title: job.title || '', skills: result.skillCount };
+    session.lastJob = {
+      id: result.jobId,
+      title: job.title || job.jobTitle || '',
+      skills: result.skillCount,
+      catalog,
+    };
     if (result.usage) {
       session.inputTokens += result.usage.inputTokens || 0;
       session.outputTokens += result.usage.outputTokens || 0;
@@ -60,18 +127,29 @@ async function processOne(session, auth, job) {
     }
   } catch (err) {
     if (cancelRequested || controller.signal.aborted) {
-      await requeue(job._id); // Stop mid-flight — leave it pending, not stuck 'extracting'
+      await requeue(job, catalog);
       return;
     }
-    const r = await recordExtractionFailure(job, err);
+    const r = await recordExtractionFailure(job, err, { catalog });
     if (r?.terminal) session.failed += 1;
     else session.retried = (session.retried || 0) + 1;
-    console.error(`[job-skill-extract] failed ${job._id}: ${err.message}`);
+    console.error(`[job-skill-extract] failed ${catalog}:${job._id}: ${err.message}`);
   } finally {
     inflight.delete(controller);
     session.processed += 1;
     session.remaining = Math.max(0, session.total - session.processed);
   }
+}
+
+async function recoverStuckExtracting() {
+  await Promise.all([
+    jobsCollection
+      ?.updateMany({ aiSkillStatus: 'extracting' }, { $set: { aiSkillStatus: 'pending' } })
+      .catch(() => {}) ?? Promise.resolve(),
+    externalScrapedJobsCollection
+      ?.updateMany({ aiSkillStatus: 'extracting' }, { $set: { aiSkillStatus: 'pending' } })
+      .catch(() => {}) ?? Promise.resolve(),
+  ]);
 }
 
 async function runSession(session) {
@@ -92,7 +170,6 @@ async function runSession(session) {
   );
 
   try {
-    // Claim CONCURRENCY jobs and fire them all at once; repeat until drained.
     while (!cancelRequested) {
       let take = CONCURRENCY;
       if (session.limit != null) {
@@ -107,7 +184,10 @@ async function runSession(session) {
     session.running = false;
     session.finishedAt = new Date().toISOString();
     session.status = cancelRequested ? 'cancelled' : 'completed';
-    session.remaining = await countPendingExtraction();
+    const breakdown = await countPendingExtractionBreakdown();
+    session.remaining = breakdown.pending;
+    session.pendingMarket = breakdown.pendingMarket;
+    session.pendingExternal = breakdown.pendingExternal;
     console.log(
       `[job-skill-extract] ${session.status} — ${session.extracted} extracted, ${session.failed} failed · ` +
         `${session.inputTokens + session.outputTokens} tokens · ${formatCostUsd(session.costUsd)}`,
@@ -127,6 +207,8 @@ export function getExtractionStatus() {
     failed: activeSession.failed,
     retried: activeSession.retried || 0,
     remaining: activeSession.remaining,
+    pendingMarket: activeSession.pendingMarket ?? null,
+    pendingExternal: activeSession.pendingExternal ?? null,
     lastJob: activeSession.lastJob ?? null,
     startedAt: activeSession.startedAt,
     finishedAt: activeSession.finishedAt ?? null,
@@ -141,23 +223,30 @@ export function getExtractionStatus() {
 }
 
 export async function getSkillExtractionStatus() {
-  const pending = await countPendingExtraction();
-  return { pending, ...getExtractionStatus() };
+  const breakdown = await countPendingExtractionBreakdown();
+  return { ...breakdown, ...getExtractionStatus() };
 }
 
 export async function startSkillExtractionSession({ applierName, limit = null } = {}) {
-  if (!jobsCollection) throw new Error('Database not ready');
+  if (!jobsCollection && !externalScrapedJobsCollection) {
+    throw new Error('Database not ready');
+  }
   if (activeSession?.running) throw new Error('Skill extraction session already running');
 
-  // Verify an API key exists before claiming anything.
   await resolveExtractionAuth(applierName);
+  await recoverStuckExtracting();
 
-  // Recover any jobs left 'extracting' by a previous crash/stop.
-  await jobsCollection.updateMany({ aiSkillStatus: 'extracting' }, { $set: { aiSkillStatus: 'pending' } });
-
-  const pending = await countPendingExtraction();
+  const breakdown = await countPendingExtractionBreakdown();
+  const pending = breakdown.pending;
   if (pending === 0) {
-    return { sessionId: null, pending: 0, started: false, message: 'No jobs pending extraction' };
+    return {
+      sessionId: null,
+      pending: 0,
+      pendingMarket: 0,
+      pendingExternal: 0,
+      started: false,
+      message: 'No jobs pending extraction',
+    };
   }
 
   cancelRequested = false;
@@ -173,6 +262,8 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
     failed: 0,
     retried: 0,
     remaining: pending,
+    pendingMarket: breakdown.pendingMarket,
+    pendingExternal: breakdown.pendingExternal,
     lastJob: null,
     provider: null,
     model: null,
@@ -192,12 +283,18 @@ export async function startSkillExtractionSession({ applierName, limit = null } 
     }
   });
 
-  return { sessionId: activeSession.id, pending, started: true };
+  return {
+    sessionId: activeSession.id,
+    pending,
+    pendingMarket: breakdown.pendingMarket,
+    pendingExternal: breakdown.pendingExternal,
+    started: true,
+  };
 }
 
 export function stopSkillExtractionSession() {
   if (!activeSession?.running) return { stopped: false, message: 'No active session' };
   cancelRequested = true;
-  for (const controller of inflight) controller.abort(); // immediate halt of in-flight LLM calls
+  for (const controller of inflight) controller.abort();
   return { stopped: true, sessionId: activeSession.id };
 }

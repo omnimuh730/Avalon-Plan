@@ -35,6 +35,7 @@ import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
 import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js';
 import { runMailAiLabelBatch } from '../services/mail/aiLabelService.js';
 import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
+import { isProTier } from '../lib/proTier.js';
 
 const OTP_EMAIL_LIMIT = 10;
 
@@ -66,6 +67,16 @@ export async function getMailThreads(req, res) {
 		const label = req.query.label ? String(req.query.label) : undefined;
 		const search = req.query.search ? String(req.query.search) : undefined;
 		const unlabeled = req.query.unlabeled === 'true' || req.query.unlabeled === '1';
+		if (unlabeled) {
+			const acc = await findAccountByApplierName(applierName);
+			if (!isProTier(acc?.tier)) {
+				return res.status(403).json({
+					success: false,
+					error: 'Pro workspace required.',
+					proRequired: true,
+				});
+			}
+		}
 		const { page, pageSize } = parsePageQuery(req);
 		const cacheOnly = req.query.cacheOnly === 'true' || req.query.cacheOnly === '1';
 		const forceRefresh = req.query.force === 'true' || req.query.force === '1';
@@ -136,6 +147,21 @@ async function requireApplier(req, res) {
 	const acc = await findAccountByApplierName(applierName);
 	if (!acc) {
 		res.status(404).json({ success: false, error: `No account named "${applierName}".` });
+		return null;
+	}
+	return applierName;
+}
+
+async function requireProApplier(req, res) {
+	const applierName = await requireApplier(req, res);
+	if (!applierName) return null;
+	const acc = await findAccountByApplierName(applierName);
+	if (!isProTier(acc?.tier)) {
+		res.status(403).json({
+			success: false,
+			error: 'Pro workspace required.',
+			proRequired: true,
+		});
 		return null;
 	}
 	return applierName;
@@ -613,7 +639,7 @@ function normalizeLabelDefinitions(raw) {
 
 export async function getMailLabelDefinitions(req, res) {
 	try {
-		const applierName = await requireApplier(req, res);
+		const applierName = await requireProApplier(req, res);
 		if (!applierName) return;
 
 		const acc = await findAccountByApplierName(applierName);
@@ -631,7 +657,7 @@ export async function getMailLabelDefinitions(req, res) {
 
 export async function putMailLabelDefinitions(req, res) {
 	try {
-		const applierName = await requireApplier(req, res);
+		const applierName = await requireProApplier(req, res);
 		if (!applierName) return;
 
 		if (!accountInfoCollection) {
@@ -667,7 +693,7 @@ export async function postMailAiLabel(req, res) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
 		}
 
-		const applierName = await requireApplier(req, res);
+		const applierName = await requireProApplier(req, res);
 		if (!applierName) return;
 
 		const creds = await resolveMailCredentials(applierName);

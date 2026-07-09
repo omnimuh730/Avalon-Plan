@@ -54,6 +54,14 @@ async function ensureExternalScrapedJobsIndexes() {
 		{ jobID: 1 },
 		{ unique: true, partialFilterExpression: { jobID: { $type: "string" } } },
 	);
+	await externalScrapedJobsCollection.createIndex(
+		{ aiSkillStatus: 1, createdAt: -1 },
+		{ partialFilterExpression: { aiSkillStatus: "pending" } },
+	);
+	await externalScrapedJobsCollection.createIndex(
+		{ matchScoreStatus: 1, createdAt: -1 },
+		{ partialFilterExpression: { matchScoreStatus: "pending" } },
+	);
 }
 
 async function ensureMailCollectionsIndexes() {

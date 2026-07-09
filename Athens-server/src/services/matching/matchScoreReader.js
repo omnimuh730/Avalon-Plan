@@ -1,7 +1,8 @@
-import { jobsCollection, jobMatchScoresCollection } from '../../db/mongo.js';
+import { jobsCollection, jobMatchScoresCollection, externalScrapedJobsCollection } from '../../db/mongo.js';
 import { JobSourceTitles } from '../../config/jobSources.js';
 import { isMaterializedRecommendationEnabled } from '../../config/graphAndVectorConfig.js';
 import { JOB_LIST_PROJECTION } from '../jobListQuery.js';
+import { normalizeExternalScrapedJob } from '../externalScrapedJobsListQuery.js';
 import { loadProfileMatchContext } from './profileSkills.js';
 import { matchJobsForApplier } from './matchingService.js';
 import { enrichJobSkillsFromTitle } from './jobSkillExtraction.js';
@@ -55,7 +56,7 @@ function buildScoreRowPrefilters(listBody = {}) {
  * Fold scoreOverall + scoreSkill bounds into one indexed range on `score`
  * (valid because scoreOverall === scoreSkill with hybrid ranking off).
  */
-function buildScoreRangeClause(scoreFilters) {
+export function buildScoreRangeClause(scoreFilters) {
   if (!scoreFilters || !Object.keys(scoreFilters).length) return null;
   let gte = null;
   let lte = null;
@@ -82,7 +83,7 @@ function hasVolatileFilters(listBody = {}) {
   );
 }
 
-function composePageDoc(job, profileCtx) {
+export function composePageDoc(job, profileCtx) {
   // Prefer AI skills (requirement-weighted) for the displayed score; fall back
   // to title-derived strings for a not-yet-extracted job.
   const hasAi = Array.isArray(job.aiSkills) && job.aiSkills.length;
@@ -250,4 +251,206 @@ export async function listRecommendedJobs(params) {
   }
 
   return listFromMaterializedScores({ ...params, applierName: name });
+}
+
+/**
+ * Best Match over job_market + external_scraped_jobs via materialized scores.
+ * Scored jobs from both catalogs are merged by score; unscored tail fills by date.
+ */
+export async function listMergedRecommendedJobs({
+  applierName,
+  marketQuery,
+  externalQuery,
+  scoreFilters,
+  listBody,
+  skip,
+  limit,
+}) {
+  const name = String(applierName || '').trim();
+  if (!isMaterializedRecommendationEnabled() || !jobMatchScoresCollection || !name) {
+    const marketResult = await matchJobsForApplier({
+      applierName: name,
+      mongoQuery: marketQuery,
+      scoreFilters,
+      listBody,
+      skip,
+      limit,
+    });
+    const externalTotal = externalScrapedJobsCollection
+      ? await externalScrapedJobsCollection.countDocuments(externalQuery || {})
+      : 0;
+    return {
+      ...marketResult,
+      total: (marketResult.total ?? 0) + externalTotal,
+      catalogTotal: marketResult.catalogTotal ?? marketResult.total ?? 0,
+    };
+  }
+
+  const profileCtx = await loadProfileMatchContext(name);
+  const hasProfile = Boolean(
+    profileCtx.profileTokens?.length || profileCtx.profileCompacts?.length || profileCtx.exactSet?.size,
+  );
+  if (!hasProfile) {
+    return matchJobsForApplier({
+      applierName: name,
+      mongoQuery: marketQuery,
+      scoreFilters,
+      listBody,
+      skip,
+      limit,
+    });
+  }
+
+  const prefilters = buildScoreRowPrefilters(listBody);
+  const scoreRange = buildScoreRangeClause(scoreFilters);
+  const hasScoreFilter = scoreRange !== null;
+  const scoreMatch = { applierName: name, ...prefilters };
+  if (scoreRange) scoreMatch.score = scoreRange;
+
+  const [marketTotal, externalTotal] = await Promise.all([
+    jobsCollection.countDocuments(marketQuery || {}),
+    externalScrapedJobsCollection
+      ? externalScrapedJobsCollection.countDocuments(externalQuery || {})
+      : Promise.resolve(0),
+  ]);
+  const catalogTotal = marketTotal + externalTotal;
+
+  const pageRows = await jobMatchScoresCollection
+    .aggregate([
+      { $match: scoreMatch },
+      { $sort: { score: -1, postedAt: -1, jobId: -1 } },
+      {
+        $lookup: {
+          from: 'job_market',
+          localField: 'jobId',
+          foreignField: '_id',
+          pipeline: [{ $match: marketQuery || {} }, { $project: JOB_LIST_PROJECTION }],
+          as: 'marketJob',
+        },
+      },
+      {
+        $lookup: {
+          from: 'external_scraped_jobs',
+          localField: 'jobId',
+          foreignField: '_id',
+          pipeline: [{ $match: externalQuery || {} }],
+          as: 'externalJob',
+        },
+      },
+      {
+        $addFields: {
+          hasMarket: { $gt: [{ $size: '$marketJob' }, 0] },
+          hasExternal: { $gt: [{ $size: '$externalJob' }, 0] },
+        },
+      },
+      { $match: { $or: [{ hasMarket: true }, { hasExternal: true }] } },
+      { $skip: skip },
+      { $limit: limit },
+    ])
+    .toArray();
+
+  let pageDocs = pageRows.map((row) => {
+    if (row.hasMarket) return composePageDoc(row.marketJob[0], profileCtx);
+    return composePageDoc(normalizeExternalScrapedJob(row.externalJob[0]), profileCtx);
+  });
+
+  if (!hasScoreFilter && pageDocs.length < limit && catalogTotal > skip + pageDocs.length) {
+    const rankedCount = await jobMatchScoresCollection.countDocuments(scoreMatch);
+    const needed = limit - pageDocs.length;
+    const dateSkip = Math.max(0, skip - rankedCount);
+
+    const unscoredMarket = await jobsCollection
+      .aggregate([
+        { $match: marketQuery || {} },
+        { $sort: { postedAt: -1, _id: -1 } },
+        {
+          $lookup: {
+            from: 'job_match_scores',
+            let: { jid: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$applierName', name] },
+                      { $eq: ['$jobId', '$$jid'] },
+                    ],
+                  },
+                },
+              },
+              { $project: { _id: 1 } },
+            ],
+            as: 'scored',
+          },
+        },
+        { $match: { scored: { $size: 0 } } },
+        { $project: { ...JOB_LIST_PROJECTION, scored: 0 } },
+      ])
+      .toArray();
+
+    let unscoredExternal = [];
+    if (externalScrapedJobsCollection) {
+      unscoredExternal = await externalScrapedJobsCollection
+        .aggregate([
+          { $match: externalQuery || {} },
+          { $sort: { createdAt: -1, _id: -1 } },
+          {
+            $lookup: {
+              from: 'job_match_scores',
+              let: { jid: '$_id' },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $and: [
+                        { $eq: ['$applierName', name] },
+                        { $eq: ['$jobId', '$$jid'] },
+                      ],
+                    },
+                  },
+                },
+                { $project: { _id: 1 } },
+              ],
+              as: 'scored',
+            },
+          },
+          { $match: { scored: { $size: 0 } } },
+          { $project: { scored: 0 } },
+        ])
+        .toArray();
+    }
+
+    const unscoredMerged = [
+      ...unscoredMarket.map((j) => ({
+        doc: j,
+        sortAt: new Date(j.postedAt || j._createdAt || 0).getTime(),
+        catalog: 'market',
+      })),
+      ...unscoredExternal.map((j) => ({
+        doc: normalizeExternalScrapedJob(j),
+        sortAt: new Date(j.postedAt || j.createdAt || 0).getTime(),
+        catalog: 'external',
+      })),
+    ]
+      .sort((a, b) => b.sortAt - a.sortAt)
+      .slice(dateSkip, dateSkip + needed);
+
+    pageDocs = [
+      ...pageDocs,
+      ...unscoredMerged.map(({ doc }) => ({
+        ...doc,
+        ...composeJobScores(doc, { matchScore: 0, covered: [], missing: [], required: 0 }),
+        recommendationRanked: false,
+      })),
+    ];
+  }
+
+  return {
+    docs: pageDocs,
+    total: catalogTotal,
+    catalogTotal,
+    recommendationFallback: false,
+    recommendationHybrid: false,
+    recommendationMaterialized: true,
+  };
 }

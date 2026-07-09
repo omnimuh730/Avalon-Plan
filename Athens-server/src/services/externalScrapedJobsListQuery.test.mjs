@@ -50,6 +50,33 @@ test("normalizeExternalScrapedJob maps flat schema to list shape", () => {
 	assert.equal(normalized.postedAt, "2026-07-07T13:14:25.992Z");
 });
 
+test("buildExternalScrapedJobsQuery filters aiExtracted", () => {
+	const query = buildExternalScrapedJobsQuery({ aiExtracted: true });
+	assert.equal(query.aiSkillStatus, "extracted");
+});
+
+test("normalizeExternalScrapedJob passes through enriched AI fields", () => {
+	const normalized = normalizeExternalScrapedJob({
+		_id: "abc123",
+		sender: "li-job-scraper",
+		companyName: "XMTP Labs",
+		jobTitle: "Senior Backend Engineer",
+		jobDescription: "Build APIs with Go.",
+		jobLink: "https://example.com/job",
+		createdAt: "2026-07-07T13:14:25.992Z",
+		details: { position: "Remote", remote: "Remote", seniority: "Senior Level" },
+		company: { name: "XMTP Labs", tags: ["Fintech"] },
+		aiSkillStatus: "extracted",
+		aiSkills: [{ name: "Go", category: "hard", requirement: 5 }],
+		skills: ["Go"],
+	});
+
+	assert.equal(normalized.aiSkillStatus, "extracted");
+	assert.equal(normalized.details.position, "Remote");
+	assert.equal(normalized.company.tags[0], "Fintech");
+	assert.deepEqual(normalized.aiSkills[0].name, "Go");
+});
+
 test("normalizeExternalScrapedJob falls back to sender for source", () => {
 	const normalized = normalizeExternalScrapedJob({
 		_id: "x",
@@ -82,7 +109,7 @@ test("shouldMergeExternal respects flag, blocking filters, and status tab", () =
 	assert.equal(shouldMergeExternal(base, "all"), true);
 	assert.equal(shouldMergeExternal(base, "posted"), true);
 	assert.equal(shouldMergeExternal(base, "applied"), false);
-	assert.equal(shouldMergeExternal({ ...base, aiExtracted: true }, "all"), false);
+	assert.equal(shouldMergeExternal({ ...base, aiExtracted: true }, "all"), true);
 	assert.equal(shouldMergeExternal({ ...base, scoreOverallMin: "10" }, "all"), false);
 	assert.equal(shouldMergeExternal({ includeExternalScraped: false }, "all"), false);
 });

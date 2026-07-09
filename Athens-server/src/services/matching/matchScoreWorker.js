@@ -1,9 +1,11 @@
 import {
   jobsCollection,
+  externalScrapedJobsCollection,
   accountInfoCollection,
   matchProfileStateCollection,
 } from '../../db/mongo.js';
 import { loadProfileMatchContext, clearProfileSkillCache } from './profileSkills.js';
+import { normalizeExternalJobForScoring } from '../jobSkillExtraction/externalJobExtractService.js';
 import {
   MIN_STORE_SCORE,
   scoreJobForProfile,
@@ -30,6 +32,26 @@ const JOB_BATCH = Number(process.env.MATCH_SCORE_JOB_BATCH || 200);
 const RESCORE_WRITE_BATCH = 1000;
 
 const JOB_SCORE_PROJECTION = { title: 1, skills: 1, aiSkills: 1, postedAt: 1, _createdAt: 1, source: 1 };
+const EXTERNAL_SCORE_PROJECTION = {
+  jobTitle: 1,
+  title: 1,
+  skills: 1,
+  aiSkills: 1,
+  createdAt: 1,
+  updatedAt: 1,
+  postedAt: 1,
+  source: 1,
+  sender: 1,
+};
+
+function scoreAndQueueJob(job, applierName, ctx, profileVersion, ops) {
+  const result = scoreJobForProfile(job, ctx);
+  if (result.score >= MIN_STORE_SCORE) {
+    ops.push(upsertOpForRow(buildScoreRow(applierName, job, result, profileVersion)));
+  } else {
+    ops.push({ deleteOne: { filter: { applierName, jobId: job._id } } });
+  }
+}
 
 function hasProfileSignal(ctx) {
   return Boolean(
@@ -73,6 +95,23 @@ export async function rescoreUser(state) {
       await bulkWriteScores(ops);
       rows += ops.length;
       ops = [];
+    }
+  }
+
+  if (externalScrapedJobsCollection) {
+    const extCursor = externalScrapedJobsCollection
+      .find({ aiSkillStatus: 'extracted' })
+      .project(EXTERNAL_SCORE_PROJECTION);
+    for await (const raw of extCursor) {
+      const job = normalizeExternalJobForScoring(raw);
+      const result = scoreJobForProfile(job, ctx);
+      if (result.score < MIN_STORE_SCORE) continue;
+      ops.push(upsertOpForRow(buildScoreRow(applierName, job, result, profileVersion)));
+      if (ops.length >= RESCORE_WRITE_BATCH) {
+        await bulkWriteScores(ops);
+        rows += ops.length;
+        ops = [];
+      }
     }
   }
   await bulkWriteScores(ops);
@@ -149,36 +188,63 @@ async function loadAllProfileContexts() {
 
 async function fanOutPendingJobs() {
   if (!jobsCollection) return false;
-  const jobs = await jobsCollection
-    .find({ matchScoreStatus: 'pending' })
-    .project(JOB_SCORE_PROJECTION)
-    .sort({ postedAt: -1 })
-    .limit(JOB_BATCH)
-    .toArray();
-  if (!jobs.length) return false;
+
+  const halfBatch = Math.max(1, Math.ceil(JOB_BATCH / 2));
+  const [marketJobs, externalRaw] = await Promise.all([
+    jobsCollection
+      .find({ matchScoreStatus: 'pending' })
+      .project(JOB_SCORE_PROJECTION)
+      .sort({ postedAt: -1 })
+      .limit(halfBatch)
+      .toArray(),
+    externalScrapedJobsCollection
+      ? externalScrapedJobsCollection
+          .find({ matchScoreStatus: 'pending' })
+          .project(EXTERNAL_SCORE_PROJECTION)
+          .sort({ createdAt: -1 })
+          .limit(halfBatch)
+          .toArray()
+      : Promise.resolve([]),
+  ]);
+
+  const externalJobs = externalRaw.map(normalizeExternalJobForScoring);
+  if (!marketJobs.length && !externalJobs.length) return false;
 
   const contexts = await loadAllProfileContexts();
   const ops = [];
-  for (const job of jobs) {
+
+  for (const job of marketJobs) {
     for (const [name, { ctx, profileVersion }] of contexts) {
-      const result = scoreJobForProfile(job, ctx);
-      if (result.score >= MIN_STORE_SCORE) {
-        ops.push(upsertOpForRow(buildScoreRow(name, job, result, profileVersion)));
-      } else {
-        // Re-analysis can drop a previously matching job below the threshold.
-        ops.push({ deleteOne: { filter: { applierName: name, jobId: job._id } } });
-      }
+      scoreAndQueueJob(job, name, ctx, profileVersion, ops);
     }
   }
+  for (const job of externalJobs) {
+    for (const [name, { ctx, profileVersion }] of contexts) {
+      scoreAndQueueJob(job, name, ctx, profileVersion, ops);
+    }
+  }
+
   for (let i = 0; i < ops.length; i += RESCORE_WRITE_BATCH) {
     await bulkWriteScores(ops.slice(i, i + RESCORE_WRITE_BATCH));
   }
 
-  await jobsCollection.updateMany(
-    { _id: { $in: jobs.map((j) => j._id) } },
-    { $set: { matchScoreStatus: 'scored', matchScoredAt: new Date().toISOString() } },
+  const now = new Date().toISOString();
+  if (marketJobs.length) {
+    await jobsCollection.updateMany(
+      { _id: { $in: marketJobs.map((j) => j._id) } },
+      { $set: { matchScoreStatus: 'scored', matchScoredAt: now } },
+    );
+  }
+  if (externalJobs.length && externalScrapedJobsCollection) {
+    await externalScrapedJobsCollection.updateMany(
+      { _id: { $in: externalJobs.map((j) => j._id) } },
+      { $set: { matchScoreStatus: 'scored', matchScoredAt: now, updatedAt: new Date() } },
+    );
+  }
+
+  console.log(
+    `[match-score] fanned out ${marketJobs.length} market + ${externalJobs.length} external job(s) × ${contexts.size} profile(s)`,
   );
-  console.log(`[match-score] fanned out ${jobs.length} job(s) × ${contexts.size} profile(s)`);
   return true;
 }
 

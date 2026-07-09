@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { AlertCircle, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { checkMailCredentials, fetchMailFolderCounts, type FolderCounts } from "@/api/mail";
 import { useApplier } from "@/context/applier-context";
+import { isProTier } from "../../lib/pro";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { SearchField } from "../../components/shared/SearchField";
 import { PATHS } from "../../config/routes";
@@ -23,6 +24,7 @@ export function MailPage() {
   const navigate = useNavigate();
   const { applier, applierReady } = useApplier();
   const applierName = applier?.name;
+  const isPro = isProTier(applier?.tier);
 
   const [folder, setFolder] = useState<MailFolderId>("inbox");
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
@@ -244,14 +246,16 @@ export function MailPage() {
               placeholder="Search mail..."
               className="flex-1 max-w-xl"
             />
-            <button
-              type="button"
-              onClick={() => setAiLabelOpen(true)}
-              className="flex items-center gap-2 bg-primary/10 hover:bg-primary/15 border border-primary/20 text-primary px-3 py-2 rounded-xl text-sm font-bold transition-colors min-h-10"
-            >
-              <Sparkles className="w-4 h-4" />
-              AI Label
-            </button>
+            {isPro && (
+              <button
+                type="button"
+                onClick={() => setAiLabelOpen(true)}
+                className="flex items-center gap-2 bg-primary/10 hover:bg-primary/15 border border-primary/20 text-primary px-3 py-2 rounded-xl text-sm font-bold transition-colors min-h-10"
+              >
+                <Sparkles className="w-4 h-4" />
+                AI Label
+              </button>
+            )}
             <button
               type="button"
               onClick={forceRefresh}
@@ -317,16 +321,18 @@ export function MailPage() {
         replyTo={mail.replyTo}
       />
 
-      <MailAiLabelDialog
-        open={aiLabelOpen}
-        onOpenChange={setAiLabelOpen}
-        applierName={applierName}
-        labels={labels}
-        onComplete={() => {
-          loadCurrentPage();
-          void refreshFolderCounts();
-        }}
-      />
+      {isPro && (
+        <MailAiLabelDialog
+          open={aiLabelOpen}
+          onOpenChange={setAiLabelOpen}
+          applierName={applierName}
+          labels={labels}
+          onComplete={() => {
+            loadCurrentPage();
+            void refreshFolderCounts();
+          }}
+        />
+      )}
     </div>
   );
 }

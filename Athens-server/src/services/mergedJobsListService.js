@@ -1,9 +1,8 @@
 import { jobsCollection, externalScrapedJobsCollection } from '../db/mongo.js';
 import { buildJobsListQuery, JOB_LIST_PROJECTION } from './jobListQuery.js';
-import { listRecommendedJobs } from './matching/matchScoreReader.js';
+import { listMergedRecommendedJobs } from './matching/matchScoreReader.js';
 import {
 	buildExternalScrapedJobsQuery,
-	normalizeExternalScrapedJob,
 	shouldMergeExternal,
 	resolveStatusTabFromBody,
 } from './externalScrapedJobsListQuery.js';
@@ -35,15 +34,22 @@ function buildExternalUnionPipeline(externalQuery) {
 			$addFields: {
 				catalog: 'external',
 				title: '$jobTitle',
-				_listPostedAt: '$createdAt',
+				_listPostedAt: { $ifNull: ['$postedAt', '$createdAt'] },
 				_listTitle: '$jobTitle',
 				company: {
-					name: { $ifNull: ['$companyName', 'Unknown'] },
-					logo: '$companyIcon',
-					tags: [],
+					$cond: {
+						if: { $and: [{ $ne: ['$company', null] }, { $eq: [{ $type: '$company' }, 'object'] }] },
+						then: '$company',
+						else: {
+							name: { $ifNull: ['$companyName', 'Unknown'] },
+							logo: '$companyIcon',
+							tags: [],
+						},
+					},
 				},
 				applyLink: '$jobLink',
 				jobDescription: '$jobDescription',
+				description: { $ifNull: ['$description', '$jobDescription'] },
 				source: {
 					$cond: {
 						if: { $and: [{ $ne: ['$source', null] }, { $ne: ['$source', ''] }] },
@@ -52,8 +58,14 @@ function buildExternalUnionPipeline(externalQuery) {
 					},
 				},
 				postedAgo: '$postedAgo',
-				postedAt: '$createdAt',
-				details: {},
+				postedAt: { $ifNull: ['$postedAt', '$createdAt'] },
+				details: { $ifNull: ['$details', {}] },
+				aiSkills: '$aiSkills',
+				skills: '$skills',
+				skillsNormalized: '$skillsNormalized',
+				skillTokens: '$skillTokens',
+				aiSkillStatus: '$aiSkillStatus',
+				aiSkillExtractedAt: '$aiSkillExtractedAt',
 			},
 		},
 	];
@@ -92,49 +104,19 @@ async function listMergedByAggregation({ body, marketQuery, externalQuery, skip,
 }
 
 async function listMergedRecommended({ body, marketQuery, externalQuery, scoreFilters, skip, limit, applierName }) {
-	const marketResult = await listRecommendedJobs({
+	const result = await listMergedRecommendedJobs({
 		applierName,
-		mongoQuery: marketQuery,
+		marketQuery,
+		externalQuery,
 		scoreFilters,
 		listBody: body,
 		skip,
 		limit,
 	});
-
-	const externalTotal = await externalScrapedJobsCollection.countDocuments(externalQuery);
-	const marketTotal = marketResult.total ?? 0;
-	const total = marketTotal + externalTotal;
-
-	let docs = Array.isArray(marketResult.docs) ? [...marketResult.docs] : [];
-
-	if (skip < marketTotal) {
-		const room = limit - docs.length;
-		if (room > 0 && externalTotal > 0) {
-			const externalDocs = await externalScrapedJobsCollection
-				.find(externalQuery)
-				.sort({ createdAt: -1, _id: -1 })
-				.limit(room)
-				.toArray();
-			docs.push(...externalDocs.map(normalizeExternalScrapedJob));
-		}
-	} else {
-		const externalSkip = skip - marketTotal;
-		const externalDocs = await externalScrapedJobsCollection
-			.find(externalQuery)
-			.sort({ createdAt: -1, _id: -1 })
-			.skip(externalSkip)
-			.limit(limit)
-			.toArray();
-		docs = externalDocs.map(normalizeExternalScrapedJob);
-	}
-
 	return {
-		docs,
-		total,
-		recommendationFallback: marketResult.recommendationFallback,
-		recommendationReason: marketResult.reason || marketResult.recommendationReason || null,
-		recommendationWarming: Boolean(marketResult.recommendationWarming),
-		catalogTotal: marketResult.catalogTotal ?? marketTotal,
+		...result,
+		recommendationReason: result.recommendationReason ?? null,
+		recommendationWarming: Boolean(result.recommendationWarming),
 	};
 }
 

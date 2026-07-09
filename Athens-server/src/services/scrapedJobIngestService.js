@@ -1,4 +1,5 @@
 import { externalScrapedJobsCollection } from "../db/mongo.js";
+import { JOB_MARKET_MODEL_VERSION } from "../config/jobMarketSchema.js";
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -61,6 +62,10 @@ export async function ingestScrapedJob(job) {
 	const now = new Date();
 	const doc = {
 		...job,
+		catalog: "external",
+		modelVersion: JOB_MARKET_MODEL_VERSION,
+		aiSkillStatus: "pending",
+		matchScoreStatus: "pending",
 		createdAt: now,
 		updatedAt: now,
 	};

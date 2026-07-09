@@ -37,7 +37,7 @@ function buildSourceFilter(jobSources) {
  * Only maps filters external rows can satisfy (title, company, source).
  */
 export function buildExternalScrapedJobsQuery(body = {}) {
-	const { q, jobSources, ...filters } = body;
+	const { q, jobSources, aiExtracted, ...filters } = body;
 	const query = { $and: [] };
 
 	const titleFilter = buildMongoCaseInsensitiveRegexFilter(q);
@@ -51,6 +51,10 @@ export function buildExternalScrapedJobsQuery(body = {}) {
 
 	const sourceFilter = buildSourceFilter(jobSources);
 	if (sourceFilter) query.$and.push(sourceFilter);
+
+	if (aiExtracted === true || aiExtracted === 'true') {
+		query.$and.push({ aiSkillStatus: 'extracted' });
+	}
 
 	return finalizeQuery(query);
 }
@@ -66,22 +70,48 @@ export function normalizeExternalScrapedJob(doc) {
 				? doc.sender.trim()
 				: 'External';
 
-	return {
+	const enrichedCompany =
+		doc.company && typeof doc.company === 'object'
+			? {
+					name: doc.company.name || doc.companyName || 'Unknown',
+					logo: doc.company.logo || doc.companyIcon || undefined,
+					tags: Array.isArray(doc.company.tags) ? doc.company.tags : [],
+				}
+			: {
+					name: doc.companyName || 'Unknown',
+					logo: doc.companyIcon || undefined,
+					tags: [],
+				};
+
+	const base = {
 		_id: doc._id,
 		catalog: 'external',
-		title: doc.jobTitle || 'Untitled role',
-		company: {
-			name: doc.companyName || 'Unknown',
-			logo: doc.companyIcon || undefined,
-			tags: [],
-		},
-		details: {},
-		applyLink: doc.jobLink || '#',
+		title: doc.title || doc.jobTitle || 'Untitled role',
+		company: enrichedCompany,
+		details: doc.details && typeof doc.details === 'object' ? doc.details : {},
+		applyLink: doc.applyLink || doc.jobLink || '#',
 		jobDescription: doc.jobDescription || '',
+		description: doc.description || doc.jobDescription || '',
 		source,
 		postedAgo: typeof doc.postedAgo === 'string' ? doc.postedAgo : undefined,
-		postedAt: doc.createdAt || doc.updatedAt || new Date(0).toISOString(),
+		postedAt: doc.postedAt || doc.createdAt || doc.updatedAt || new Date(0).toISOString(),
 	};
+
+	const enrichedFields = {};
+	for (const key of [
+		'aiSkills',
+		'skills',
+		'skillsNormalized',
+		'skillTokens',
+		'aiSkillStatus',
+		'aiSkillExtractedAt',
+		'matchScoreStatus',
+		'modelVersion',
+	]) {
+		if (doc[key] !== undefined) enrichedFields[key] = doc[key];
+	}
+
+	return { ...base, ...enrichedFields };
 }
 
 export function isIncludeExternalScraped(body = {}) {
@@ -96,10 +126,8 @@ function parseScoreBound(value) {
 	return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-/** External rows have no AI skills or match scores — exclude when those filters are active. */
+/** External rows without match scores are excluded when score-dimension filters are active. */
 export function hasBlockingFiltersForExternal(body = {}) {
-	if (body.aiExtracted === true || body.aiExtracted === 'true') return true;
-
 	const dimensions = [
 		['scoreOverallMin', 'scoreOverallMax'],
 		['scoreSkillMin', 'scoreSkillMax'],

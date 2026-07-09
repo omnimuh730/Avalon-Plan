@@ -154,7 +154,11 @@ export async function extractAndPersistJob(job, auth, { signal } = {}) {
 }
 
 /** Record a failed attempt: re-queue for retry until MAX_ATTEMPTS, then mark failed. */
-export async function recordExtractionFailure(job, err) {
+export async function recordExtractionFailure(job, err, { catalog = 'market' } = {}) {
+  if (catalog === 'external') {
+    const { recordExternalExtractionFailure } = await import('./externalJobExtractService.js');
+    return recordExternalExtractionFailure(job, err);
+  }
   if (!jobsCollection) return;
   const attempts = (Number(job.aiSkillAttempts) || 0) + 1;
   const terminal = attempts >= MAX_ATTEMPTS;
@@ -169,6 +173,15 @@ export async function recordExtractionFailure(job, err) {
     },
   );
   return { attempts, terminal };
+}
+
+/** Route extraction to market or external catalog. */
+export async function extractAndPersistJobByCatalog(job, auth, { signal, catalog = 'market' } = {}) {
+  if (catalog === 'external') {
+    const { extractAndPersistExternalJob } = await import('./externalJobExtractService.js');
+    return extractAndPersistExternalJob(job, auth, { signal });
+  }
+  return extractAndPersistJob(job, auth, { signal });
 }
 
 export { descriptionHash };
