@@ -3,8 +3,8 @@ import { detectJobSource } from "../lib/jobSource.js";
 
 /**
  * Vendor monitoring: the bid-assistant extension (via vender-server) writes bid
- * tracking records into the shared `bid_records` collection. These endpoints
- * read them back grouped by session for the lancer Vendor Monitor page.
+ * tracking records into the main MongoDB `bid_records` collection. These
+ * endpoints read them back grouped by session for the lancer Vendor Monitor page.
  */
 
 function toInt(value, fallback) {
@@ -35,7 +35,7 @@ function enrichSession(row) {
 
 function resolveBidRecords(req) {
 	const requested = String(req.query.source || "").trim().toLowerCase();
-	const source = requested === "local" ? "local" : "cloud";
+	const source = requested === "cloud" ? "cloud" : "local";
 	return getBidRecordsCollection(source);
 }
 

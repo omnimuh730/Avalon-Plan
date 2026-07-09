@@ -87,8 +87,24 @@ async function initMongo() {
 }
 
 async function pingMongo() {
+  // Bid sessions + Vendor Monitor use MONGO_URL (main/local). Report that first.
+  if (localMongoReady && localMongoClient) {
+    try {
+      await localMongoClient.db().admin().command({ ping: 1 });
+      return { ok: true, error: null };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      localMongoReady = false;
+      localMongoConnectError = message;
+      return { ok: false, error: message };
+    }
+  }
+
   if (!mongoReady || !mongoClient) {
-    return { ok: false, error: mongoConnectError || 'MongoDB cloud not connected' };
+    return {
+      ok: false,
+      error: localMongoConnectError || mongoConnectError || 'MongoDB not connected',
+    };
   }
   try {
     await mongoClient.db().admin().command({ ping: 1 });
@@ -102,9 +118,10 @@ async function pingMongo() {
 }
 
 function getMongoStatus() {
+  const connected = localMongoReady || mongoReady;
   return {
-    connected: mongoReady,
-    error: mongoConnectError,
+    connected,
+    error: localMongoReady ? null : localMongoConnectError || mongoConnectError,
     cloudConnected: mongoReady,
     cloudError: mongoConnectError,
     localConnected: localMongoReady,
@@ -113,10 +130,10 @@ function getMongoStatus() {
 }
 
 function normalizeStorageTarget(value) {
-  return value === 'local' ? 'local' : 'cloud';
+  return value === 'cloud' ? 'cloud' : 'local';
 }
 
-function getBidRecordsCollection(storageTarget = 'cloud') {
+function getBidRecordsCollection(storageTarget = 'local') {
   const target = normalizeStorageTarget(storageTarget);
   const collection = target === 'local' ? localBidRecordsCollection : cloudBidRecordsCollection;
   if (!collection) {
@@ -133,7 +150,10 @@ function getBidRecordsCollection(storageTarget = 'cloud') {
 function createBidRecordsRouter() {
   return {
     async insertOne(doc, options) {
-      return getBidRecordsCollection(doc?.storageTarget).insertOne(doc, options);
+      // vender-server owns storage routing. Always write bid_records to MONGO_URL,
+      // even if an older extension still sends storageTarget: "cloud".
+      const record = doc && typeof doc === 'object' ? { ...doc, storageTarget: 'local' } : doc;
+      return getBidRecordsCollection('local').insertOne(record, options);
     },
   };
 }

@@ -217,7 +217,7 @@ export async function saveMailLabelDefinitions(applierName: string, definitions:
 export async function runMailAiLabel(
   applierName: string,
   payload: {
-    messages: { uid: number }[];
+    messages: { uid: number; mailbox?: string }[];
     labelDefinitions: MailLabelDefinitions;
   },
 ) {

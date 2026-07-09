@@ -721,7 +721,12 @@ export async function postMailAiLabel(req, res) {
 			return res.status(400).json({ success: false, error: 'No custom Gmail labels found. Create labels first.' });
 		}
 
-		const messages = rawMessages.map((m) => ({ uid: Number(m.uid) })).filter((m) => Number.isFinite(m.uid));
+		const messages = rawMessages
+			.map((m) => ({
+				uid: Number(m.uid),
+				mailbox: typeof m.mailbox === 'string' ? m.mailbox : undefined,
+			}))
+			.filter((m) => Number.isFinite(m.uid));
 
 		const result = await runMailAiLabelBatch({
 			applierName,

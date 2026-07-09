@@ -215,8 +215,9 @@ async function initMongo() {
 	});
 	console.log('Connected to MongoDB', mongoUrl, 'DB:', mongoDbName);
 
-	let bidRecordsSource = 'local';
+	const bidRecordsSource = 'local';
 	bidRecordsLocalCollection = db.collection('bid_records');
+	// Vendor Monitor + bid-assistant write/read the main (local) MongoDB.
 	bidRecordsCollection = bidRecordsLocalCollection;
 
 	const mongoCloudUrl = process.env.MONGO_CLOUD_URL?.trim();
@@ -227,14 +228,12 @@ async function initMongo() {
 			await mongoCloudClient.connect();
 			const cloudDb = mongoCloudClient.db(mongoDbName);
 			accountInfoCloudCollection = cloudDb.collection('account_info');
+			// Cloud bid_records kept only for the optional "Cloud bid" monitor tab.
 			bidRecordsCloudCollection = cloudDb.collection('bid_records');
-			bidRecordsCollection = bidRecordsCloudCollection;
-			bidRecordsSource = 'cloud';
-			console.log('Connected to cloud MongoDB (account_info mirror + bid_records reads)', mongoDbName);
+			console.log('Connected to cloud MongoDB (account_info mirror; optional bid_records reads)', mongoDbName);
 		} catch (err) {
 			cloudMirrorConnectError = err instanceof Error ? err.message : String(err);
 			console.error('Cloud MongoDB connection failed — account_info will save locally only until fixed:', cloudMirrorConnectError);
-			console.error('Vendor Monitor bid_records require cloud MongoDB — bid sessions will be unavailable until fixed.');
 			if (mongoCloudClient) {
 				try {
 					await mongoCloudClient.close();
@@ -245,17 +244,16 @@ async function initMongo() {
 			}
 			accountInfoCloudCollection = null;
 			bidRecordsCloudCollection = null;
-			bidRecordsCollection = bidRecordsLocalCollection;
 		}
 	} else {
-		console.log('MONGO_CLOUD_URL not set — account_info writes go to local only; bid_records read from local');
+		console.log('MONGO_CLOUD_URL not set — account_info writes go to local only');
 	}
 
 	console.log(`Vendor Monitor bid_records source: ${bidRecordsSource}`);
 }
 
-function getBidRecordsCollection(source = 'cloud') {
-	const normalized = source === 'local' ? 'local' : 'cloud';
+function getBidRecordsCollection(source = 'local') {
+	const normalized = source === 'cloud' ? 'cloud' : 'local';
 	const collection = normalized === 'local' ? bidRecordsLocalCollection : bidRecordsCloudCollection;
 	if (!collection) {
 		return {

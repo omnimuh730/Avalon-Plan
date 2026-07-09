@@ -39,7 +39,7 @@ interface BidMonitorViewProps {
   subtitle?: string;
 }
 
-export function BidMonitorView({ source = "cloud", subtitle }: BidMonitorViewProps) {
+export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewProps) {
   const { get, del, request } = useApi(API_BASE);
   const { applier } = useApplier();
   const profileName = applier?.name ?? null;

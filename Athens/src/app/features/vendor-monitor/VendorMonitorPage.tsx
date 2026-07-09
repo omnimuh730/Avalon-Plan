@@ -7,19 +7,19 @@ import type { BidMonitorSource } from "./types";
 
 const SOURCES: { key: BidMonitorSource; label: string; subtitle: string }[] = [
   {
-    key: "cloud",
+    key: "local",
     label: "Bid records",
-    subtitle: "Cloud bid sessions from the shared vendor pipeline",
+    subtitle: "Bid sessions from the main MongoDB",
   },
   {
-    key: "local",
-    label: "My bid",
-    subtitle: "Local bid sessions on this machine",
+    key: "cloud",
+    label: "Cloud bid",
+    subtitle: "Legacy cloud bid sessions (optional)",
   },
 ];
 
 export function VendorMonitorPage() {
-  const [source, setSource] = useState<BidMonitorSource>("cloud");
+  const [source, setSource] = useState<BidMonitorSource>("local");
   const active = SOURCES.find((s) => s.key === source) ?? SOURCES[0];
 
   return (

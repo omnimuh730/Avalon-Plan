@@ -67,6 +67,7 @@ export function MailAiLabelDialog({
   const [definitionsSaved, setDefinitionsSaved] = useState(false);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [mailboxById, setMailboxById] = useState<Record<string, string>>({});
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [rowStatus, setRowStatus] = useState<Record<string, RowStatus>>({});
@@ -91,6 +92,13 @@ export function MailAiLabelDialog({
       ]);
       setThreads(threadResult.threads);
       setTotal(threadResult.total);
+      setMailboxById((prev) => {
+        const next = { ...prev };
+        for (const t of threadResult.threads) {
+          if (t.mailbox) next[t.id] = t.mailbox;
+        }
+        return next;
+      });
       setDefinitions(defs);
       setDefinitionsDirty(false);
     } catch (e) {
@@ -108,6 +116,7 @@ export function MailAiLabelDialog({
   useEffect(() => {
     if (!open) {
       setSelectedIds(new Set());
+      setMailboxById({});
       setRowStatus({});
       setRowResults({});
       setSummary(null);
@@ -167,7 +176,13 @@ export function MailAiLabelDialog({
     }
 
     const messages = [...selectedIds]
-      .map((id) => ({ uid: Number(id) }))
+      .map((id) => {
+        const thread = threads.find((t) => t.id === id);
+        return {
+          uid: Number(id),
+          mailbox: thread?.mailbox || mailboxById[id],
+        };
+      })
       .filter((m) => Number.isFinite(m.uid));
 
     setRunning(true);

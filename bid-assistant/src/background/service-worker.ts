@@ -20,10 +20,6 @@ import {
 } from '@/lib/bid-session';
 
 const BRIDGE_URL = (import.meta.env.VITE_BRIDGE_URL ?? 'http://127.0.0.1:3848').replace(/\/$/, '');
-// Bid recordings always save to the cloud bid DB. (Local storage and the
-// per-profile model override were removed from the extension — the OpenAI model
-// is configured in lancer-frontend → Settings → Profile.)
-const BID_STORAGE_TARGET = 'cloud';
 
 export interface GmailCredentials {
   email: string;
@@ -370,7 +366,7 @@ async function postBidSessionEvent(
   const response = await fetch(`${BRIDGE_URL}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, storageTarget: BID_STORAGE_TARGET }),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(30000),
   });
 
@@ -394,7 +390,7 @@ function sumUsage(a: UsageSummary, b: UsageSummary): UsageSummary {
 }
 
 // Persists a completed analysis (page + skills result and token/cost usage) to
-// the bid_records collection so it shows up in the lancer Vendor Monitor.
+// the main MongoDB bid_records collection for the Vendor Monitor.
 async function persistAnalysisRecord(
   sessionId: string | null,
   applierState: StoredApplierState,

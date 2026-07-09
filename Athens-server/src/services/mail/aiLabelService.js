@@ -146,7 +146,7 @@ function mergeUsage(a, b) {
  * @param {object} opts.profile decrypted autoBidProfile
  * @param {string} opts.email Gmail address
  * @param {string} opts.password Gmail app password
- * @param {Array<{ uid: number }>} opts.messages
+ * @param {Array<{ uid: number, mailbox?: string }>} opts.messages
  * @param {string[]} opts.allowedLabels
  * @param {Record<string, string>} opts.labelDefinitions
  */
@@ -174,15 +174,19 @@ export async function runMailAiLabelBatch({
 			continue;
 		}
 
-		const folder = 'inbox';
-		const mailbox = folderToMailbox(folder);
-		let doc = await getMessage(applierName, uid, mailbox);
+		const inboxMailbox = folderToMailbox('inbox');
+		const hintMailbox = typeof item.mailbox === 'string' && item.mailbox.trim() ? item.mailbox.trim() : null;
+		// Prefer client mailbox, then INBOX, then any mailbox (unlabeled list is folder-scoped).
+		let doc = null;
+		if (hintMailbox) doc = await getMessage(applierName, uid, hintMailbox);
+		if (!doc) doc = await getMessage(applierName, uid, inboxMailbox);
+		if (!doc) doc = await getMessage(applierName, uid);
 		if (!doc) {
 			results.push({ uid, label: null, applied: false, error: 'Message not found' });
 			continue;
 		}
 
-		const bodyResult = await ensureMessageBody(applierName, uid, doc.mailbox || mailbox);
+		const bodyResult = await ensureMessageBody(applierName, uid, doc.mailbox || hintMailbox || inboxMailbox);
 		if (!bodyResult.ok) {
 			results.push({ uid, label: null, applied: false, error: bodyResult.error || 'Failed to load body' });
 			continue;
@@ -215,7 +219,7 @@ export async function runMailAiLabelBatch({
 		}
 
 		try {
-			const msgMailbox = doc.mailbox || mailbox;
+			const msgMailbox = doc.mailbox || inboxMailbox;
 			await addLabelsToMessage(email, password, uid, [label], msgMailbox);
 			const refreshed = await fetchFlagsForUids(email, password, [uid], applierName, msgMailbox);
 			if (refreshed[0]) {

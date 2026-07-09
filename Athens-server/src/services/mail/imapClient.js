@@ -331,21 +331,22 @@ export async function setMessageFlagged(email, password, uid, flagged, mailboxPa
 
 export async function archiveMessage(email, password, uid, mailboxPath = ALL_MAIL_PATH) {
 	return withMailboxPath(email, password, mailboxPath, async (client) => {
-		await client.messageLabelsRemove(String(uid), ['\\Inbox'], { uid: true });
+		// imapflow 1.x: Gmail labels via messageFlags* + useLabels (no messageLabels*)
+		await client.messageFlagsRemove(String(uid), ['\\Inbox'], { uid: true, useLabels: true });
 	});
 }
 
 export async function trashMessage(email, password, uid, mailboxPath = ALL_MAIL_PATH) {
 	return withMailboxPath(email, password, mailboxPath, async (client) => {
-		await client.messageLabelsAdd(String(uid), ['\\Trash'], { uid: true });
-		await client.messageLabelsRemove(String(uid), ['\\Inbox'], { uid: true });
+		await client.messageFlagsAdd(String(uid), ['\\Trash'], { uid: true, useLabels: true });
+		await client.messageFlagsRemove(String(uid), ['\\Inbox'], { uid: true, useLabels: true });
 	});
 }
 
 export async function moveToInbox(email, password, uid, mailboxPath = ALL_MAIL_PATH) {
 	return withMailboxPath(email, password, mailboxPath, async (client) => {
-		await client.messageLabelsAdd(String(uid), ['\\Inbox'], { uid: true });
-		await client.messageLabelsRemove(String(uid), ['\\Trash'], { uid: true });
+		await client.messageFlagsAdd(String(uid), ['\\Inbox'], { uid: true, useLabels: true });
+		await client.messageFlagsRemove(String(uid), ['\\Trash'], { uid: true, useLabels: true });
 	});
 }
 
@@ -425,7 +426,7 @@ export async function addLabelsToMessage(email, password, uid, labelNames, mailb
 	const tokens = (labelNames || []).map(toImapLabelToken).filter(Boolean);
 	if (!tokens.length) return;
 	return withMailboxPath(email, password, mailboxPath, async (client) => {
-		await client.messageLabelsAdd(String(uid), tokens, { uid: true });
+		await client.messageFlagsAdd(String(uid), tokens, { uid: true, useLabels: true });
 	});
 }
 
@@ -433,7 +434,7 @@ export async function removeLabelsFromMessage(email, password, uid, labelNames, 
 	const tokens = (labelNames || []).map(toImapLabelToken).filter(Boolean);
 	if (!tokens.length) return;
 	return withMailboxPath(email, password, mailboxPath, async (client) => {
-		await client.messageLabelsRemove(String(uid), tokens, { uid: true });
+		await client.messageFlagsRemove(String(uid), tokens, { uid: true, useLabels: true });
 	});
 }
 
