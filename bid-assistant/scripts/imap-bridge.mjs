@@ -596,5 +596,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Gmail IMAP bridge listening on http://${HOST}:${PORT}`);
-  console.log('Keep this running while using the Gmail Assistant extension.');
+  console.log('Keep this running while using the Bid-Copilot extension.');
 });

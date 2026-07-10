@@ -45,7 +45,8 @@ ENV NODE_ENV=production \
     BRIDGE_HOST=0.0.0.0 \
     BRIDGE_PORT=3848 \
     CORS_ORIGIN=* \
-    EMBEDDED_MONGO=auto
+    EMBEDDED_MONGO=auto \
+    PUPPETEER_CACHE_DIR=/app/Athens-server/.cache/puppeteer
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -90,6 +91,11 @@ COPY --from=builder /app/vender-server ./vender-server
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /app/docker/supervisord.conf
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
+
+# Install Puppeteer's Chrome for Testing into PUPPETEER_CACHE_DIR so PDF
+# rendering does not depend on a host/system Chrome package.
+RUN cd /app/Athens-server \
+ && node ./scripts/ensure-puppeteer-chrome.mjs
 
 RUN chmod +x /app/docker/entrypoint.sh \
  && find /app -name '.env' -delete \

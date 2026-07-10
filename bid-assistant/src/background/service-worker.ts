@@ -20,6 +20,13 @@ import {
 } from '@/lib/bid-session';
 
 const BRIDGE_URL = (import.meta.env.VITE_BRIDGE_URL ?? 'http://127.0.0.1:3848').replace(/\/$/, '');
+/** Remote bridges often need more than 2s; keep status checks honest. */
+const BRIDGE_HEALTH_TIMEOUT_MS = 8_000;
+
+function bridgeUnreachableMessage(cause?: unknown): string {
+  const detail = cause instanceof Error ? cause.message : cause ? String(cause) : 'unreachable';
+  return `Cannot reach bridge at ${BRIDGE_URL} (${detail}).`;
+}
 
 export interface GmailCredentials {
   email: string;
@@ -363,12 +370,17 @@ async function postBidSessionEvent(
     | '/bid-session/complete',
   payload: Record<string, unknown>,
 ): Promise<{ sessionId: string }> {
-  const response = await fetch(`${BRIDGE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(30000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BRIDGE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (error) {
+    throw new Error(bridgeUnreachableMessage(error));
+  }
 
   const data = (await response.json()) as { ok: boolean; sessionId?: string; error?: string };
   if (!response.ok || !data.ok || !data.sessionId) {
@@ -462,11 +474,9 @@ async function startBidSession(tabId: number): Promise<BidSessionState> {
     throw new Error('Load a profile at the top before starting a session.');
   }
 
-  const bridgeRunning = await checkBridge();
-  if (!bridgeRunning) {
-    throw new Error('Local bridge is not running. Start vender-server with: npm run bridge');
-  }
-
+  // Do not preflight /health here — a flaky short health check can fail while the
+  // bridge is fine (UI already shows "Bridge online"). Let the real start request
+  // be the source of truth and surface its error.
   const tab = await getBidTab(tabId);
   await injectBidRecorder(tabId);
   const screenshot = await captureTabScreenshot(tabId, tab.windowId);
@@ -733,9 +743,15 @@ async function getBridgeStatus(): Promise<{
   mongoError: string | null;
 }> {
   try {
-    const response = await fetch(`${BRIDGE_URL}/health`, { signal: AbortSignal.timeout(2000) });
+    const response = await fetch(`${BRIDGE_URL}/health`, {
+      signal: AbortSignal.timeout(BRIDGE_HEALTH_TIMEOUT_MS),
+    });
     if (!response.ok) {
-      return { running: false, mongoConnected: false, mongoError: 'Bridge unreachable' };
+      return {
+        running: false,
+        mongoConnected: false,
+        mongoError: bridgeUnreachableMessage(`HTTP ${response.status}`),
+      };
     }
     const data = (await response.json()) as {
       mongoConnected?: boolean;
@@ -746,28 +762,18 @@ async function getBridgeStatus(): Promise<{
       mongoConnected: Boolean(data.mongoConnected),
       mongoError: data.mongoConnected ? null : data.mongoError ?? 'Database not connected',
     };
-  } catch {
+  } catch (error) {
     return {
       running: false,
       mongoConnected: false,
-      mongoError: 'Bridge is not running. Start vender-server with: npm run bridge',
+      mongoError: bridgeUnreachableMessage(error),
     };
   }
-}
-
-async function checkBridge(): Promise<boolean> {
-  const status = await getBridgeStatus();
-  return status.running && status.mongoConnected;
 }
 
 async function bridgePost(path: string, payload: Record<string, unknown>) {
   const applierState = await getStoredApplierState();
   const credentials = await getStoredCredentials();
-
-  const bridgeRunning = await checkBridge();
-  if (!bridgeRunning) {
-    throw new Error('IMAP bridge is not running. Start vender-server with: npm run bridge');
-  }
 
   const body: Record<string, unknown> = {
     label: GMAIL_LABEL,
@@ -783,12 +789,17 @@ async function bridgePost(path: string, payload: Record<string, unknown>) {
     throw new Error('Load a profile at the top, or add Gmail credentials in Inbox settings.');
   }
 
-  const response = await fetch(`${BRIDGE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BRIDGE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (error) {
+    throw new Error(bridgeUnreachableMessage(error));
+  }
 
   const data = (await response.json()) as { ok: boolean; error?: string };
   if (!response.ok || !data.ok) {
@@ -799,17 +810,17 @@ async function bridgePost(path: string, payload: Record<string, unknown>) {
 }
 
 async function verifyApplierProfile(applierName: string): Promise<ProfileVerification> {
-  const bridgeRunning = await checkBridge();
-  if (!bridgeRunning) {
-    throw new Error('Bridge is not running. Start vender-server with: npm run bridge');
+  let response: Response;
+  try {
+    response = await fetch(`${BRIDGE_URL}/profile/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ applierName: applierName.trim() }),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (error) {
+    throw new Error(bridgeUnreachableMessage(error));
   }
-
-  const response = await fetch(`${BRIDGE_URL}/profile/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ applierName: applierName.trim() }),
-    signal: AbortSignal.timeout(120000),
-  });
 
   const data = (await response.json()) as ProfileVerification & { ok: boolean; error?: string };
   if (!response.ok || !data.ok) {
@@ -896,17 +907,17 @@ async function bridgeAnalyze<T>(
   sessionContext: BidSessionContext,
   extraBody: Record<string, unknown> = {},
 ): Promise<{ result: T; usage: UsageSummary }> {
-  const bridgeRunning = await checkBridge();
-  if (!bridgeRunning) {
-    throw new Error('Local bridge is not running. Start vender-server with: npm run bridge');
+  let response: Response;
+  try {
+    response = await fetch(`${BRIDGE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pageContext, applierName, sessionContext, ...extraBody }),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (error) {
+    throw new Error(bridgeUnreachableMessage(error));
   }
-
-  const response = await fetch(`${BRIDGE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pageContext, applierName, sessionContext, ...extraBody }),
-    signal: AbortSignal.timeout(120000),
-  });
 
   const data = (await response.json()) as {
     ok: boolean;

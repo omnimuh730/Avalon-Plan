@@ -6,6 +6,8 @@
 	"license": "MIT",
 	"scripts": {
 		"start": "nodemon index.js",
+		"postinstall": "node ./scripts/ensure-puppeteer-chrome.mjs || echo \"[puppeteer] Chrome install deferred — run: npm run install:chrome -w Athens-server\"",
+		"install:chrome": "node ./scripts/ensure-puppeteer-chrome.mjs",
 		"test:matching": "node --test ../packages/shared/src/pricing.test.mjs ../packages/shared/src/matching.test.mjs",
 		"test:external-jobs": "node --test src/services/externalScrapedJobsListQuery.test.mjs",
 		"test:ai-usage": "node --test src/services/aiUsageQuery.test.mjs",

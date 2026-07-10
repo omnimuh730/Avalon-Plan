@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
 /**
@@ -11,7 +13,19 @@ import puppeteer from "puppeteer";
  *
  * Rendering from the preview's own DOM means no template logic is re-implemented
  * here, so nothing is lost in translation.
+ *
+ * Uses Puppeteer's bundled Chrome for Testing (installed via postinstall /
+ * `npm run install:chrome`). Do not depend on a host Chrome install — servers
+ * and containers often have none. Optional override: PUPPETEER_EXECUTABLE_PATH.
  */
+
+// Prefer a project-local cache so deploys don't rely on ~/.cache or system Chrome.
+if (!process.env.PUPPETEER_CACHE_DIR) {
+	process.env.PUPPETEER_CACHE_DIR = join(
+		dirname(fileURLToPath(import.meta.url)),
+		"../../.cache/puppeteer",
+	);
+}
 
 let browserPromise = null;
 
@@ -22,10 +36,15 @@ async function getBrowser() {
 		if (b && b.connected) return b;
 		browserPromise = null;
 	}
-	browserPromise = puppeteer.launch({
+	const launchOpts = {
 		headless: "new",
 		args: ["--no-sandbox", "--disable-setuid-sandbox", "--font-render-hinting=none"],
-	});
+	};
+	// Explicit override only — default is Puppeteer's downloaded Chrome for Testing.
+	if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+		launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+	}
+	browserPromise = puppeteer.launch(launchOpts);
 	return browserPromise;
 }
 

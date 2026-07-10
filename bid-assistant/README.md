@@ -1,4 +1,4 @@
-# Gmail Assistant
+# Bid-Copilot
 
 Chrome sidebar extension to read Gmail emails with the **`Notify/Unnecessary`** label in a compact list view.
 

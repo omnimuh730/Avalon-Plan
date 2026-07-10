@@ -48,6 +48,22 @@ Then: npm start
 }
 console.log(`[prestart] MongoDB ready on ${MONGO_HOST}:${MONGO_PORT}`);
 
+// Ensure Puppeteer's bundled Chrome is present for résumé PDF rendering.
+// Skips download when already cached; does not use system Chrome.
+{
+	const chrome = spawnSync('npm', ['run', 'install:chrome', '-w', 'Athens-server'], {
+		stdio: 'inherit',
+		cwd: ROOT,
+	});
+	if (chrome.status !== 0) {
+		console.warn(`
+[prestart] Puppeteer Chrome for Testing is not installed.
+Résumé PDF rendering will fail until you run:
+  npm run install:chrome -w Athens-server
+`);
+	}
+}
+
 // Build the unified AI gateway that all LLM calls route through.
 run('npm', ['run', 'build', '-w', 'unified-ai-server']);
 
