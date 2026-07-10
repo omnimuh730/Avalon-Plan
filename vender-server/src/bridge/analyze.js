@@ -2,6 +2,11 @@ import { parseSkillProfile, rankResumes } from '../lib/resume-match.mjs';
 import { formatProfileForAnalysis } from '../services/profileService.js';
 import { profileResumeMatch, selectResumePdfPath } from '../services/resumeSelectionService.js';
 
+/** Bid-Copilot always uses the lightest/cheapest GPT-5 tier — ignore profile model picks. */
+const HARDCODED_OPENAI_MODEL = 'gpt-5-nano';
+/** gpt-5-nano rejects `none`; `minimal` is the cheapest valid reasoning effort. */
+const HARDCODED_REASONING_EFFORT = 'minimal';
+
 const PRICING_PER_MILLION = {
   'gpt-5-nano': { input: 0.05, cached: 0.005, output: 0.4 },
   'gpt-5-mini': { input: 0.25, cached: 0.025, output: 2.0 },
@@ -128,7 +133,7 @@ async function callOpenAi(
   apiKey,
   model,
   messages,
-  { jsonMode = false, cacheKey, reasoningEffort = 'none' } = {},
+  { jsonMode = false, cacheKey, reasoningEffort = HARDCODED_REASONING_EFFORT } = {},
 ) {
   if (!apiKey) {
     throw new Error(
@@ -142,8 +147,8 @@ async function callOpenAi(
   };
 
   if (model.startsWith('gpt-5')) {
-    // gpt-5* are reasoning models; the API defaults to "medium" effort, which
-    // adds seconds of hidden reasoning. "none" keeps nano fast (~sub-second).
+    // gpt-5* default to "medium" effort (slow/expensive). Use minimal for nano.
+    // Note: "none" is rejected by the API for this model family.
     body.reasoning_effort = reasoningEffort;
   } else {
     body.temperature = 0.2;
@@ -268,11 +273,13 @@ Form fields on page:
 ${formsText}`;
 }
 
-export function createAnalyzer({ skillPromptTemplate, defaultModel = 'gpt-5-nano' }) {
+export function createAnalyzer({ skillPromptTemplate, defaultModel = HARDCODED_OPENAI_MODEL }) {
+  // Always bill/analyze on gpt-5-nano regardless of profile defaultModel.
+  const model = HARDCODED_OPENAI_MODEL || defaultModel;
+
   async function analyzePage(pageContext, profileBundle, sessionContext) {
     const profileBlock = formatProfileForAnalysis(profileBundle.profile, profileBundle.skills);
     const apiKey = profileBundle.openAi?.apiKey ?? '';
-    const model = profileBundle.openAi?.model || defaultModel;
     const { content, usage } = await callOpenAi(
       apiKey,
       model,
@@ -321,7 +328,6 @@ export function createAnalyzer({ skillPromptTemplate, defaultModel = 'gpt-5-nano
     }
 
     const apiKey = profileBundle.openAi?.apiKey ?? '';
-    const model = profileBundle.openAi?.model || defaultModel;
     // The JD usually lives on the original posting, not the form page. Prefer
     // the JD remembered from earlier in the session so the skill profile stays
     // anchored to the real job description even when analyzing a form page.
@@ -419,7 +425,6 @@ export function createAnalyzer({ skillPromptTemplate, defaultModel = 'gpt-5-nano
     }
 
     const apiKey = profileBundle.openAi?.apiKey ?? '';
-    const model = profileBundle.openAi?.model || defaultModel;
 
     // Prefer the richest remembered JD (same rationale as analyzeSkills) so a
     // form page on a different URL still gets the original posting scanned.

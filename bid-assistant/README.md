@@ -79,6 +79,12 @@ The assistant will:
 
 The extension does not fill forms or interact with the page — it only reads visible text and form labels.
 
+### Resume upload renaming
+
+When a profile is loaded (e.g. `Tracy Nguyen`), any `.pdf` / `.docx` file selected or uploaded on a page is renamed on the fly to `TracyNguyen.pdf` / `TracyNguyen.docx` (spaces removed). Original filenames appear in the **Job Bid** tab under **Resume uploads**.
+
+Hooks run in every frame at `document_start`: isolated-world file `<input>` rewrite (works under strict CSP), plus service-worker `executeScript` MAIN-world patches for `FormData` / `fetch` / `XHR` (Greenhouse blocks CRX dynamic MAIN imports).
+
 ## Scripts
 
 | Command | Description |

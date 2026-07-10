@@ -18,6 +18,12 @@ import {
   type BidSessionState,
   type BidShot,
 } from '@/lib/bid-session';
+import {
+  MAX_RESUME_UPLOAD_EVENTS,
+  RESUME_UPLOADS_STORAGE_KEY,
+  type LogUploadMessage,
+  type ResumeUploadEvent,
+} from '@/lib/resume-uploads';
 
 const BRIDGE_URL = (import.meta.env.VITE_BRIDGE_URL ?? 'http://127.0.0.1:3848').replace(/\/$/, '');
 /** Remote bridges often need more than 2s; keep status checks honest. */
@@ -71,7 +77,11 @@ type Message =
   | { type: 'START_BID_SESSION'; tabId: number }
   | { type: 'COMPLETE_BID_SESSION'; tabId: number }
   | { type: 'GET_BID_SHOTS'; tabId: number }
-  | { type: 'BID_PROCESS_CLICK'; triggerText: string };
+  | { type: 'BID_PROCESS_CLICK'; triggerText: string }
+  | LogUploadMessage
+  | { type: 'GET_RESUME_UPLOADS' }
+  | { type: 'CLEAR_RESUME_UPLOADS' }
+  | { type: 'INJECT_RESUME_UPLOAD_HOOKS'; profileFileBase: string | null };
 
 type Response =
   | { ok: true; credentials: StoredCredentials | null }
@@ -125,6 +135,68 @@ async function clearApplierState(): Promise<void> {
     'profileChecks',
     'profileEmail',
   ]);
+}
+
+async function getStoredResumeUploads(): Promise<ResumeUploadEvent[]> {
+  const result = await chrome.storage.local.get(RESUME_UPLOADS_STORAGE_KEY);
+  const raw = result[RESUME_UPLOADS_STORAGE_KEY];
+  return Array.isArray(raw) ? (raw as ResumeUploadEvent[]) : [];
+}
+
+function uploadDedupeKey(event: Pick<ResumeUploadEvent, 'originalName' | 'cleanedName' | 'fileSize' | 'lastModified' | 'pageUrl'>): string {
+  return [
+    event.originalName,
+    event.cleanedName ?? '',
+    event.fileSize ?? '',
+    event.lastModified ?? '',
+    event.pageUrl,
+  ].join('|');
+}
+
+async function recordResumeUpload(message: LogUploadMessage): Promise<ResumeUploadEvent> {
+  const event: ResumeUploadEvent = {
+    id: `${message.ts}-${Math.random().toString(36).slice(2, 9)}`,
+    originalName: message.originalName,
+    cleanedName: message.cleanedName,
+    renamed: message.renamed,
+    source: message.source,
+    pageUrl: message.pageUrl,
+    ts: message.ts,
+    profileFileBase: message.profileFileBase,
+    fileSize: message.fileSize,
+    lastModified: message.lastModified,
+  };
+
+  const existing = await getStoredResumeUploads();
+  const key = uploadDedupeKey(event);
+  const recentDuplicate = existing.find(
+    (item) => uploadDedupeKey(item) === key && Math.abs(item.ts - event.ts) < 2000,
+  );
+  if (recentDuplicate) {
+    console.log('[resume-upload] deduped', {
+      originalName: event.originalName,
+      source: event.source,
+    });
+    return recentDuplicate;
+  }
+
+  const next = [event, ...existing].slice(0, MAX_RESUME_UPLOAD_EVENTS);
+  await chrome.storage.local.set({ [RESUME_UPLOADS_STORAGE_KEY]: next });
+
+  console.log('[resume-upload]', {
+    originalName: event.originalName,
+    cleanedName: event.cleanedName,
+    renamed: event.renamed,
+    source: event.source,
+    profileFileBase: event.profileFileBase,
+    pageUrl: event.pageUrl,
+  });
+
+  return event;
+}
+
+async function clearStoredResumeUploads(): Promise<void> {
+  await chrome.storage.local.remove(RESUME_UPLOADS_STORAGE_KEY);
 }
 
 // Every bid-session storage key is namespaced by the Chrome tabId so each tab
@@ -642,6 +714,288 @@ async function injectBidRecorder(tabId: number): Promise<void> {
     });
   } catch {
     // Restricted tab — ignore.
+  }
+}
+
+/**
+ * Inject FormData/fetch/XHR resume rename hooks into the page MAIN world.
+ * Uses chrome.scripting.executeScript so page CSP cannot block it (unlike
+ * CRX dynamic import() of world:MAIN content scripts on Greenhouse).
+ */
+async function injectResumeUploadHooks(
+  tabId: number,
+  profileFileBase: string | null,
+  frameId?: number,
+): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target:
+        frameId != null
+          ? { tabId, frameIds: [frameId] }
+          : { tabId, allFrames: true },
+      world: 'MAIN',
+      args: [profileFileBase],
+      func: (initialProfileFileBase: string | null) => {
+        const w = window as unknown as {
+          __resumeUploadHook?: boolean;
+          __resumeUploadProfileBase?: string | null;
+        };
+
+        w.__resumeUploadProfileBase =
+          typeof initialProfileFileBase === 'string' && initialProfileFileBase.length > 0
+            ? initialProfileFileBase
+            : null;
+
+        const HOOK_SOURCE = 'resume-upload-hook';
+        const BRIDGE_SOURCE = 'resume-upload-bridge';
+        const TARGET_EXT_RE = /\.(pdf|docx)$/i;
+
+        const getProfileBase = () => w.__resumeUploadProfileBase ?? null;
+
+        const isTarget = (name: string) => TARGET_EXT_RE.test(name.trim());
+
+        const buildCleanName = (originalName: string, base: string | null): string | null => {
+          if (!base || !isTarget(originalName)) return null;
+          const match = originalName.trim().match(TARGET_EXT_RE);
+          if (!match) return null;
+          const next = `${base}${match[0]}`;
+          return next === originalName ? null : next;
+        };
+
+        const cloneFile = (file: File, newName: string, originalName: string) => {
+          const next = new File([file], newName, {
+            type: file.type,
+            lastModified: file.lastModified,
+          });
+          try {
+            Object.defineProperty(next, '__bidOriginalName', {
+              value: originalName,
+              enumerable: false,
+              configurable: true,
+            });
+          } catch {
+            (next as File & { __bidOriginalName?: string }).__bidOriginalName = originalName;
+          }
+          return next;
+        };
+
+        const readOriginalName = (file: File, fallback: string): string => {
+          const stamped = (file as File & { __bidOriginalName?: unknown }).__bidOriginalName;
+          return typeof stamped === 'string' && stamped.length > 0 ? stamped : fallback;
+        };
+
+        const postLog = (partial: {
+          originalName: string;
+          cleanedName: string | null;
+          renamed: boolean;
+          uploadSource: string;
+          fileSize?: number;
+          lastModified?: number;
+        }) => {
+          // Only record real renames — never "already matched" noise.
+          if (!partial.renamed || !partial.cleanedName) return;
+          try {
+            window.postMessage(
+              {
+                source: HOOK_SOURCE,
+                kind: 'log',
+                pageUrl: location.href,
+                ts: Date.now(),
+                profileFileBase: getProfileBase(),
+                ...partial,
+              },
+              '*',
+            );
+          } catch {
+            // ignore
+          }
+        };
+
+        const rewriteFile = (file: File, uploadSource: string): File => {
+          if (!isTarget(file.name)) return file;
+          const bidderOriginal = readOriginalName(file, file.name);
+          const cleanedName = buildCleanName(file.name, getProfileBase());
+          if (!cleanedName) {
+            // Input layer already renamed; still surface original if stamped.
+            if (bidderOriginal !== file.name) {
+              postLog({
+                originalName: bidderOriginal,
+                cleanedName: file.name,
+                renamed: true,
+                uploadSource,
+                fileSize: file.size,
+                lastModified: file.lastModified,
+              });
+            }
+            return file;
+          }
+          postLog({
+            originalName: bidderOriginal,
+            cleanedName,
+            renamed: true,
+            uploadSource,
+            fileSize: file.size,
+            lastModified: file.lastModified,
+          });
+          return cloneFile(file, cleanedName, bidderOriginal);
+        };
+
+        const rewriteBlob = (
+          value: Blob,
+          filename: string | undefined,
+          uploadSource: string,
+        ): { value: Blob; filename?: string } => {
+          const name = filename || (value instanceof File ? value.name : '');
+          if (!name || !isTarget(name)) return { value, filename };
+          const bidderOriginal =
+            value instanceof File ? readOriginalName(value, name) : name;
+          const cleanedName = buildCleanName(name, getProfileBase());
+          if (!cleanedName) {
+            if (bidderOriginal !== name) {
+              postLog({
+                originalName: bidderOriginal,
+                cleanedName: name,
+                renamed: true,
+                uploadSource,
+                fileSize: value.size,
+                lastModified: value instanceof File ? value.lastModified : undefined,
+              });
+            }
+            return { value, filename };
+          }
+          postLog({
+            originalName: bidderOriginal,
+            cleanedName,
+            renamed: true,
+            uploadSource,
+            fileSize: value.size,
+            lastModified: value instanceof File ? value.lastModified : undefined,
+          });
+          if (value instanceof File) {
+            return {
+              value: cloneFile(value, cleanedName, bidderOriginal),
+              filename: cleanedName,
+            };
+          }
+          const next = new File([value], cleanedName, {
+            type: value.type,
+            lastModified: Date.now(),
+          });
+          try {
+            Object.defineProperty(next, '__bidOriginalName', {
+              value: bidderOriginal,
+              enumerable: false,
+              configurable: true,
+            });
+          } catch {
+            (next as File & { __bidOriginalName?: string }).__bidOriginalName = bidderOriginal;
+          }
+          return { value: next, filename: cleanedName };
+        };
+
+        // Always refresh profile base from bridge messages (idempotent).
+        window.addEventListener('message', (event: MessageEvent) => {
+          if (event.source !== window) return;
+          const data = event.data as {
+            source?: string;
+            kind?: string;
+            profileFileBase?: string | null;
+          } | null;
+          if (!data || data.source !== BRIDGE_SOURCE || data.kind !== 'config') return;
+          w.__resumeUploadProfileBase =
+            typeof data.profileFileBase === 'string' && data.profileFileBase.length > 0
+              ? data.profileFileBase
+              : null;
+        });
+
+        if (w.__resumeUploadHook) {
+          try {
+            window.postMessage({ source: HOOK_SOURCE, kind: 'ready' }, '*');
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        w.__resumeUploadHook = true;
+
+        // File <input> rewriting is handled in the isolated bridge (CSP-safe).
+        // MAIN world only patches network upload APIs.
+
+        const originalAppend = FormData.prototype.append;
+        const originalSet = FormData.prototype.set;
+
+        FormData.prototype.append = function append(
+          name: string,
+          value: string | Blob,
+          filename?: string,
+        ) {
+          if (typeof value === 'string') {
+            return originalAppend.call(this, name, value);
+          }
+          const rewritten = rewriteBlob(value, filename, 'formdata');
+          if (rewritten.filename !== undefined) {
+            return originalAppend.call(this, name, rewritten.value, rewritten.filename);
+          }
+          return originalAppend.call(this, name, rewritten.value);
+        } as typeof FormData.prototype.append;
+
+        FormData.prototype.set = function set(
+          name: string,
+          value: string | Blob,
+          filename?: string,
+        ) {
+          if (typeof value === 'string') {
+            return originalSet.call(this, name, value);
+          }
+          const rewritten = rewriteBlob(value, filename, 'formdata');
+          if (rewritten.filename !== undefined) {
+            return originalSet.call(this, name, rewritten.value, rewritten.filename);
+          }
+          return originalSet.call(this, name, rewritten.value);
+        } as typeof FormData.prototype.set;
+
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = function patchedFetch(
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ): Promise<Response> {
+          try {
+            if (init?.body instanceof File) {
+              const next = rewriteFile(init.body, 'fetch');
+              if (next !== init.body) {
+                return originalFetch(input, { ...init, body: next });
+              }
+            }
+          } catch {
+            // fall through
+          }
+          return originalFetch(input, init);
+        };
+
+        const originalSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function patchedSend(
+          body?: Document | XMLHttpRequestBodyInit | null,
+        ) {
+          try {
+            if (body instanceof File) {
+              return originalSend.call(this, rewriteFile(body, 'xhr'));
+            }
+          } catch {
+            // fall through
+          }
+          return originalSend.call(this, body);
+        };
+
+        try {
+          window.postMessage({ source: HOOK_SOURCE, kind: 'ready' }, '*');
+        } catch {
+          // ignore
+        }
+        console.info('[resume-upload] MAIN hooks installed via executeScript');
+      },
+    });
+  } catch (error) {
+    console.warn('[resume-upload] executeScript inject failed', error);
   }
 }
 
@@ -1177,6 +1531,33 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
         }
         case 'BID_PROCESS_CLICK': {
           await recordBidProcessClick(message.triggerText, sender);
+          sendResponse({ ok: true } satisfies Response);
+          break;
+        }
+        case 'LOG_UPLOAD': {
+          await recordResumeUpload(message);
+          sendResponse({ ok: true } satisfies Response);
+          break;
+        }
+        case 'INJECT_RESUME_UPLOAD_HOOKS': {
+          const tabId = sender.tab?.id;
+          if (tabId != null) {
+            await injectResumeUploadHooks(
+              tabId,
+              message.profileFileBase,
+              sender.frameId,
+            );
+          }
+          sendResponse({ ok: true } satisfies Response);
+          break;
+        }
+        case 'GET_RESUME_UPLOADS': {
+          const uploads = await getStoredResumeUploads();
+          sendResponse({ ok: true, uploads });
+          break;
+        }
+        case 'CLEAR_RESUME_UPLOADS': {
+          await clearStoredResumeUploads();
           sendResponse({ ok: true } satisfies Response);
           break;
         }

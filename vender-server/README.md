@@ -17,7 +17,8 @@ Configure `.env`:
 - `MONGO_URL` / `MONGO_DB` — same MongoDB as lancer-backend (profiles + `bid_records`)
 - `API_KEYS_ENCRYPTION_KEY` — same 64-char hex key as Athens-server (decrypts `openaiApiKey` / `deepseekApiKey` from MongoDB)
 - `APPLIER_NAME` — account name from the MongoDB `account_info` collection
-- OpenAI API key + model — set in **lancer-frontend → Settings → Profile** (MongoDB), not in this `.env`
+- OpenAI API key — set in **lancer-frontend → Settings → Profile** (MongoDB), not in this `.env`
+- Job Bid **Analyze** always uses hardcoded **`gpt-5-nano`** + `reasoning_effort: minimal` (profile model is ignored)
 - `PROMPT_MD_PATH` — optional override; the job-analysis prompt is embedded by default
 
 ## Run

@@ -27,6 +27,7 @@ import { useCompletedCounter } from '@/app/hooks/useCompletedCounter';
 import type { BidShot } from '@/lib/bid-session';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
+import { ResumeUploadsPanel } from './ResumeUploadsPanel';
 
 const PANEL = 'rounded-xl border border-border/80 bg-card shadow-sm overflow-hidden min-w-0';
 const PANEL_HEADER =
@@ -514,6 +515,8 @@ export function JobBidAssistant() {
         {(sessionActive || sessionCompleted || jdAnalyzed) && (
           <TrafficLights jdAnalyzed={jdAnalyzed} flags={flags} />
         )}
+
+        <ResumeUploadsPanel />
 
         <RecordingGallery shots={shots} />
 

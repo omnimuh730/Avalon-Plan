@@ -41,7 +41,8 @@ loadEnv();
 
 const HOST = process.env.BRIDGE_HOST || '127.0.0.1';
 const PORT = Number(process.env.BRIDGE_PORT || 3848);
-const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL ?? 'gpt-5-nano';
+// Job Bid analysis is hardcoded to gpt-5-nano in analyze.js (cheapest tier).
+const DEFAULT_OPENAI_MODEL = 'gpt-5-nano';
 
 // The job-analysis prompt is embedded in the codebase (src/config/jobAnalysisPrompt.js),
 // so it always works without a prompt.md asset in dist/. PROMPT_MD_PATH still lets you

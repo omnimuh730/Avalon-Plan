@@ -182,9 +182,9 @@ async function callOpenAi(messages, { jsonMode = false, cacheKey } = {}) {
   };
 
   if (OPENAI_MODEL.startsWith('gpt-5')) {
-    // gpt-5* are reasoning models; the API defaults to "medium" effort, which
-    // adds seconds of hidden reasoning. "none" keeps nano fast (~sub-second).
-    body.reasoning_effort = 'none';
+    // gpt-5* default to "medium" effort. "minimal" is the cheapest valid value
+    // ("none" is rejected by the API for this model family).
+    body.reasoning_effort = 'minimal';
   } else {
     body.temperature = 0.2;
   }

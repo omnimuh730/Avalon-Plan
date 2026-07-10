@@ -30,6 +30,21 @@
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/bid-recorder-main.ts"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/resume-upload-bridge.ts"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
     }
   ],
   "permissions": ["sidePanel", "storage", "unlimitedStorage", "tabs", "scripting", "activeTab", "debugger"],

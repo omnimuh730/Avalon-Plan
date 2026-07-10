@@ -1,13 +1,17 @@
 /**
- * Records bid process steps. Uses a MAIN-world click hook (via postMessage) so
- * React / Ashby controls are caught even when isolated-world listeners miss them.
+ * Isolated-world bid recorder bridge.
+ * Listens for MAIN-world postMessage triggers and forwards BID_PROCESS_CLICK
+ * to the service worker. Also keeps capture-phase listeners as a fallback.
+ *
+ * MAIN hooks live in bid-recorder-main.ts (manifest world: MAIN) — do not
+ * inject inline <script> tags; Greenhouse CSP blocks them.
  */
 
 const TRIGGER_PATTERN = /(apply|submit|next|continue|proceed|save)/i;
 const ACTION_SELECTOR =
   'a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"], label';
 const DEBOUNCE_MS = 600;
-const MAIN_HOOK_FLAG = 'data-bid-recorder-main';
+const HOOK_SOURCE = 'bid-recorder-hook';
 
 let lastSentAt = 0;
 
@@ -104,7 +108,8 @@ function handleFormSubmit(event: Event): void {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
 
-  const submitter = event.submitter instanceof Element ? event.submitter : null;
+  const submitEvent = event as SubmitEvent;
+  const submitter = submitEvent.submitter instanceof Element ? submitEvent.submitter : null;
   const fromSubmitter = submitter ? triggerTextFor(submitter) || readableText(submitter) : '';
   if (fromSubmitter && TRIGGER_PATTERN.test(fromSubmitter)) {
     dispatchTrigger(fromSubmitter);
@@ -114,60 +119,11 @@ function handleFormSubmit(event: Event): void {
   dispatchTrigger('Submit');
 }
 
-function injectMainWorldHook(): void {
-  const root = document.documentElement;
-  if (root.hasAttribute(MAIN_HOOK_FLAG)) return;
-  root.setAttribute(MAIN_HOOK_FLAG, '1');
-
-  const script = document.createElement('script');
-  script.textContent = `(function(){
-    if (window.__bidRecorderMainHook) return;
-    window.__bidRecorderMainHook = true;
-    var P=/(apply|submit|next|continue|proceed|save)/i;
-    function txt(el){
-      if(!el||!el.getAttribute) return '';
-      return (el.getAttribute('aria-label')||el.textContent||'').replace(/\\s+/g,' ').trim();
-    }
-    function findTarget(t){
-      for(var i=0;i<16&&t;i++){
-        if(t.nodeType!==1){t=t.parentElement;continue;}
-        var s=txt(t);
-        if(s&&s.length<=80&&P.test(s)) return s;
-        t=t.parentElement;
-      }
-      return null;
-    }
-    function post(label){
-      window.postMessage({source:'bid-recorder-hook',triggerText:label},'*');
-    }
-    document.addEventListener('pointerdown',function(e){
-      var l=findTarget(e.target);
-      if(l) post(l);
-    },true);
-    document.addEventListener('click',function(e){
-      var l=findTarget(e.target);
-      if(l) post(l);
-    },true);
-    document.addEventListener('submit',function(e){
-      var sub=e.submitter;
-      var l=sub?txt(sub):'Submit';
-      if(l&&P.test(l)) post(l);
-      else post('Submit');
-    },true);
-  })();`;
-
-  const parent = document.head || document.documentElement;
-  parent.appendChild(script);
-  script.remove();
-}
-
 function start(): void {
-  injectMainWorldHook();
-
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
     const data = event.data as { source?: string; triggerText?: string } | null;
-    if (data?.source !== 'bid-recorder-hook' || !data.triggerText) return;
+    if (data?.source !== HOOK_SOURCE || !data.triggerText) return;
     dispatchTrigger(data.triggerText);
   });
 
@@ -177,16 +133,4 @@ function start(): void {
   document.addEventListener('submit', handleFormSubmit, { capture: true });
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', start, { once: true });
-} else {
-  start();
-}
-
-// SPA soft navigations keep the same document — re-inject if Ashby remounts the root.
-const observer = new MutationObserver(() => {
-  if (!document.documentElement.hasAttribute(MAIN_HOOK_FLAG)) {
-    start();
-  }
-});
-observer.observe(document.documentElement, { childList: true, subtree: false });
+start();
