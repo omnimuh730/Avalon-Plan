@@ -56,7 +56,7 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
   },
   sort: "matchScore",
   aiExtractedOnly: false,
-  includeExternalScraped: false,
+  includeExternalScraped: true,
 };
 
 function inScoreRange(value: number, range: ScoreRange) {

@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Coins,
   ExternalLink,
+  FileUp,
   Filter,
   MousePointerClick,
   RefreshCw,
@@ -351,6 +352,12 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
                           <Sparkles className="w-2.5 h-2.5" />
                           {s.analysisCount}
                         </span>
+                        {(s.resumeUploadCount ?? 0) > 0 && (
+                          <span className="flex items-center gap-0.5">
+                            <FileUp className="w-2.5 h-2.5" />
+                            {s.resumeUploadCount}
+                          </span>
+                        )}
                         <span className="flex items-center gap-0.5">
                           <Coins className="w-2.5 h-2.5" />
                           {formatCost(s.totalCost)}
@@ -391,6 +398,16 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
                   <span className="text-xs text-muted-foreground">{detail.session.applierName}</span>
                   <span className="text-xs text-muted-foreground">{detail.session.processCount} steps</span>
                   <span className="text-xs text-muted-foreground">{detail.session.analysisCount} analyses</span>
+                  {(detail.session.resumeUploadCount ?? 0) > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {detail.session.resumeUploadCount} resume uploads
+                    </span>
+                  )}
+                  {detail.session.modelVersion && (
+                    <span className="text-[10px] text-muted-foreground/80 font-mono">
+                      v{detail.session.modelVersion}
+                    </span>
+                  )}
                   <span className="text-xs text-muted-foreground">{formatCost(detail.session.totalCost)}</span>
                   <span className="text-xs text-muted-foreground">
                     {durationLabel(detail.session.startedAt, detail.session.completedAt)}
@@ -432,6 +449,60 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
                   </div>
                 </div>
               </div>
+
+              {((detail.session.resumeUploads?.length ?? 0) > 0 ||
+                detail.records.some((r) => r.type === "resume-upload")) && (
+                <div className="rounded-xl bg-card border border-border px-3 py-2.5 min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-medium mb-2">
+                    <FileUp className="w-3.5 h-3.5 text-violet-500" />
+                    Resume uploads
+                  </div>
+                  <ul className="space-y-1.5">
+                    {(detail.session.resumeUploads && detail.session.resumeUploads.length > 0
+                      ? detail.session.resumeUploads
+                      : detail.records
+                          .filter((r) => r.type === "resume-upload")
+                          .map((r) => ({
+                            originalName: r.originalName || "—",
+                            cleanedName: r.cleanedName,
+                            renamed: Boolean(r.renamed),
+                            source: r.uploadSource,
+                            pageUrl: r.url,
+                            ts: undefined as number | undefined,
+                          }))
+                    ).map((upload, index) => (
+                      <li
+                        key={`${upload.originalName}-${upload.cleanedName ?? ""}-${index}`}
+                        className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-1.5 text-[11px]"
+                      >
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          Original
+                        </div>
+                        <div className="font-medium text-foreground truncate" title={upload.originalName}>
+                          {upload.originalName}
+                        </div>
+                        {upload.renamed && upload.cleanedName ? (
+                          <>
+                            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">
+                              Uploaded as
+                            </div>
+                            <div
+                              className="font-medium text-emerald-600 dark:text-emerald-400 truncate"
+                              title={upload.cleanedName}
+                            >
+                              {upload.cleanedName}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
+                            Not renamed
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {detail.records.some((r) => r.screenshot) && (
                 <div className="rounded-xl bg-card border border-border px-3 py-2 min-w-0 overflow-hidden">
@@ -486,7 +557,7 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
                                 {formatTime(r.createdAt)}
                               </span>
                             </div>
-                            {r.url && (
+                            {r.url && r.type !== "resume-upload" && (
                               <a
                                 href={r.url}
                                 target="_blank"
@@ -497,6 +568,31 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
                                 <ExternalLink className="w-3 h-3 shrink-0" />
                                 <span className="truncate">{r.title || r.url}</span>
                               </a>
+                            )}
+                            {r.type === "resume-upload" && r.originalName && (
+                              <div className="mt-1.5 rounded-lg border border-border/60 bg-muted/20 px-2 py-1.5 text-[11px] space-y-0.5">
+                                <div>
+                                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                    Original{" "}
+                                  </span>
+                                  <span className="font-medium text-foreground">{r.originalName}</span>
+                                </div>
+                                {r.renamed && r.cleanedName ? (
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                      Uploaded as{" "}
+                                    </span>
+                                    <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                                      {r.cleanedName}
+                                    </span>
+                                  </div>
+                                ) : null}
+                                {r.uploadSource && (
+                                  <div className="text-[10px] text-muted-foreground uppercase">
+                                    via {r.uploadSource}
+                                  </div>
+                                )}
+                              </div>
                             )}
                             {panel}
                           </div>

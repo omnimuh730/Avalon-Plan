@@ -18,6 +18,7 @@ import {
   completeBidSession,
   recordBidAnalysisEvent,
   recordBidProcessEvent,
+  recordBidResumeUploadEvent,
   startBidSession,
 } from '../src/services/bidSessionService.js';
 import {
@@ -195,6 +196,10 @@ async function handleBidSessionRequest(pathname, body) {
     const result = await recordBidAnalysisEvent(bidRecordsCollection, body);
     return { status: 200, payload: { ok: true, ...result } };
   }
+  if (pathname === '/bid-session/resume-upload') {
+    const result = await recordBidResumeUploadEvent(bidRecordsCollection, body);
+    return { status: 200, payload: { ok: true, ...result } };
+  }
   const result = await completeBidSession(bidRecordsCollection, body);
   return { status: 200, payload: { ok: true, ...result } };
 }
@@ -290,6 +295,7 @@ const server = http.createServer(async (req, res) => {
       (url.pathname === '/bid-session/start' ||
         url.pathname === '/bid-session/event' ||
         url.pathname === '/bid-session/analysis' ||
+        url.pathname === '/bid-session/resume-upload' ||
         url.pathname === '/bid-session/complete')
     ) {
       // Screenshots are base64 data URLs, so allow a much larger body.

@@ -23,7 +23,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avat
 import { Separator } from "../../../components/ui/separator";
 import { Skeleton } from "../../../components/ui/skeleton";
 import { cn } from "../../../lib/utils";
-import { bodyAsListItems, parseJobDescription } from "../../../lib/parseJobDescription";
 import { computeSkillHighlights } from "../../../lib/skill-match";
 import type { Job, WorkMode } from "../../../types";
 import { useJobDetail } from "../hooks/useJobDetail";
@@ -84,28 +83,6 @@ function MetaChip({
   );
 }
 
-function SectionBlock({ title, body }: { title: string; body: string }) {
-  const items = bodyAsListItems(body);
-
-  return (
-    <section className="space-y-2.5">
-      <h4 className="text-xs font-bold uppercase tracking-wider text-primary">{title}</h4>
-      {items ? (
-        <ul className="space-y-2 pl-1">
-          {items.map((item, index) => (
-            <li key={`${index}-${item.slice(0, 48)}`} className="flex gap-2.5 text-sm leading-relaxed text-foreground/90">
-              <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary/70" aria-hidden />
-              <span>{item}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-line">{body}</p>
-      )}
-    </section>
-  );
-}
-
 function DescriptionSkeleton() {
   return (
     <div className="space-y-4 py-2">
@@ -121,24 +98,8 @@ function DescriptionSkeleton() {
 function JobDescriptionBody({ job, loading }: { job: Job; loading: boolean }) {
   if (loading) return <DescriptionSkeleton />;
 
-  const { preamble, sections } = parseJobDescription(job.jobDescription);
-  const hasStructuredSections = sections.length > 0;
-
-  if (!hasStructuredSections) {
-    return (
-      <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-line">{job.jobDescription}</p>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      {preamble ? (
-        <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-line">{preamble}</p>
-      ) : null}
-      {sections.map((section, index) => (
-        <SectionBlock key={`${index}-${section.title}`} title={section.title} body={section.body} />
-      ))}
-    </div>
+    <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-line">{job.jobDescription}</p>
   );
 }
 

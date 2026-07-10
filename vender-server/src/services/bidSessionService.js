@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
+/** Bumped when bid_records document shape changes. */
+export const BID_RECORD_MODEL_VERSION = '2026.7.10';
+
 function cleanString(value) {
   return String(value ?? '').trim();
 }
@@ -81,6 +84,30 @@ function sanitizeTrace(trace) {
   };
 }
 
+const RESUME_UPLOAD_SOURCES = new Set(['input', 'formdata', 'fetch', 'xhr']);
+
+/** Single resume rename event (type: resume-upload) or list entries. */
+function sanitizeResumeUpload(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const originalName = cleanString(entry.originalName);
+  if (!originalName) return null;
+  const cleanedName = cleanString(entry.cleanedName) || null;
+  const sourceRaw = cleanString(entry.source).toLowerCase();
+  return {
+    originalName,
+    cleanedName,
+    renamed: Boolean(entry.renamed) && Boolean(cleanedName),
+    source: RESUME_UPLOAD_SOURCES.has(sourceRaw) ? sourceRaw : 'input',
+    pageUrl: cleanString(entry.pageUrl || entry.url) || null,
+    ts: Number.isFinite(Number(entry.ts)) ? Number(entry.ts) : Date.now(),
+  };
+}
+
+function sanitizeResumeUploads(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map(sanitizeResumeUpload).filter(Boolean).slice(0, 50);
+}
+
 function detectJobSource(url) {
   const raw = cleanString(url);
   if (!raw) return null;
@@ -109,11 +136,16 @@ function detectJobSource(url) {
 function buildRecord(sessionId, applierName, type, body) {
   const { mimeType, base64 } = parseScreenshot(body.screenshot);
   const url = cleanString(body.url) || null;
+  const resumeUpload = type === 'resume-upload' ? sanitizeResumeUpload(body) : null;
+  const resumeUploads =
+    type === 'session-complete' ? sanitizeResumeUploads(body.resumeUploads) : [];
+
   return {
     sessionId,
     profileId: cleanString(body.profileId) || null,
     applierName: applierName || null,
     type,
+    modelVersion: BID_RECORD_MODEL_VERSION,
     url,
     title: cleanString(body.title) || null,
     triggerText: cleanString(body.triggerText) || null,
@@ -123,7 +155,13 @@ function buildRecord(sessionId, applierName, type, body) {
     analysis: sanitizeAnalysis(body.analysis),
     usage: sanitizeUsage(body.usage),
     trace: sanitizeTrace(body.trace),
-    jobSource: body.jobSource ?? detectJobSource(url),
+    jobSource: body.jobSource ?? detectJobSource(url || resumeUpload?.pageUrl),
+    // Resume rename audit (modelVersion 2026.7.10+)
+    originalName: resumeUpload?.originalName ?? null,
+    cleanedName: resumeUpload?.cleanedName ?? null,
+    renamed: resumeUpload?.renamed ?? false,
+    uploadSource: resumeUpload?.source ?? null,
+    resumeUploads,
     createdAt: new Date(),
   };
 }
@@ -153,6 +191,31 @@ export async function recordBidAnalysisEvent(collection, body) {
     throw new Error('sessionId is required.');
   }
   await collection.insertOne(buildRecord(sessionId, cleanString(body.applierName), 'analysis', body));
+  return { sessionId };
+}
+
+/** Insert a resume-upload rename audit record. */
+export async function recordBidResumeUploadEvent(collection, body) {
+  const sessionId = cleanString(body.sessionId);
+  if (!sessionId) {
+    throw new Error('sessionId is required.');
+  }
+  const upload = sanitizeResumeUpload(body);
+  if (!upload) {
+    throw new Error('originalName is required for resume-upload events.');
+  }
+  await collection.insertOne(
+    buildRecord(sessionId, cleanString(body.applierName), 'resume-upload', {
+      ...body,
+      url: cleanString(body.url) || upload.pageUrl,
+      originalName: upload.originalName,
+      cleanedName: upload.cleanedName,
+      renamed: upload.renamed,
+      source: upload.source,
+      pageUrl: upload.pageUrl,
+      ts: upload.ts,
+    }),
+  );
   return { sessionId };
 }
 

@@ -61,7 +61,36 @@ function buildListPipeline({ match, fromDate, toDate, limit }) {
 				analysisCount: {
 					$sum: { $cond: [{ $eq: ["$type", "analysis"] }, 1, 0] },
 				},
+				resumeUploadCount: {
+					$sum: { $cond: [{ $eq: ["$type", "resume-upload"] }, 1, 0] },
+				},
 				recordCount: { $sum: 1 },
+				modelVersion: { $last: "$modelVersion" },
+				resumeUploadsFromComplete: {
+					$push: {
+						$cond: [
+							{ $eq: ["$type", "session-complete"] },
+							{ $ifNull: ["$resumeUploads", []] },
+							"$$REMOVE",
+						],
+					},
+				},
+				resumeUploadsFromEvents: {
+					$push: {
+						$cond: [
+							{ $eq: ["$type", "resume-upload"] },
+							{
+								originalName: "$originalName",
+								cleanedName: "$cleanedName",
+								renamed: "$renamed",
+								source: "$uploadSource",
+								pageUrl: "$url",
+								ts: { $toLong: "$createdAt" },
+							},
+							"$$REMOVE",
+						],
+					},
+				},
 				analysisCost: {
 					$sum: {
 						$cond: [{ $eq: ["$type", "analysis"] }, { $ifNull: ["$usage.cost", 0] }, 0],
@@ -109,6 +138,25 @@ function buildListPipeline({ match, fromDate, toDate, limit }) {
 				totalTokens: {
 					$cond: [{ $gt: ["$analysisTokens", 0] }, "$analysisTokens", "$completeTokens"],
 				},
+				resumeUploads: {
+					$let: {
+						vars: {
+							fromComplete: {
+								$first: { $ifNull: ["$resumeUploadsFromComplete", []] },
+							},
+							fromEvents: { $ifNull: ["$resumeUploadsFromEvents", []] },
+						},
+						in: {
+							$cond: [
+								{
+									$gt: [{ $size: { $ifNull: ["$$fromComplete", []] } }, 0],
+								},
+								"$$fromComplete",
+								"$$fromEvents",
+							],
+						},
+					},
+				},
 			},
 		},
 		// Show every started session, not just completed ones. Sessions without a
@@ -133,6 +181,8 @@ function buildListPipeline({ match, fromDate, toDate, limit }) {
 				analysisTokens: 0,
 				completeCost: 0,
 				completeTokens: 0,
+				resumeUploadsFromComplete: 0,
+				resumeUploadsFromEvents: 0,
 			},
 		},
 		{ $sort: { startedAt: -1 } },
@@ -182,6 +232,7 @@ function mapRecord(doc) {
 	return {
 		id: String(doc._id),
 		type: doc.type,
+		modelVersion: doc.modelVersion ?? null,
 		url,
 		title: doc.title ?? null,
 		triggerText: doc.triggerText ?? null,
@@ -190,6 +241,11 @@ function mapRecord(doc) {
 		usage: doc.usage ?? null,
 		trace: doc.trace ?? null,
 		jobSource: doc.jobSource ?? detectJobSource(url),
+		originalName: doc.originalName ?? null,
+		cleanedName: doc.cleanedName ?? null,
+		renamed: Boolean(doc.renamed),
+		uploadSource: doc.uploadSource ?? null,
+		resumeUploads: Array.isArray(doc.resumeUploads) ? doc.resumeUploads : [],
 		createdAt: doc.createdAt,
 	};
 }
@@ -221,6 +277,7 @@ export async function getBidSessionDetail(req, res) {
 		const start = docs[0];
 		const complete = docs.find((d) => d.type === "session-complete");
 		const analysisRecords = records.filter((r) => r.type === "analysis");
+		const resumeUploadRecords = records.filter((r) => r.type === "resume-upload");
 		const analysisCost = analysisRecords.reduce((sum, r) => sum + (r.usage?.cost ?? 0), 0);
 		const analysisTokens = analysisRecords.reduce(
 			(sum, r) => sum + (r.usage?.totalTokens ?? 0),
@@ -230,6 +287,18 @@ export async function getBidSessionDetail(req, res) {
 			analysisRecords.length > 0 ? analysisCost : complete?.usage?.cost ?? 0;
 		const totalTokens =
 			analysisRecords.length > 0 ? analysisTokens : complete?.usage?.totalTokens ?? 0;
+
+		const resumeUploads =
+			Array.isArray(complete?.resumeUploads) && complete.resumeUploads.length > 0
+				? complete.resumeUploads
+				: resumeUploadRecords.map((r) => ({
+						originalName: r.originalName,
+						cleanedName: r.cleanedName,
+						renamed: r.renamed,
+						source: r.uploadSource,
+						pageUrl: r.url,
+						ts: r.createdAt ? new Date(r.createdAt).getTime() : Date.now(),
+					}));
 
 		const firstUrl = start.url ?? null;
 		const session = enrichSession({
@@ -241,12 +310,15 @@ export async function getBidSessionDetail(req, res) {
 			status: complete ? "completed" : "active",
 			processCount: records.filter((r) => r.type === "process").length,
 			analysisCount: analysisRecords.length,
+			resumeUploadCount: resumeUploadRecords.length,
 			recordCount: records.length,
 			totalCost,
 			totalTokens,
 			firstUrl,
 			firstTitle: start.title ?? null,
 			lastUrl: complete?.url ?? records[records.length - 1]?.url ?? null,
+			modelVersion: complete?.modelVersion ?? start.modelVersion ?? null,
+			resumeUploads,
 		});
 
 		return res.json({

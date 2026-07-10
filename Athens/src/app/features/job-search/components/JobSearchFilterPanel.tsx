@@ -202,20 +202,6 @@ export function JobSearchFilterPanel({
                 </button>
               ))}
             </div>
-
-            <button
-              type="button"
-              onClick={() => patch({ includeExternalScraped: !filters.includeExternalScraped })}
-              className={cn(
-                "px-2.5 h-9 rounded-lg border text-xs font-semibold whitespace-nowrap transition-all shrink-0",
-                filters.includeExternalScraped
-                  ? "bg-card text-foreground border-border/60 shadow-sm ring-1 ring-border/60"
-                  : "border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground",
-              )}
-              title="Also include jobs from external_scraped_jobs (LinkedIn scraper, etc.)"
-            >
-              External scraped
-            </button>
           </div>
 
           <ToolbarDivider />

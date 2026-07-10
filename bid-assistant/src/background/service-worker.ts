@@ -153,7 +153,10 @@ function uploadDedupeKey(event: Pick<ResumeUploadEvent, 'originalName' | 'cleane
   ].join('|');
 }
 
-async function recordResumeUpload(message: LogUploadMessage): Promise<ResumeUploadEvent> {
+async function recordResumeUpload(
+  message: LogUploadMessage,
+  sender?: chrome.runtime.MessageSender,
+): Promise<ResumeUploadEvent> {
   const event: ResumeUploadEvent = {
     id: `${message.ts}-${Math.random().toString(36).slice(2, 9)}`,
     originalName: message.originalName,
@@ -192,7 +195,72 @@ async function recordResumeUpload(message: LogUploadMessage): Promise<ResumeUplo
     pageUrl: event.pageUrl,
   });
 
+  // Persist to MongoDB bid_records when a bid session is active on this tab.
+  void persistResumeUploadToBidSession(event, sender).catch((error) => {
+    console.warn('[resume-upload] failed to persist to bid session', error);
+  });
+
   return event;
+}
+
+async function getSessionResumeUploads(tabId: number): Promise<
+  Array<{
+    originalName: string;
+    cleanedName: string | null;
+    renamed: boolean;
+    source: string;
+    pageUrl: string;
+    ts: number;
+  }>
+> {
+  const key = tabKey('bidSessionResumeUploads', tabId);
+  const result = await chrome.storage.local.get(key);
+  const raw = result[key];
+  return Array.isArray(raw) ? raw : [];
+}
+
+async function appendSessionResumeUpload(
+  tabId: number,
+  event: ResumeUploadEvent,
+): Promise<void> {
+  const key = tabKey('bidSessionResumeUploads', tabId);
+  const existing = await getSessionResumeUploads(tabId);
+  const entry = {
+    originalName: event.originalName,
+    cleanedName: event.cleanedName,
+    renamed: event.renamed,
+    source: event.source,
+    pageUrl: event.pageUrl,
+    ts: event.ts,
+  };
+  await chrome.storage.local.set({ [key]: [...existing, entry].slice(-50) });
+}
+
+async function persistResumeUploadToBidSession(
+  event: ResumeUploadEvent,
+  sender?: chrome.runtime.MessageSender,
+): Promise<void> {
+  const tabId = sender?.tab?.id;
+  if (tabId == null) return;
+
+  const session = await getStoredBidSession(tabId);
+  if (session.status !== 'active' || !session.sessionId) return;
+
+  const applierState = await getStoredApplierState();
+  await appendSessionResumeUpload(tabId, event);
+
+  await postBidSessionEvent('/bid-session/resume-upload', {
+    sessionId: session.sessionId,
+    applierName: applierState.applierName ?? '',
+    profileId: applierState.profileId,
+    url: event.pageUrl,
+    originalName: event.originalName,
+    cleanedName: event.cleanedName,
+    renamed: event.renamed,
+    source: event.source,
+    pageUrl: event.pageUrl,
+    ts: event.ts,
+  });
 }
 
 async function clearStoredResumeUploads(): Promise<void> {
@@ -215,6 +283,7 @@ const TAB_SESSION_KEY_PREFIXES = [
   'bidSessionFlags',
   'bidAnalysisTurns',
   'bidAnalysisUsage',
+  'bidSessionResumeUploads',
 ] as const;
 
 function tabKey(prefix: string, tabId: number): string {
@@ -439,6 +508,7 @@ async function postBidSessionEvent(
     | '/bid-session/start'
     | '/bid-session/event'
     | '/bid-session/analysis'
+    | '/bid-session/resume-upload'
     | '/bid-session/complete',
   payload: Record<string, unknown>,
 ): Promise<{ sessionId: string }> {
@@ -568,6 +638,7 @@ async function startBidSession(tabId: number): Promise<BidSessionState> {
     [tabKey('bidSessionStartedAt', tabId)]: startedAt,
     [tabKey('bidSessionCompletedAt', tabId)]: null,
     [tabKey('bidSessionShots', tabId)]: [],
+    [tabKey('bidSessionResumeUploads', tabId)]: [],
     // Clear the previous session's analyze history + accumulated usage + flags.
     [tabKey('bidAnalysisTurns', tabId)]: [],
     [tabKey('bidAnalysisUsage', tabId)]: null,
@@ -604,6 +675,7 @@ async function completeBidSession(tabId: number): Promise<BidSessionState> {
   const screenshot = await captureTabScreenshot(tabId, tab.windowId);
   const usageKey = tabKey('bidAnalysisUsage', tabId);
   const stored = await chrome.storage.local.get(usageKey);
+  const resumeUploads = await getSessionResumeUploads(tabId);
 
   await postBidSessionEvent('/bid-session/complete', {
     sessionId: session.sessionId,
@@ -613,6 +685,7 @@ async function completeBidSession(tabId: number): Promise<BidSessionState> {
     title: tab.title ?? '',
     screenshot,
     usage: stored[usageKey] ?? null,
+    resumeUploads,
   });
 
   const completedAt = new Date().toISOString();
@@ -1535,7 +1608,7 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
           break;
         }
         case 'LOG_UPLOAD': {
-          await recordResumeUpload(message);
+          await recordResumeUpload(message, sender);
           sendResponse({ ok: true } satisfies Response);
           break;
         }

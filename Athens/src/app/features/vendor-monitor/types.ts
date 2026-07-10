@@ -2,6 +2,15 @@ import type { JobSource } from "@/lib/job-source";
 
 export type BidMonitorSource = "cloud" | "local";
 
+export interface ResumeUploadInfo {
+  originalName: string;
+  cleanedName: string | null;
+  renamed: boolean;
+  source?: string | null;
+  pageUrl?: string | null;
+  ts?: number;
+}
+
 export interface BidSessionSummary {
   sessionId: string;
   applierName: string | null;
@@ -11,6 +20,7 @@ export interface BidSessionSummary {
   status: "active" | "completed";
   processCount: number;
   analysisCount: number;
+  resumeUploadCount?: number;
   recordCount: number;
   totalCost: number;
   totalTokens: number;
@@ -18,6 +28,8 @@ export interface BidSessionSummary {
   firstTitle: string | null;
   lastUrl: string | null;
   jobSource?: JobSource | null;
+  modelVersion?: string | null;
+  resumeUploads?: ResumeUploadInfo[];
 }
 
 export interface UsageInfo {
@@ -51,7 +63,8 @@ export interface AnalysisTrace {
 
 export interface BidRecord {
   id: string;
-  type: "session-start" | "process" | "analysis" | "session-complete";
+  type: "session-start" | "process" | "analysis" | "resume-upload" | "session-complete";
+  modelVersion?: string | null;
   url: string | null;
   title: string | null;
   triggerText: string | null;
@@ -60,6 +73,11 @@ export interface BidRecord {
   usage: UsageInfo | null;
   trace: AnalysisTrace | null;
   jobSource?: JobSource | null;
+  originalName?: string | null;
+  cleanedName?: string | null;
+  renamed?: boolean;
+  uploadSource?: string | null;
+  resumeUploads?: ResumeUploadInfo[];
   createdAt: string;
 }
 
