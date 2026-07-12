@@ -13,6 +13,11 @@
 **/build
 **/*.tsbuildinfo
 
+# Local Puppeteer Chrome cache (downloaded on VPS at container start)
+**/.cache/puppeteer
+**/chrome/linux*
+**/chrome-headless-shell
+
 # Env & secrets (all directories)
 **/.env
 **/.env.*

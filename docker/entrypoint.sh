@@ -79,6 +79,16 @@ export BRIDGE_HOST="${BRIDGE_HOST:-0.0.0.0}"
 export BRIDGE_PORT="${BRIDGE_PORT:-3848}"
 export CORS_ORIGIN="${CORS_ORIGIN:-*}"
 export PUPPETEER_ARGS="${PUPPETEER_ARGS:---no-sandbox,--disable-setuid-sandbox}"
+# Persist Chrome on the VPS volume so recreating the container does not re-download.
+export PUPPETEER_CACHE_DIR="${PUPPETEER_CACHE_DIR:-/data/puppeteer}"
+# Allow install even if the image was built with skip flags.
+unset PUPPETEER_SKIP_DOWNLOAD PUPPETEER_SKIP_CHROME_DOWNLOAD
+
+mkdir -p "${PUPPETEER_CACHE_DIR}"
+echo "[entrypoint] ensuring Puppeteer Chrome in ${PUPPETEER_CACHE_DIR}"
+if ! (cd /app/Athens-server && node ./scripts/ensure-puppeteer-chrome.mjs); then
+  echo "[entrypoint] WARNING: Puppeteer Chrome install failed — resume PDF rendering may not work until fixed." >&2
+fi
 
 echo "[entrypoint] starting NextOffer services"
 exec supervisord -c /app/docker/supervisord.conf

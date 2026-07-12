@@ -4,10 +4,14 @@ FROM node:20-bookworm AS builder
 
 WORKDIR /app
 
+# Keep the published image light: do not download Chrome during build/push.
+# The VPS installs Chrome for Testing on first container start (fast outbound net).
 ENV npm_config_fetch_retries=5 \
     npm_config_fetch_retry_mintimeout=20000 \
     npm_config_fetch_retry_maxtimeout=120000 \
-    npm_config_fetch_timeout=300000
+    npm_config_fetch_timeout=300000 \
+    PUPPETEER_SKIP_DOWNLOAD=1 \
+    PUPPETEER_SKIP_CHROME_DOWNLOAD=1
 
 COPY . .
 
@@ -46,7 +50,7 @@ ENV NODE_ENV=production \
     BRIDGE_PORT=3848 \
     CORS_ORIGIN=* \
     EMBEDDED_MONGO=auto \
-    PUPPETEER_CACHE_DIR=/app/Athens-server/.cache/puppeteer
+    PUPPETEER_CACHE_DIR=/data/puppeteer
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -92,17 +96,15 @@ COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /app/docker/supervisord.conf
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
 
-# Install Puppeteer's Chrome for Testing into PUPPETEER_CACHE_DIR so PDF
-# rendering does not depend on a host/system Chrome package.
-RUN cd /app/Athens-server \
- && node ./scripts/ensure-puppeteer-chrome.mjs
+# Chrome for Testing is NOT baked into the image (keeps Hub pushes small).
+# entrypoint.sh downloads it on the VPS into PUPPETEER_CACHE_DIR on first start.
 
 RUN chmod +x /app/docker/entrypoint.sh \
  && find /app -name '.env' -delete \
  && find /app -name '.env.*' ! -name '.env.example' -delete \
- && mkdir -p /data/db /var/log/mongodb /var/log/nginx
+ && mkdir -p /data/db /data/puppeteer /var/log/mongodb /var/log/nginx
 
-VOLUME ["/data/db"]
+VOLUME ["/data/db", "/data/puppeteer"]
 
 EXPOSE 80 3847 3848 3920 8790 8979
 

@@ -18,9 +18,11 @@ import {
 } from "./resumeGenerationService.js";
 import { decryptAccountDoc, loadDecryptedAutoBidProfile } from "./autoBidProfileSecrets.js";
 
-/** Render sections to PDF or read the on-disk draft (Node fs). */
+/** Render sections to PDF or read a still-valid on-disk draft (Node fs). */
 async function pdfPayloadForAgent(sections, identity, savedConfig, applierName, jobId) {
-  const onDisk = readAgentDraftPdf(applierName, jobId);
+  // Pass config so drafts rendered before templateId support (or after the user
+  // changes Template/Theme/Layout) are treated as stale and re-rendered.
+  const onDisk = readAgentDraftPdf(applierName, jobId, savedConfig);
   if (onDisk) {
     // Buffer.from() guards against a non-Buffer (e.g. Uint8Array), whose
     // .toString("base64") ignores the encoding and yields comma-joined bytes.
@@ -368,7 +370,9 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
   const parentId = cleanString(jobId);
   if (!name || !parentId) return null;
 
-  const onDisk = readAgentDraftPdf(name, parentId);
+  // Always load current Editor config first — preview must match My Resumes template.
+  const savedConfig = await loadGeneratorConfig(name);
+  const onDisk = readAgentDraftPdf(name, parentId, savedConfig);
   if (onDisk) return { buffer: onDisk.buffer, draftPath: onDisk.draftPath };
 
   const existing = await findExistingAgentJobResume(name, parentId);
@@ -377,7 +381,6 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
   const profile = await findProfile(name);
   if (!profile) return null;
   const identity = identityFromProfile(profile);
-  const savedConfig = await loadGeneratorConfig(name);
   const { buffer, savedPath } = await renderAgentResumePdf({
     sections: existing.generation.sections,
     identity,
