@@ -418,7 +418,8 @@ export async function resolveSubmissionKitPdf({ applierName }) {
   });
   if (!buffer?.length) throw new Error("Submission Kit PDF render returned empty buffer");
 
-  const fileName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_") || "resume"}-submission-kit.pdf`;
+  // Free-tier uploads use this PDF; employers should see {profileName}.pdf, not a "kit" suffix.
+  const fileName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_") || "resume"}.pdf`;
   return {
     buffer,
     fileName,

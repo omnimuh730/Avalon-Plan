@@ -1022,11 +1022,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         return generatedFile;
       }
       const kitFile = await loadSubmissionKitFile();
-      // Non-Pro accounts automatically attach the Resume Generator Kit PDF (no confirmation modal).
-      // We surface it in the UI as a small badge so users know which file was submitted.
+      // Free tier uploads kit PDF bytes, but uses the same filename Pro would (generated resume name).
+      const submissionFile: AttachedFile = { ...kitFile, name: generatedFile.name };
       setKitSubmitJobId(job.id);
-      pushLog(`Resume Generator Kit PDF selected for "${job.title}" (${kitFile.name})`, true);
-      return kitFile;
+      pushLog(`Resume Generator Kit PDF selected for "${job.title}" (${submissionFile.name})`, true);
+      return submissionFile;
     },
     [accountIsPro, loadSubmissionKitFile, pushLog],
   );
@@ -2759,7 +2759,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           mimeType: submissionFile.mimeType,
           base64Bytes: submissionFile.base64?.length ?? 0,
           generatedFileName: resumeFile.name,
-          submissionKit: submissionFile.name !== resumeFile.name,
+          submissionKit: !accountIsPro,
         });
         const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, {
           autoSubmit: true,
