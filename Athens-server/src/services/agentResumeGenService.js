@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 import {
   accountInfoCollection,
+  externalScrapedJobsCollection,
   jobsCollection,
   resumeGeneratorConfigCollection,
   resumeGenerationsCollection,
@@ -203,11 +204,13 @@ function profileToKitSections(identity, account) {
  */
 async function findJobSkills(jobId) {
   const id = cleanString(jobId);
-  if (!id || !jobsCollection || !ObjectId.isValid(id)) return [];
-  const job = await jobsCollection.findOne(
-    { _id: new ObjectId(id) },
-    { projection: { skills: 1 } },
-  );
+  if (!id || !ObjectId.isValid(id)) return [];
+  const projection = { skills: 1 };
+  const oid = { _id: new ObjectId(id) };
+  const job =
+    (jobsCollection && (await jobsCollection.findOne(oid, { projection }))) ||
+    (externalScrapedJobsCollection &&
+      (await externalScrapedJobsCollection.findOne(oid, { projection })));
   return Array.isArray(job?.skills) ? job.skills.map((s) => cleanString(s)).filter(Boolean) : [];
 }
 

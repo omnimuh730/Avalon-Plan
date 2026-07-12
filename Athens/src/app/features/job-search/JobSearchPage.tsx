@@ -165,12 +165,7 @@ export function JobSearchPage() {
         onExport={() => setExportOpen(true)}
         onRemove={handleRemove}
         onGenerateResumes={() => {
-          const marketJobs = selectedJobs.filter((job) => !isExternalJob(job));
-          if (!marketJobs.length) {
-            toast.message("Résumé generation is only available for job market listings.");
-            return;
-          }
-          void generateBulk(marketJobs);
+          void generateBulk(selectedJobs);
         }}
         onStopGenerateResumes={cancelBulk}
         resumeGenerating={bulkRunning}
@@ -222,7 +217,6 @@ export function JobSearchPage() {
               onJobScoresUpdated={patchJob}
               resumeStates={resumeStates}
               onGenerateResume={(job) => {
-                if (isExternalJob(job)) return;
                 void generateForJob(job);
               }}
             />
