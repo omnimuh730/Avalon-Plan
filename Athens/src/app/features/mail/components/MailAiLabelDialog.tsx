@@ -34,6 +34,59 @@ type MailAiLabelDialogProps = {
 
 type RowStatus = "idle" | "running" | "done" | "skipped" | "error";
 
+/** Canonical storage key for a Gmail label definition. */
+function labelDefKey(label: Pick<MailLabel, "path" | "name">): string {
+  return String(label.path || label.name || "").trim();
+}
+
+/**
+ * Resolve a definition for a label. Stored keys may be full path, short name,
+ * or a legacy alias — try all of them.
+ */
+function resolveDefinition(
+  definitions: MailLabelDefinitions,
+  label: MailLabel,
+): string {
+  const candidates = [label.path, label.name, label.shortName]
+    .map((k) => String(k || "").trim())
+    .filter(Boolean);
+  for (const key of candidates) {
+    const value = definitions[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  // Legacy: nested short name stored without parent prefix
+  const short = String(label.shortName || "").trim();
+  if (short) {
+    const match = Object.entries(definitions).find(
+      ([k, v]) =>
+        typeof v === "string" &&
+        v.trim() &&
+        (k === short || k.endsWith(`/${short}`)),
+    );
+    if (match) return match[1];
+  }
+  // Still return empty string stored under canonical key if present
+  for (const key of candidates) {
+    if (key in definitions) return String(definitions[key] ?? "");
+  }
+  return "";
+}
+
+/** Remap any loose aliases onto canonical path/name keys for the current label set. */
+function canonicalizeDefinitions(
+  raw: MailLabelDefinitions,
+  labels: MailLabel[],
+): MailLabelDefinitions {
+  const out: MailLabelDefinitions = { ...raw };
+  for (const label of labels) {
+    const key = labelDefKey(label);
+    if (!key) continue;
+    const value = resolveDefinition(raw, label);
+    if (value) out[key] = value;
+  }
+  return out;
+}
+
 function formatRowDate(thread: MailThread) {
   if (!thread.date) return thread.time;
   try {
@@ -81,15 +134,12 @@ export function MailAiLabelDialog({
   const indeterminate = selectedOnPage > 0 && !allOnPageSelected;
   const totalSelected = selectedIds.size;
 
-  const loadData = useCallback(async () => {
+  const loadThreads = useCallback(async () => {
     if (!applierName) return;
     setLoading(true);
     setLoadError(null);
     try {
-      const [threadResult, defs] = await Promise.all([
-        fetchUnlabeledThreads(applierName, { page, pageSize }),
-        fetchMailLabelDefinitions(applierName),
-      ]);
+      const threadResult = await fetchUnlabeledThreads(applierName, { page, pageSize });
       setThreads(threadResult.threads);
       setTotal(threadResult.total);
       setMailboxById((prev) => {
@@ -99,8 +149,6 @@ export function MailAiLabelDialog({
         }
         return next;
       });
-      setDefinitions(defs);
-      setDefinitionsDirty(false);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load unlabeled mail");
     } finally {
@@ -108,10 +156,43 @@ export function MailAiLabelDialog({
     }
   }, [applierName, page, pageSize]);
 
+  // Load definitions once when the dialog opens — not on every page change
+  // (paging previously re-fetched and wiped hydrated / in-progress text).
   useEffect(() => {
     if (!open || !applierName) return;
-    void loadData();
-  }, [open, applierName, loadData]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const defs = await fetchMailLabelDefinitions(applierName);
+        if (cancelled) return;
+        setDefinitions(canonicalizeDefinitions(defs, labels));
+        setDefinitionsDirty(false);
+        if (Object.values(defs).some((v) => String(v || "").trim())) {
+          setDefinitionsOpen(true);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setRunError(e instanceof Error ? e.message : "Failed to load label definitions");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // labels remapped in the following effect when they arrive
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, applierName]);
+
+  // When Gmail labels arrive/change, remap alias keys onto canonical path keys.
+  useEffect(() => {
+    if (!open || labels.length === 0) return;
+    setDefinitions((prev) => canonicalizeDefinitions(prev, labels));
+  }, [open, labels]);
+
+  useEffect(() => {
+    if (!open || !applierName) return;
+    void loadThreads();
+  }, [open, applierName, loadThreads]);
 
   useEffect(() => {
     if (!open) {
@@ -123,11 +204,16 @@ export function MailAiLabelDialog({
       setRunError(null);
       setPage(1);
       setDefinitionsSaved(false);
+      setDefinitionsOpen(false);
+      setDefinitions({});
+      setDefinitionsDirty(false);
     }
   }, [open]);
 
-  const handleDefinitionChange = (labelName: string, value: string) => {
-    setDefinitions((prev) => ({ ...prev, [labelName]: value }));
+  const handleDefinitionChange = (label: MailLabel, value: string) => {
+    const key = labelDefKey(label);
+    if (!key) return;
+    setDefinitions((prev) => ({ ...prev, [key]: value }));
     setDefinitionsDirty(true);
     setDefinitionsSaved(false);
   };
@@ -136,8 +222,9 @@ export function MailAiLabelDialog({
     if (!applierName) return;
     setSavingDefinitions(true);
     try {
-      const saved = await saveMailLabelDefinitions(applierName, definitions);
-      setDefinitions(saved);
+      const payload = canonicalizeDefinitions(definitions, labels);
+      const saved = await saveMailLabelDefinitions(applierName, payload);
+      setDefinitions(canonicalizeDefinitions(saved, labels));
       setDefinitionsDirty(false);
       setDefinitionsSaved(true);
     } catch (e) {
@@ -228,7 +315,7 @@ export function MailAiLabelDialog({
           results.filter((r) => r.applied).forEach((r) => next.delete(String(r.uid)));
           return next;
         });
-        void loadData();
+        void loadThreads();
       }
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "AI labeling failed");
@@ -278,12 +365,12 @@ export function MailAiLabelDialog({
                     <div key={l.id} style={{ paddingLeft: `${depth * 14}px` }}>
                       <label className="flex items-center gap-2 text-sm font-medium mb-1">
                         <span className={cn("w-2 h-2 rounded-full flex-shrink-0", LABEL_DOT_CLASS[l.color])} />
-                        {l.name}
+                        {l.shortName || l.name}
                       </label>
                       <AthensTextarea
-                        value={definitions[l.name] || ""}
-                        onChange={(e) => handleDefinitionChange(l.name, e.target.value)}
-                        placeholder={`When should "${l.name}" be used?`}
+                        value={resolveDefinition(definitions, l)}
+                        onChange={(e) => handleDefinitionChange(l, e.target.value)}
+                        placeholder={`When should "${l.shortName || l.name}" be used?`}
                         rows={2}
                         className="text-sm"
                       />

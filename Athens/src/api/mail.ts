@@ -240,7 +240,10 @@ export async function fetchMailLabelDefinitions(applierName: string) {
   const data = await mailFetch<{ definitions: MailLabelDefinitions }>(
     `mail/label-definitions${qs({ applierName })}`,
   );
-  return data.definitions;
+  const definitions = data.definitions;
+  return definitions && typeof definitions === "object" && !Array.isArray(definitions)
+    ? definitions
+    : {};
 }
 
 export async function saveMailLabelDefinitions(applierName: string, definitions: MailLabelDefinitions) {
@@ -248,7 +251,8 @@ export async function saveMailLabelDefinitions(applierName: string, definitions:
     method: "PUT",
     body: JSON.stringify({ applierName, definitions }),
   });
-  return data.definitions;
+  const saved = data.definitions;
+  return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
 }
 
 export async function runMailAiLabel(
