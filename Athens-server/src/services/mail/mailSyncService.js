@@ -2,6 +2,7 @@ import { resolveMailCredentials } from './credentials.js';
 import {
 	fetchFlagsForUids,
 	fetchMessageBody,
+	fetchMessagePlainText,
 	fetchMailboxPage,
 	fetchNewEnvelopes,
 	fetchFolderCounts,
@@ -19,6 +20,7 @@ import {
 	messageToThread,
 	getMessagesByUids,
 	enrichMessagesFromCache,
+	updateMessagePlainText,
 } from './mailStore.js';
 import { ALL_MAIL_PATH, folderToMailbox } from './folderMapper.js';
 
@@ -299,6 +301,46 @@ export async function ensureMessageBody(applierName, uid, mailbox) {
 			messageId: body.messageId || existing?.messageId || null,
 		}, mailboxPath);
 		return { ok: true, message: updated, fromCache: false };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return { ok: false, error: message };
+	}
+}
+
+function usablePlainText(doc) {
+	const text = String(doc?.bodyText || '').trim();
+	if (text && text !== '(No text content)') return text;
+	return '';
+}
+
+/**
+ * Ensure plain-text body for AI labeling — skips full HTML MIME fetch/parse when possible.
+ */
+export async function ensureMessagePlainText(applierName, uid, mailbox) {
+	const creds = await resolveMailCredentials(applierName);
+	if (!creds.ok) return { ok: false, error: creds.error };
+
+	const { getMessage } = await import('./mailStore.js');
+	const mailboxPath = mailbox || ALL_MAIL_PATH;
+	const existing = await getMessage(applierName, uid, mailboxPath);
+
+	const cached = usablePlainText(existing);
+	if (cached) {
+		return { ok: true, message: existing, bodyText: cached, fromCache: true };
+	}
+
+	try {
+		const plain = await fetchMessagePlainText(creds.email, creds.password, uid, mailboxPath);
+		const updated = existing
+			? await updateMessagePlainText(
+					applierName,
+					uid,
+					{ bodyText: plain.bodyText, preview: plain.preview },
+					mailboxPath,
+				)
+			: null;
+		const message = updated || { ...(existing || {}), ...plain, uid: Number(uid), mailbox: mailboxPath };
+		return { ok: true, message, bodyText: plain.bodyText, fromCache: false };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		return { ok: false, error: message };

@@ -1,10 +1,10 @@
 /**
  * Manual, concurrency-limited AI skill-extraction session with immediate Stop.
- * Triggered from the Job Search "Extract skills" button. Processes both
- * job_market and external_scraped_jobs catalogs.
+ * Triggered from the Job Search "Extract skills" button. Processes job_market only
+ * (external_scraped_jobs is dedupe/provenance; jobs are promoted into job_market).
  */
 import { randomUUID } from 'crypto';
-import { jobsCollection, externalScrapedJobsCollection } from '../../db/mongo.js';
+import { jobsCollection } from '../../db/mongo.js';
 import { formatCostUsd } from '../llm/llmService.js';
 import {
   resolveExtractionAuth,
@@ -16,24 +16,10 @@ const CONCURRENCY = Math.max(1, Number(process.env.JOB_SKILL_EXTRACT_CONCURRENCY
 const PENDING_QUERY = { aiSkillStatus: 'pending' };
 
 const MARKET_CLAIM_PROJECTION = { title: 1, description: 1, jobDescription: 1, aiSkillAttempts: 1 };
-const EXTERNAL_CLAIM_PROJECTION = {
-  jobTitle: 1,
-  jobDescription: 1,
-  companyName: 1,
-  companyIcon: 1,
-  aiSkillAttempts: 1,
-};
 
 let activeSession = null;
 let cancelRequested = false;
 const inflight = new Set();
-
-function jobSortDate(job) {
-  const raw = job._sortDate;
-  if (raw instanceof Date) return raw.getTime();
-  if (typeof raw === 'string') return new Date(raw).getTime() || 0;
-  return 0;
-}
 
 async function countPendingInCollection(collection) {
   if (!collection) return 0;
@@ -41,19 +27,12 @@ async function countPendingInCollection(collection) {
 }
 
 export async function countPendingExtraction() {
-  const [pendingMarket, pendingExternal] = await Promise.all([
-    countPendingInCollection(jobsCollection),
-    countPendingInCollection(externalScrapedJobsCollection),
-  ]);
-  return pendingMarket + pendingExternal;
+  return countPendingInCollection(jobsCollection);
 }
 
 export async function countPendingExtractionBreakdown() {
-  const [pendingMarket, pendingExternal] = await Promise.all([
-    countPendingInCollection(jobsCollection),
-    countPendingInCollection(externalScrapedJobsCollection),
-  ]);
-  return { pending: pendingMarket + pendingExternal, pendingMarket, pendingExternal };
+  const pendingMarket = await countPendingInCollection(jobsCollection);
+  return { pending: pendingMarket, pendingMarket, pendingExternal: 0 };
 }
 
 async function claimFromCollection(collection, catalog, projection, sortField, n) {
@@ -74,38 +53,23 @@ async function claimFromCollection(collection, catalog, projection, sortField, n
   return jobs.map((job) => ({
     ...job,
     catalog,
-    _sortDate: job[sortField],
-    title: catalog === 'external' ? job.jobTitle : job.title,
+    title: job.title,
   }));
 }
 
-/** Claim a batch from both catalogs, interleaved by date (newest first). */
 async function claimBatch(n) {
-  const [marketJobs, externalJobs] = await Promise.all([
-    claimFromCollection(jobsCollection, 'market', MARKET_CLAIM_PROJECTION, 'postedAt', n),
-    claimFromCollection(
-      externalScrapedJobsCollection,
-      'external',
-      EXTERNAL_CLAIM_PROJECTION,
-      'createdAt',
-      n,
-    ),
-  ]);
-
-  const merged = [...marketJobs, ...externalJobs].sort((a, b) => jobSortDate(b) - jobSortDate(a));
-  return merged.slice(0, n);
+  return claimFromCollection(jobsCollection, 'market', MARKET_CLAIM_PROJECTION, 'postedAt', n);
 }
 
-async function requeue(job, catalog) {
-  const collection = catalog === 'external' ? externalScrapedJobsCollection : jobsCollection;
-  if (!collection) return;
-  await collection
+async function requeue(job) {
+  if (!jobsCollection) return;
+  await jobsCollection
     .updateOne({ _id: job._id }, { $set: { aiSkillStatus: 'pending' } })
     .catch(() => {});
 }
 
 async function processOne(session, auth, job) {
-  const catalog = job.catalog || 'market';
+  const catalog = 'market';
   const controller = new AbortController();
   inflight.add(controller);
   try {
@@ -116,7 +80,7 @@ async function processOne(session, auth, job) {
     session.extracted += 1;
     session.lastJob = {
       id: result.jobId,
-      title: job.title || job.jobTitle || '',
+      title: job.title || '',
       skills: result.skillCount,
       catalog,
     };
@@ -127,7 +91,7 @@ async function processOne(session, auth, job) {
     }
   } catch (err) {
     if (cancelRequested || controller.signal.aborted) {
-      await requeue(job, catalog);
+      await requeue(job);
       return;
     }
     const r = await recordExtractionFailure(job, err, { catalog });
@@ -142,14 +106,9 @@ async function processOne(session, auth, job) {
 }
 
 async function recoverStuckExtracting() {
-  await Promise.all([
-    jobsCollection
-      ?.updateMany({ aiSkillStatus: 'extracting' }, { $set: { aiSkillStatus: 'pending' } })
-      .catch(() => {}) ?? Promise.resolve(),
-    externalScrapedJobsCollection
-      ?.updateMany({ aiSkillStatus: 'extracting' }, { $set: { aiSkillStatus: 'pending' } })
-      .catch(() => {}) ?? Promise.resolve(),
-  ]);
+  await jobsCollection
+    ?.updateMany({ aiSkillStatus: 'extracting' }, { $set: { aiSkillStatus: 'pending' } })
+    .catch(() => {});
 }
 
 async function runSession(session) {
@@ -228,7 +187,7 @@ export async function getSkillExtractionStatus() {
 }
 
 export async function startSkillExtractionSession({ applierName, limit = null } = {}) {
-  if (!jobsCollection && !externalScrapedJobsCollection) {
+  if (!jobsCollection) {
     throw new Error('Database not ready');
   }
   if (activeSession?.running) throw new Error('Skill extraction session already running');

@@ -25,6 +25,31 @@ function stripHtml(html) {
 		.trim();
 }
 
+/** Prefer text/plain; fall back to text/html for plain-text extraction. */
+export function findTextBodyPart(structure, preferHtml = false) {
+	if (!structure) return null;
+	const want = preferHtml ? 'text/html' : 'text/plain';
+	const type = String(structure.type || '').toLowerCase();
+	if (type === want) {
+		return { ...structure, part: structure.part || '1' };
+	}
+	for (const child of structure.childNodes || []) {
+		const found = findTextBodyPart(child, preferHtml);
+		if (found) return found;
+	}
+	return null;
+}
+
+function decodeBodyPartBuffer(buf, structureNode) {
+	if (!buf) return '';
+	const charset = String(structureNode?.parameters?.charset || 'utf-8').trim() || 'utf-8';
+	try {
+		return new TextDecoder(charset).decode(Buffer.isBuffer(buf) ? buf : Buffer.from(buf));
+	} catch {
+		return Buffer.isBuffer(buf) ? buf.toString('utf-8') : String(buf);
+	}
+}
+
 function extractHtmlBody(parsed) {
 	if (parsed.html?.trim()) return parsed.html.trim();
 	if (typeof parsed.textAsHtml === 'string' && parsed.textAsHtml.trim()) {
@@ -305,6 +330,61 @@ export async function fetchMessageBody(email, password, uid, mailboxPath = ALL_M
 			date: parsed.date ?? new Date(),
 			flags: { seen, flagged },
 			hasBody: true,
+		};
+	});
+}
+
+/**
+ * Fetch plain text only (text/plain part, else stripped text/html).
+ * Avoids downloading/parsing full MIME HTML + CID inlining used by fetchMessageBody.
+ */
+export async function fetchMessagePlainText(email, password, uid, mailboxPath = ALL_MAIL_PATH) {
+	return withMailboxPath(email, password, mailboxPath, async (client) => {
+		const meta = await client.fetchOne(
+			String(uid),
+			{ bodyStructure: true, uid: true },
+			{ uid: true },
+		);
+		if (!meta) {
+			throw new Error('Message not found');
+		}
+
+		const plainPart = findTextBodyPart(meta.bodyStructure, false);
+		const htmlPart = plainPart ? null : findTextBodyPart(meta.bodyStructure, true);
+		const partNode = plainPart || htmlPart;
+		const partId = partNode?.part;
+
+		if (partId) {
+			const withParts = await client.fetchOne(
+				String(uid),
+				{ bodyParts: [partId], uid: true },
+				{ uid: true },
+			);
+			const raw = withParts?.bodyParts?.get(partId);
+			let text = decodeBodyPartBuffer(raw, partNode).trim();
+			if (htmlPart && !plainPart) {
+				text = stripHtml(text);
+			}
+			const bodyText = text || '(No text content)';
+			return {
+				uid,
+				bodyText,
+				preview: bodyText.slice(0, 120).replace(/\s+/g, ' '),
+			};
+		}
+
+		// Rare: no discrete text part — fall back to source parse, text only (no HTML/CID).
+		const message = await client.fetchOne(String(uid), { source: true, uid: true }, { uid: true });
+		if (!message?.source) {
+			throw new Error('Message not found');
+		}
+		const parsed = await simpleParser(message.source);
+		const textBody = parsed.text?.trim() || stripHtml(parsed.html ?? '');
+		const bodyText = textBody || '(No text content)';
+		return {
+			uid,
+			bodyText,
+			preview: bodyText.slice(0, 120).replace(/\s+/g, ' '),
 		};
 	});
 }

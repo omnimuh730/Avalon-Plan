@@ -63,6 +63,8 @@ export async function postExternalScrapedJob(req, res) {
 			id: result.id,
 			jobID: result.jobID,
 			jobLink: result.jobLink,
+			...(result.source ? { source: result.source } : {}),
+			...(result.marketId ? { marketId: result.marketId } : {}),
 		});
 	} catch (err) {
 		console.error("POST /api/expose/jobs error:", err);

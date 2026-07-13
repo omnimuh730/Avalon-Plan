@@ -54,7 +54,7 @@ function buildExternalUnionPipeline(externalQuery) {
 					$cond: {
 						if: { $and: [{ $ne: ['$source', null] }, { $ne: ['$source', ''] }] },
 						then: '$source',
-						else: { $ifNull: ['$sender', 'External'] },
+						else: 'Other',
 					},
 				},
 				postedAgo: '$postedAgo',

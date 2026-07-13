@@ -1,5 +1,9 @@
 import { externalScrapedJobsCollection } from "../db/mongo.js";
 import { JOB_MARKET_MODEL_VERSION } from "../config/jobMarketSchema.js";
+import {
+	externalSourceFieldsFromLink,
+	promoteExternalJobToMarket,
+} from "./promoteExternalJobToMarket.js";
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -14,6 +18,7 @@ const isHttpUrl = (value) => {
 
 /**
  * Normalize and validate one scraped job payload from a 3rd-party integrator.
+ * Client `source` is ignored — source is derived from jobLink on ingest.
  * @returns {{ ok: true, job: object } | { ok: false, error: string }}
  */
 export function validateScrapedJobInput(raw) {
@@ -27,7 +32,6 @@ export function validateScrapedJobInput(raw) {
 	const jobDescription = clean(raw.jobDescription ?? raw.job_description ?? raw.description);
 	const jobLink = clean(raw.jobLink ?? raw.job_link ?? raw.applyLink ?? raw.url);
 	const jobID = clean(raw.jobID ?? raw.job_id ?? raw.jobId);
-	const source = clean(raw.source);
 	const sender = clean(raw.sender ?? raw.Sender);
 	const postedAgo = clean(raw.postedAgo ?? raw.posted_ago ?? raw.postedAt);
 
@@ -52,7 +56,6 @@ export function validateScrapedJobInput(raw) {
 			jobTitle,
 			jobDescription,
 			jobLink,
-			...(source ? { source } : {}),
 			...(postedAgo ? { postedAgo } : {}),
 		},
 	};
@@ -60,8 +63,10 @@ export function validateScrapedJobInput(raw) {
 
 export async function ingestScrapedJob(job) {
 	const now = new Date();
+	const sourceFields = externalSourceFieldsFromLink(job.jobLink);
 	const doc = {
 		...job,
+		...sourceFields,
 		catalog: "external",
 		modelVersion: JOB_MARKET_MODEL_VERSION,
 		aiSkillStatus: "pending",
@@ -72,7 +77,27 @@ export async function ingestScrapedJob(job) {
 
 	try {
 		const result = await externalScrapedJobsCollection.insertOne(doc);
-		return { created: true, id: result.insertedId, jobID: job.jobID, jobLink: job.jobLink };
+		const inserted = { ...doc, _id: result.insertedId };
+
+		let marketId = null;
+		try {
+			const promote = await promoteExternalJobToMarket(inserted);
+			marketId = promote.marketId ?? null;
+		} catch (promoteErr) {
+			console.error(
+				`[expose/jobs] promote to job_market failed for ${job.jobID}:`,
+				promoteErr?.message || promoteErr,
+			);
+		}
+
+		return {
+			created: true,
+			id: result.insertedId,
+			jobID: job.jobID,
+			jobLink: job.jobLink,
+			source: sourceFields.source,
+			...(marketId ? { marketId } : {}),
+		};
 	} catch (err) {
 		if (err?.code === 11000) {
 			return { created: false, duplicate: true, jobID: job.jobID, jobLink: job.jobLink };

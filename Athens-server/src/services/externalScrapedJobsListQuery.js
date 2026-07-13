@@ -1,4 +1,4 @@
-import { JobSourceTitles } from '../config/jobSources.js';
+import { JobSourceTitles, inferJobSource } from '../config/jobSources.js';
 import { buildMongoCaseInsensitiveRegexFilter } from '../utils/safeRegex.js';
 
 function finalizeQuery(query) {
@@ -63,12 +63,11 @@ export function buildExternalScrapedJobsQuery(body = {}) {
 export function normalizeExternalScrapedJob(doc) {
 	if (!doc || typeof doc !== 'object') return doc;
 
+	const applyLink = doc.applyLink || doc.jobLink || '#';
 	const source =
 		typeof doc.source === 'string' && doc.source.trim()
 			? doc.source.trim()
-			: typeof doc.sender === 'string' && doc.sender.trim()
-				? doc.sender.trim()
-				: 'External';
+			: inferJobSource(applyLink);
 
 	const enrichedCompany =
 		doc.company && typeof doc.company === 'object'
@@ -89,7 +88,7 @@ export function normalizeExternalScrapedJob(doc) {
 		title: doc.title || doc.jobTitle || 'Untitled role',
 		company: enrichedCompany,
 		details: doc.details && typeof doc.details === 'object' ? doc.details : {},
-		applyLink: doc.applyLink || doc.jobLink || '#',
+		applyLink,
 		jobDescription: doc.jobDescription || '',
 		description: doc.description || doc.jobDescription || '',
 		source,

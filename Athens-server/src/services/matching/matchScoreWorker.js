@@ -1,11 +1,9 @@
 import {
   jobsCollection,
-  externalScrapedJobsCollection,
   accountInfoCollection,
   matchProfileStateCollection,
 } from '../../db/mongo.js';
 import { loadProfileMatchContext, clearProfileSkillCache } from './profileSkills.js';
-import { normalizeExternalJobForScoring } from '../jobSkillExtraction/externalJobExtractService.js';
 import {
   MIN_STORE_SCORE,
   scoreJobForProfile,
@@ -25,6 +23,8 @@ import {
  *    with the claimed profileVersion, then sweeps rows the pass didn't restamp.
  * 2. Job fan-out — new/re-analyzed jobs (matchScoreStatus: 'pending'): score
  *    each against every user profile in one pass.
+ *
+ * Scores job_market only (external scrapes are promoted into job_market).
  */
 
 const WORKER_INTERVAL_MS = Number(process.env.MATCH_SCORE_WORKER_INTERVAL_MS || 3000);
@@ -32,17 +32,6 @@ const JOB_BATCH = Number(process.env.MATCH_SCORE_JOB_BATCH || 200);
 const RESCORE_WRITE_BATCH = 1000;
 
 const JOB_SCORE_PROJECTION = { title: 1, skills: 1, aiSkills: 1, postedAt: 1, _createdAt: 1, source: 1 };
-const EXTERNAL_SCORE_PROJECTION = {
-  jobTitle: 1,
-  title: 1,
-  skills: 1,
-  aiSkills: 1,
-  createdAt: 1,
-  updatedAt: 1,
-  postedAt: 1,
-  source: 1,
-  sender: 1,
-};
 
 function scoreAndQueueJob(job, applierName, ctx, profileVersion, ops) {
   const result = scoreJobForProfile(job, ctx);
@@ -95,23 +84,6 @@ export async function rescoreUser(state) {
       await bulkWriteScores(ops);
       rows += ops.length;
       ops = [];
-    }
-  }
-
-  if (externalScrapedJobsCollection) {
-    const extCursor = externalScrapedJobsCollection
-      .find({ aiSkillStatus: 'extracted' })
-      .project(EXTERNAL_SCORE_PROJECTION);
-    for await (const raw of extCursor) {
-      const job = normalizeExternalJobForScoring(raw);
-      const result = scoreJobForProfile(job, ctx);
-      if (result.score < MIN_STORE_SCORE) continue;
-      ops.push(upsertOpForRow(buildScoreRow(applierName, job, result, profileVersion)));
-      if (ops.length >= RESCORE_WRITE_BATCH) {
-        await bulkWriteScores(ops);
-        rows += ops.length;
-        ops = [];
-      }
     }
   }
   await bulkWriteScores(ops);
@@ -189,36 +161,19 @@ async function loadAllProfileContexts() {
 async function fanOutPendingJobs() {
   if (!jobsCollection) return false;
 
-  const halfBatch = Math.max(1, Math.ceil(JOB_BATCH / 2));
-  const [marketJobs, externalRaw] = await Promise.all([
-    jobsCollection
-      .find({ matchScoreStatus: 'pending' })
-      .project(JOB_SCORE_PROJECTION)
-      .sort({ postedAt: -1 })
-      .limit(halfBatch)
-      .toArray(),
-    externalScrapedJobsCollection
-      ? externalScrapedJobsCollection
-          .find({ matchScoreStatus: 'pending' })
-          .project(EXTERNAL_SCORE_PROJECTION)
-          .sort({ createdAt: -1 })
-          .limit(halfBatch)
-          .toArray()
-      : Promise.resolve([]),
-  ]);
+  const marketJobs = await jobsCollection
+    .find({ matchScoreStatus: 'pending' })
+    .project(JOB_SCORE_PROJECTION)
+    .sort({ postedAt: -1 })
+    .limit(JOB_BATCH)
+    .toArray();
 
-  const externalJobs = externalRaw.map(normalizeExternalJobForScoring);
-  if (!marketJobs.length && !externalJobs.length) return false;
+  if (!marketJobs.length) return false;
 
   const contexts = await loadAllProfileContexts();
   const ops = [];
 
   for (const job of marketJobs) {
-    for (const [name, { ctx, profileVersion }] of contexts) {
-      scoreAndQueueJob(job, name, ctx, profileVersion, ops);
-    }
-  }
-  for (const job of externalJobs) {
     for (const [name, { ctx, profileVersion }] of contexts) {
       scoreAndQueueJob(job, name, ctx, profileVersion, ops);
     }
@@ -229,21 +184,13 @@ async function fanOutPendingJobs() {
   }
 
   const now = new Date().toISOString();
-  if (marketJobs.length) {
-    await jobsCollection.updateMany(
-      { _id: { $in: marketJobs.map((j) => j._id) } },
-      { $set: { matchScoreStatus: 'scored', matchScoredAt: now } },
-    );
-  }
-  if (externalJobs.length && externalScrapedJobsCollection) {
-    await externalScrapedJobsCollection.updateMany(
-      { _id: { $in: externalJobs.map((j) => j._id) } },
-      { $set: { matchScoreStatus: 'scored', matchScoredAt: now, updatedAt: new Date() } },
-    );
-  }
+  await jobsCollection.updateMany(
+    { _id: { $in: marketJobs.map((j) => j._id) } },
+    { $set: { matchScoreStatus: 'scored', matchScoredAt: now } },
+  );
 
   console.log(
-    `[match-score] fanned out ${marketJobs.length} market + ${externalJobs.length} external job(s) × ${contexts.size} profile(s)`,
+    `[match-score] fanned out ${marketJobs.length} market job(s) × ${contexts.size} profile(s)`,
   );
   return true;
 }

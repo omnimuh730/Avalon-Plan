@@ -3,7 +3,7 @@
  */
 import { chatCompletion, resolveDefaultModel } from '../llm/llmService.js';
 import { addLabelsToMessage, fetchFlagsForUids } from './imapClient.js';
-import { ensureMessageBody } from './mailSyncService.js';
+import { ensureMessagePlainText } from './mailSyncService.js';
 import { getMessage, updateMessageFlags } from './mailStore.js';
 import { folderToMailbox } from './folderMapper.js';
 
@@ -186,12 +186,16 @@ export async function runMailAiLabelBatch({
 			continue;
 		}
 
-		const bodyResult = await ensureMessageBody(applierName, uid, doc.mailbox || hintMailbox || inboxMailbox);
-		if (!bodyResult.ok) {
-			results.push({ uid, label: null, applied: false, error: bodyResult.error || 'Failed to load body' });
+		const textResult = await ensureMessagePlainText(
+			applierName,
+			uid,
+			doc.mailbox || hintMailbox || inboxMailbox,
+		);
+		if (!textResult.ok) {
+			results.push({ uid, label: null, applied: false, error: textResult.error || 'Failed to load body text' });
 			continue;
 		}
-		doc = bodyResult.message || doc;
+		doc = textResult.message || doc;
 
 		const fromDisplay = doc.from?.name
 			? doc.from.email
@@ -203,7 +207,7 @@ export async function runMailAiLabelBatch({
 			{
 				from: fromDisplay,
 				subject: doc.subject || '',
-				bodyText: doc.bodyText || '',
+				bodyText: textResult.bodyText || doc.bodyText || '',
 			},
 			allowedLabels,
 			labelDefinitions,

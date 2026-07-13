@@ -33,7 +33,7 @@ export type JobSearchFilterState = {
   sort: JobSortKey;
   /** Show only jobs whose skills have been AI-extracted. */
   aiExtractedOnly: boolean;
-  /** Also include jobs from external_scraped_jobs in the list. */
+  /** Legacy flag: external_scraped_jobs merge (off — job_market is the sole catalog). */
   includeExternalScraped: boolean;
 };
 
@@ -56,7 +56,7 @@ export const DEFAULT_JOB_FILTERS: JobSearchFilterState = {
   },
   sort: "matchScore",
   aiExtractedOnly: false,
-  includeExternalScraped: true,
+  includeExternalScraped: false,
 };
 
 function inScoreRange(value: number, range: ScoreRange) {

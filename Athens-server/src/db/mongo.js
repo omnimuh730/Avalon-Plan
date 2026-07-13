@@ -2,6 +2,7 @@
 import { MongoClient } from "mongodb";
 import { LLM_CALL_LOG_COLLECTION, ensureCallLogIndexes } from "@nextoffer/shared/ai-usage";
 import { ensureJobMarketIndexes, backfillMissingJobSourceFields, dedupeJobMarketByApplyLink } from "../services/jobMarketIndexes.js";
+import { migrateAllExternalScrapedJobsToMarket } from "../services/promoteExternalJobToMarket.js";
 
 let mongoClient;
 let mongoCloudClient;
@@ -212,6 +213,11 @@ async function initMongo() {
 	}
 	void backfillMissingJobSourceFields(jobsCollection).catch((err) => {
 		console.warn('[job_market] source field backfill failed', err.message);
+	});
+	// Promote historical external_scraped_jobs into job_market (idempotent).
+	// Fire-and-forget so Docker `npm start` is not blocked on large catalogs.
+	void migrateAllExternalScrapedJobsToMarket().catch((err) => {
+		console.warn('[migrate-external→market] startup migrate failed', err.message);
 	});
 	console.log('Connected to MongoDB', mongoUrl, 'DB:', mongoDbName);
 

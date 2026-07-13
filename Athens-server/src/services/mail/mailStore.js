@@ -138,6 +138,22 @@ export async function updateMessageBody(applierName, uid, bodyPatch, mailbox = A
 	);
 }
 
+/** Cache plain text for AI/search without claiming a full HTML body is loaded. */
+export async function updateMessagePlainText(applierName, uid, { bodyText, preview }, mailbox = ALL_MAIL_PATH) {
+	if (!mailMessagesCollection) return null;
+	const $set = {
+		mailbox,
+		syncedAt: new Date(),
+	};
+	if (typeof bodyText === 'string') $set.bodyText = bodyText;
+	if (typeof preview === 'string') $set.preview = preview;
+	return mailMessagesCollection.findOneAndUpdate(
+		messageFilter(applierName, uid, mailbox),
+		{ $set },
+		{ returnDocument: 'after' },
+	);
+}
+
 export async function clearMessageBody(applierName, uid, mailbox = ALL_MAIL_PATH) {
 	if (!mailMessagesCollection) return null;
 	return mailMessagesCollection.findOneAndUpdate(

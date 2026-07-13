@@ -29,3 +29,9 @@ test("validateScrapedJobInput stores jobID on normalized job", () => {
 	assert.equal(result.ok, true);
 	assert.equal(result.job.jobID, "linkedin-123");
 });
+
+test("validateScrapedJobInput ignores client source", () => {
+	const result = validateScrapedJobInput({ ...validJob, source: "linkedin" });
+	assert.equal(result.ok, true);
+	assert.equal(result.job.source, undefined);
+});

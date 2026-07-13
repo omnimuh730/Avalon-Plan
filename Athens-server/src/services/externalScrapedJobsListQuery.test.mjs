@@ -27,7 +27,7 @@ test("buildExternalScrapedJobsQuery filters by jobSources", () => {
 	assert.equal(query.$or.length, 2);
 });
 
-test("normalizeExternalScrapedJob maps flat schema to list shape", () => {
+test("normalizeExternalScrapedJob uses stored source when present", () => {
 	const normalized = normalizeExternalScrapedJob({
 		_id: "abc123",
 		sender: "li-job-scraper",
@@ -36,7 +36,7 @@ test("normalizeExternalScrapedJob maps flat schema to list shape", () => {
 		jobTitle: "Join our bench",
 		jobDescription: "Culture-first team.",
 		jobLink: "https://www.linkedin.com/jobs/view/123/",
-		source: "linkedin",
+		source: "LinkedIn",
 		postedAgo: "8 months ago",
 		createdAt: "2026-07-07T13:14:25.992Z",
 	});
@@ -45,7 +45,7 @@ test("normalizeExternalScrapedJob maps flat schema to list shape", () => {
 	assert.equal(normalized.title, "Join our bench");
 	assert.equal(normalized.company.name, "XMTP Labs");
 	assert.equal(normalized.applyLink, "https://www.linkedin.com/jobs/view/123/");
-	assert.equal(normalized.source, "linkedin");
+	assert.equal(normalized.source, "LinkedIn");
 	assert.equal(normalized.jobDescription, "Culture-first team.");
 	assert.equal(normalized.postedAt, "2026-07-07T13:14:25.992Z");
 });
@@ -77,16 +77,16 @@ test("normalizeExternalScrapedJob passes through enriched AI fields", () => {
 	assert.deepEqual(normalized.aiSkills[0].name, "Go");
 });
 
-test("normalizeExternalScrapedJob falls back to sender for source", () => {
+test("normalizeExternalScrapedJob infers source from jobLink when missing", () => {
 	const normalized = normalizeExternalScrapedJob({
 		_id: "x",
 		sender: "li-job-scraper",
 		companyName: "Acme",
 		jobTitle: "Role",
 		jobDescription: "Desc",
-		jobLink: "https://example.com/job",
+		jobLink: "https://boards.greenhouse.io/acme/jobs/1",
 	});
-	assert.equal(normalized.source, "li-job-scraper");
+	assert.equal(normalized.source, "Greenhouse");
 });
 
 test("externalAllowedForStatusTab includes all and posted only", () => {

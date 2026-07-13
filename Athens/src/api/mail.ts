@@ -12,7 +12,16 @@ async function mailFetch<T>(path: string, options: RequestInit = {}): Promise<T>
       ...(options.headers as Record<string, string> | undefined),
     },
   });
-  const data = (await res.json()) as ApiResult<T>;
+  const raw = await res.text();
+  let data: ApiResult<T>;
+  try {
+    data = JSON.parse(raw) as ApiResult<T>;
+  } catch {
+    if (res.status === 504 || res.status === 502 || res.status === 503) {
+      throw new Error(`Mail request timed out (HTTP ${res.status}). Try a smaller batch.`);
+    }
+    throw new Error(res.ok ? "Mail request returned invalid JSON" : `Mail request failed (HTTP ${res.status})`);
+  }
   if (!res.ok || data.success === false) {
     throw new Error(data.error || "Mail request failed");
   }
