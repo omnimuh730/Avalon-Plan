@@ -13,6 +13,7 @@ import {
 } from "../../../components/ui/dropdown-menu";
 import type { MailLabel } from "../../../types";
 import type { FolderCounts } from "@/api/mail";
+import { MAIL_LABEL_DRAG_MIME } from "../lib/mailDnD";
 
 const FOLDER_ICONS: Record<MailFolderId, React.ElementType> = {
   inbox: Inbox,
@@ -116,7 +117,9 @@ export function MailSidebar({
             Labels
           </p>
           <div className="space-y-0.5">
-            {tree.map(({ label: l, depth }) => (
+            {tree.map(({ label: l, depth }) => {
+              const labelPath = l.path || l.name;
+              return (
               <div
                 key={l.id}
                 className="group/label relative flex items-center min-w-0"
@@ -124,9 +127,16 @@ export function MailSidebar({
               >
                 <button
                   type="button"
+                  draggable
+                  title="Drag onto mail to apply label"
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(MAIL_LABEL_DRAG_MIME, labelPath);
+                    e.dataTransfer.setData("text/plain", labelPath);
+                    e.dataTransfer.effectAllowed = "copy";
+                  }}
                   onClick={() => onLabelChange(labelFilter === l.name ? null : l.name)}
                   className={cn(
-                    "flex-1 flex items-center gap-2 py-1.5 pr-8 rounded-lg text-sm transition-colors min-w-0",
+                    "flex-1 flex items-center gap-2 py-1.5 pr-8 rounded-lg text-sm transition-colors min-w-0 cursor-grab active:cursor-grabbing",
                     labelFilter === l.name
                       ? "bg-primary/10 text-primary font-semibold"
                       : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
@@ -138,7 +148,7 @@ export function MailSidebar({
                       LABEL_DOT_CLASS[l.color],
                     )}
                   />
-                  <span className="truncate">{l.name}</span>
+                  <span className="truncate">{l.shortName || l.name}</span>
                 </button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -161,7 +171,8 @@ export function MailSidebar({
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-            ))}
+            );
+            })}
             <button
               type="button"
               onClick={() => setCreateOpen(true)}

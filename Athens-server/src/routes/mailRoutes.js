@@ -14,6 +14,10 @@ import {
 	checkMailCredentials,
 	getMailFolderCounts,
 	getVerificationCode,
+	getMailLabelDefinitions,
+	putMailLabelDefinitions,
+	postMailAiLabel,
+	postMailAiWrite,
 } from '../controllers/mailController.js';
 
 const router = express.Router();
@@ -29,6 +33,10 @@ router.post('/mail/sync/older', syncMailOlder);
 router.post('/mail/send', sendMailMessage);
 router.patch('/mail/messages/:uid', patchMailMessage);
 router.get('/mail/labels', getMailLabels);
+router.get('/mail/label-definitions', getMailLabelDefinitions);
+router.put('/mail/label-definitions', putMailLabelDefinitions);
+router.post('/mail/ai-label', postMailAiLabel);
+router.post('/mail/ai-write', postMailAiWrite);
 router.post('/mail/labels', postMailLabel);
 router.delete('/mail/labels/:labelId', deleteMailLabel);
 router.put('/mail/labels', putMailLabels);

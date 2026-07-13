@@ -1,5 +1,6 @@
 import { Button, Paper, Box, Stack, Typography, TextField, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
 import ResponseTreeView from './reference/ResponseTreeView.jsx';
+import { athensCardSx, athensSectionLabelSx } from '../../theme/athensTheme';
 
 export function AgentUI({
 	onAnalyze,
@@ -19,9 +20,15 @@ export function AgentUI({
 }) {
 	return (
 		<Box sx={{ p: 2, maxWidth: 1000, margin: 'auto' }}>
-			<Paper elevation={2} sx={{ p: 2, mb: 2 }}>
-				<Stack spacing={2}>
-					<Typography variant="h5">Agent</Typography>
+			<Paper sx={{ ...athensCardSx, mb: 2 }}>
+				<Stack spacing={2.5}>
+					<Box>
+						<Typography sx={athensSectionLabelSx} component="p" gutterBottom>
+							AI Agent
+						</Typography>
+						<Typography variant="h5">Agent</Typography>
+					</Box>
+
 					<FormControl fullWidth>
 						<InputLabel id="autolancer-profile-select-label">Profile</InputLabel>
 						<Select
@@ -46,41 +53,69 @@ export function AgentUI({
 						minRows={4}
 						fullWidth
 					/>
-					<Box sx={{ display: 'flex', gap: 2 }}>
+					<Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
 						<Button variant="contained" color="primary" onClick={onAnalyze} fullWidth disabled={loading}>
 							Highlight & Collect
 						</Button>
 						<Button variant="contained" color="success" onClick={onExecute} fullWidth disabled={!hasExecutableActions || loading || executing}>
 							{executing ? 'Executing...' : 'Execute Actions'}
 						</Button>
-					</Box>
-					{loading && <Typography variant="body2">Analyzing with AI...</Typography>}
-					{executing && <Typography variant="body2">Filling text fields...</Typography>}
-					{error && (
-						<Typography variant="body2" color="error">
-							{String(error)}
+					</Stack>
+					{loading && (
+						<Typography variant="body2" color="text.secondary">
+							Analyzing with AI...
 						</Typography>
+					)}
+					{executing && (
+						<Typography variant="body2" color="text.secondary">
+							Filling text fields...
+						</Typography>
+					)}
+					{error && (
+						<Box
+							sx={{
+								px: 1.5,
+								py: 1.25,
+								borderRadius: 2.5,
+								border: '1px solid',
+								borderColor: 'error.main',
+								bgcolor: 'rgba(248, 113, 113, 0.08)',
+							}}
+						>
+							<Typography variant="body2" color="error">
+								{String(error)}
+							</Typography>
+						</Box>
 					)}
 				</Stack>
 			</Paper>
 
 			{componentsData && (
-				<Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-					<Typography variant="subtitle1" sx={{ mb: 1 }}>Detected Components</Typography>
+				<Paper sx={{ ...athensCardSx, mb: 2 }}>
+					<Typography sx={{ ...athensSectionLabelSx, mb: 1.5 }} component="p">
+						Detected
+					</Typography>
+					<Typography variant="subtitle1" sx={{ mb: 1.5 }}>Detected Components</Typography>
 					<ResponseTreeView data={componentsData} />
 				</Paper>
 			)}
 
 			{analysisData && (
-				<Paper elevation={1} sx={{ p: 2 }}>
-					<Typography variant="subtitle1" sx={{ mb: 1 }}>AI Analysis</Typography>
+				<Paper sx={athensCardSx}>
+					<Typography sx={{ ...athensSectionLabelSx, mb: 1.5 }} component="p">
+						Analysis
+					</Typography>
+					<Typography variant="subtitle1" sx={{ mb: 1.5 }}>AI Analysis</Typography>
 					<ResponseTreeView data={analysisData} />
 				</Paper>
 			)}
 
 			{executionReport && (
-				<Paper elevation={1} sx={{ p: 2, mt: 2 }}>
-					<Typography variant="subtitle1" sx={{ mb: 1 }}>Execution Result</Typography>
+				<Paper sx={{ ...athensCardSx, mt: 2 }}>
+					<Typography sx={{ ...athensSectionLabelSx, mb: 1.5 }} component="p">
+						Result
+					</Typography>
+					<Typography variant="subtitle1" sx={{ mb: 1.5 }}>Execution Result</Typography>
 					<ResponseTreeView data={executionReport} />
 				</Paper>
 			)}

@@ -27,8 +27,20 @@ export default defineConfig({
       'ws://localhost/*',
       'ws://127.0.0.1/*',
     ],
+    icons: {
+      16: 'icons/icon16.png',
+      32: 'icons/icon32.png',
+      48: 'icons/icon48.png',
+      128: 'icons/icon128.png',
+    },
     action: {
       default_title: 'Open Avalon sidebar',
+      default_icon: {
+        16: 'icons/icon16.png',
+        32: 'icons/icon32.png',
+        48: 'icons/icon48.png',
+        128: 'icons/icon128.png',
+      },
     },
     side_panel: {
       default_path: 'sidepanel.html',

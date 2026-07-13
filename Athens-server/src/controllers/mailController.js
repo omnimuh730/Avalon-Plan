@@ -18,8 +18,11 @@ import {
 	messageToThread,
 	updateMessageFlags,
 	upsertSyncState,
+	getUserLabelDefinitions,
+	saveUserLabelDefinitions,
+	normalizeLabelDefinitions,
 } from '../services/mail/mailStore.js';
-import { mailMessagesCollection } from '../db/mongo.js';
+import { mailMessagesCollection, mailUserLabelsCollection } from '../db/mongo.js';
 import {
 	ensureMessageBody,
 	runIncrementalSync,
@@ -32,7 +35,10 @@ import {
 } from '../services/mail/mailSyncService.js';
 import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
 import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js';
+import { runMailAiLabelBatch } from '../services/mail/aiLabelService.js';
+import { runMailAiWrite } from '../services/mail/aiWriteService.js';
 import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
+import { isProTier } from '../lib/proTier.js';
 
 const OTP_EMAIL_LIMIT = 10;
 
@@ -63,6 +69,17 @@ export async function getMailThreads(req, res) {
 		const folder = req.query.folder ? String(req.query.folder) : 'inbox';
 		const label = req.query.label ? String(req.query.label) : undefined;
 		const search = req.query.search ? String(req.query.search) : undefined;
+		const unlabeled = req.query.unlabeled === 'true' || req.query.unlabeled === '1';
+		if (unlabeled) {
+			const acc = await findAccountByApplierName(applierName);
+			if (!isProTier(acc?.tier)) {
+				return res.status(403).json({
+					success: false,
+					error: 'Pro workspace required.',
+					proRequired: true,
+				});
+			}
+		}
 		const { page, pageSize } = parsePageQuery(req);
 		const cacheOnly = req.query.cacheOnly === 'true' || req.query.cacheOnly === '1';
 		const forceRefresh = req.query.force === 'true' || req.query.force === '1';
@@ -74,14 +91,28 @@ export async function getMailThreads(req, res) {
 
 		let result;
 		if (cacheOnly) {
-			if (label || search) {
-				result = await loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize });
+			if (label || search || unlabeled) {
+				result = await loadLabelOrSearchPage(applierName, {
+					folder: unlabeled ? 'inbox' : folder,
+					label,
+					search,
+					unlabeled,
+					page,
+					pageSize,
+				});
 				result.fromCache = true;
 			} else {
 				result = await loadCachedFolderPage(applierName, folder, page, pageSize);
 			}
-		} else if (label || search) {
-			result = await loadLabelOrSearchPage(applierName, { folder, label, search, page, pageSize });
+		} else if (label || search || unlabeled) {
+			result = await loadLabelOrSearchPage(applierName, {
+				folder: unlabeled ? 'inbox' : folder,
+				label,
+				search,
+				unlabeled,
+				page,
+				pageSize,
+			});
 		} else {
 			result = await loadFolderPage(applierName, folder, page, pageSize, { forceRefresh });
 		}
@@ -119,6 +150,21 @@ async function requireApplier(req, res) {
 	const acc = await findAccountByApplierName(applierName);
 	if (!acc) {
 		res.status(404).json({ success: false, error: `No account named "${applierName}".` });
+		return null;
+	}
+	return applierName;
+}
+
+async function requireProApplier(req, res) {
+	const applierName = await requireApplier(req, res);
+	if (!applierName) return null;
+	const acc = await findAccountByApplierName(applierName);
+	if (!isProTier(acc?.tier)) {
+		res.status(403).json({
+			success: false,
+			error: 'Pro workspace required.',
+			proRequired: true,
+		});
 		return null;
 	}
 	return applierName;
@@ -275,6 +321,7 @@ export async function getVerificationCode(req, res) {
 		const ai = await aiExtractVerification(emails, decryptProfileApiKeys(acc?.autoBidProfile || {}), {
 			companyName,
 			jobTitle,
+			applierName,
 		});
 
 		const debug = {
@@ -578,6 +625,163 @@ export async function checkMailCredentials(req, res) {
 		return res.json({ success: true, configured: true, email: creds.email });
 	} catch (err) {
 		console.error('GET /api/mail/credentials error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function getMailLabelDefinitions(req, res) {
+	try {
+		const applierName = await requireProApplier(req, res);
+		if (!applierName) return;
+
+		if (!mailUserLabelsCollection) {
+			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
+
+		const acc = await findAccountByApplierName(applierName);
+		if (!acc) {
+			return res.status(404).json({ success: false, error: `No account named "${applierName}".` });
+		}
+
+		const definitions = await getUserLabelDefinitions(
+			applierName,
+			acc.autoBidProfile?.mailLabelDefinitions,
+		);
+		return res.json({ success: true, definitions });
+	} catch (err) {
+		console.error('GET /api/mail/label-definitions error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function putMailLabelDefinitions(req, res) {
+	try {
+		const applierName = await requireProApplier(req, res);
+		if (!applierName) return;
+
+		if (!mailUserLabelsCollection) {
+			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
+
+		const acc = await findAccountByApplierName(applierName);
+		if (!acc) {
+			return res.status(404).json({ success: false, error: `No account named "${applierName}".` });
+		}
+
+		const definitions = await saveUserLabelDefinitions(applierName, req.body?.definitions);
+		return res.json({ success: true, definitions });
+	} catch (err) {
+		console.error('PUT /api/mail/label-definitions error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function postMailAiLabel(req, res) {
+	try {
+		if (!mailMessagesCollection) {
+			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
+
+		const applierName = await requireProApplier(req, res);
+		if (!applierName) return;
+
+		const creds = await resolveMailCredentials(applierName);
+		if (!creds.ok) {
+			return res.status(400).json({ success: false, error: creds.error, credentialsMissing: true });
+		}
+
+		const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+		if (!rawMessages.length) {
+			return res.status(400).json({ success: false, error: 'messages array required' });
+		}
+		if (rawMessages.length > 50) {
+			return res.status(400).json({ success: false, error: 'Maximum 50 messages per batch' });
+		}
+
+		const acc = await findAccountByApplierName(applierName);
+		const profile = decryptProfileApiKeys(acc?.autoBidProfile || {});
+		const storedDefinitions = await getUserLabelDefinitions(
+			applierName,
+			acc?.autoBidProfile?.mailLabelDefinitions,
+		);
+		const labelDefinitions = normalizeLabelDefinitions(
+			req.body?.labelDefinitions || storedDefinitions,
+		);
+
+		const gmailLabels = await fetchGmailLabelList(creds.email, creds.password);
+		const allowedLabels = gmailLabels.map((l) => l.path || l.name).filter(Boolean);
+		if (!allowedLabels.length) {
+			return res.status(400).json({ success: false, error: 'No custom Gmail labels found. Create labels first.' });
+		}
+
+		const messages = rawMessages
+			.map((m) => ({
+				uid: Number(m.uid),
+				mailbox: typeof m.mailbox === 'string' ? m.mailbox : undefined,
+			}))
+			.filter((m) => Number.isFinite(m.uid));
+
+		const result = await runMailAiLabelBatch({
+			applierName,
+			profile,
+			email: creds.email,
+			password: creds.password,
+			messages,
+			allowedLabels,
+			labelDefinitions,
+		});
+
+		if (!result.ok) {
+			return res.status(400).json({ success: false, error: result.error });
+		}
+
+		return res.json({
+			success: true,
+			results: result.results,
+			usage: result.usage,
+		});
+	} catch (err) {
+		console.error('POST /api/mail/ai-label error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function postMailAiWrite(req, res) {
+	try {
+		const applierName = await requireProApplier(req, res);
+		if (!applierName) return;
+
+		const acc = await findAccountByApplierName(applierName);
+		if (!acc) {
+			return res.status(404).json({ success: false, error: `No account named "${applierName}".` });
+		}
+
+		const profile = decryptProfileApiKeys(acc.autoBidProfile || {});
+		const mode =
+			req.body?.mode === 'fine-tune'
+				? 'fine-tune'
+				: req.body?.mode === 'reply'
+					? 'reply'
+					: 'write';
+		const result = await runMailAiWrite(
+			{
+				mode,
+				prompt: req.body?.prompt,
+				body: req.body?.body,
+				subject: req.body?.subject,
+				replyContext: req.body?.replyContext,
+			},
+			profile,
+			{ applierName },
+		);
+
+		if (!result.ok) {
+			return res.status(400).json({ success: false, error: result.error });
+		}
+
+		return res.json({ success: true, body: result.body, usage: result.usage });
+	} catch (err) {
+		console.error('POST /api/mail/ai-write error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }

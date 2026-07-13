@@ -18,12 +18,21 @@ import {
   type BidSessionState,
   type BidShot,
 } from '@/lib/bid-session';
+import {
+  MAX_RESUME_UPLOAD_EVENTS,
+  RESUME_UPLOADS_STORAGE_KEY,
+  type LogUploadMessage,
+  type ResumeUploadEvent,
+} from '@/lib/resume-uploads';
 
-const BRIDGE_URL = 'http://127.0.0.1:3848';
-// Bid recordings always save to the cloud bid DB. (Local storage and the
-// per-profile model override were removed from the extension — the OpenAI model
-// is configured in lancer-frontend → Settings → Profile.)
-const BID_STORAGE_TARGET = 'cloud';
+const BRIDGE_URL = (import.meta.env.VITE_BRIDGE_URL ?? 'http://127.0.0.1:3848').replace(/\/$/, '');
+/** Remote bridges often need more than 2s; keep status checks honest. */
+const BRIDGE_HEALTH_TIMEOUT_MS = 8_000;
+
+function bridgeUnreachableMessage(cause?: unknown): string {
+  const detail = cause instanceof Error ? cause.message : cause ? String(cause) : 'unreachable';
+  return `Cannot reach bridge at ${BRIDGE_URL} (${detail}).`;
+}
 
 export interface GmailCredentials {
   email: string;
@@ -68,7 +77,11 @@ type Message =
   | { type: 'START_BID_SESSION'; tabId: number }
   | { type: 'COMPLETE_BID_SESSION'; tabId: number }
   | { type: 'GET_BID_SHOTS'; tabId: number }
-  | { type: 'BID_PROCESS_CLICK'; triggerText: string };
+  | { type: 'BID_PROCESS_CLICK'; triggerText: string }
+  | LogUploadMessage
+  | { type: 'GET_RESUME_UPLOADS' }
+  | { type: 'CLEAR_RESUME_UPLOADS' }
+  | { type: 'INJECT_RESUME_UPLOAD_HOOKS'; profileFileBase: string | null };
 
 type Response =
   | { ok: true; credentials: StoredCredentials | null }
@@ -124,6 +137,136 @@ async function clearApplierState(): Promise<void> {
   ]);
 }
 
+async function getStoredResumeUploads(): Promise<ResumeUploadEvent[]> {
+  const result = await chrome.storage.local.get(RESUME_UPLOADS_STORAGE_KEY);
+  const raw = result[RESUME_UPLOADS_STORAGE_KEY];
+  return Array.isArray(raw) ? (raw as ResumeUploadEvent[]) : [];
+}
+
+function uploadDedupeKey(event: Pick<ResumeUploadEvent, 'originalName' | 'cleanedName' | 'fileSize' | 'lastModified' | 'pageUrl'>): string {
+  return [
+    event.originalName,
+    event.cleanedName ?? '',
+    event.fileSize ?? '',
+    event.lastModified ?? '',
+    event.pageUrl,
+  ].join('|');
+}
+
+async function recordResumeUpload(
+  message: LogUploadMessage,
+  sender?: chrome.runtime.MessageSender,
+): Promise<ResumeUploadEvent> {
+  const event: ResumeUploadEvent = {
+    id: `${message.ts}-${Math.random().toString(36).slice(2, 9)}`,
+    originalName: message.originalName,
+    cleanedName: message.cleanedName,
+    renamed: message.renamed,
+    source: message.source,
+    pageUrl: message.pageUrl,
+    ts: message.ts,
+    profileFileBase: message.profileFileBase,
+    fileSize: message.fileSize,
+    lastModified: message.lastModified,
+  };
+
+  const existing = await getStoredResumeUploads();
+  const key = uploadDedupeKey(event);
+  const recentDuplicate = existing.find(
+    (item) => uploadDedupeKey(item) === key && Math.abs(item.ts - event.ts) < 2000,
+  );
+  if (recentDuplicate) {
+    console.log('[resume-upload] deduped', {
+      originalName: event.originalName,
+      source: event.source,
+    });
+    return recentDuplicate;
+  }
+
+  const next = [event, ...existing].slice(0, MAX_RESUME_UPLOAD_EVENTS);
+  await chrome.storage.local.set({ [RESUME_UPLOADS_STORAGE_KEY]: next });
+
+  console.log('[resume-upload]', {
+    originalName: event.originalName,
+    cleanedName: event.cleanedName,
+    renamed: event.renamed,
+    source: event.source,
+    profileFileBase: event.profileFileBase,
+    pageUrl: event.pageUrl,
+  });
+
+  // Persist to MongoDB bid_records when a bid session is active on this tab.
+  void persistResumeUploadToBidSession(event, sender).catch((error) => {
+    console.warn('[resume-upload] failed to persist to bid session', error);
+  });
+
+  return event;
+}
+
+async function getSessionResumeUploads(tabId: number): Promise<
+  Array<{
+    originalName: string;
+    cleanedName: string | null;
+    renamed: boolean;
+    source: string;
+    pageUrl: string;
+    ts: number;
+  }>
+> {
+  const key = tabKey('bidSessionResumeUploads', tabId);
+  const result = await chrome.storage.local.get(key);
+  const raw = result[key];
+  return Array.isArray(raw) ? raw : [];
+}
+
+async function appendSessionResumeUpload(
+  tabId: number,
+  event: ResumeUploadEvent,
+): Promise<void> {
+  const key = tabKey('bidSessionResumeUploads', tabId);
+  const existing = await getSessionResumeUploads(tabId);
+  const entry = {
+    originalName: event.originalName,
+    cleanedName: event.cleanedName,
+    renamed: event.renamed,
+    source: event.source,
+    pageUrl: event.pageUrl,
+    ts: event.ts,
+  };
+  await chrome.storage.local.set({ [key]: [...existing, entry].slice(-50) });
+}
+
+async function persistResumeUploadToBidSession(
+  event: ResumeUploadEvent,
+  sender?: chrome.runtime.MessageSender,
+): Promise<void> {
+  const tabId = sender?.tab?.id;
+  if (tabId == null) return;
+
+  const session = await getStoredBidSession(tabId);
+  if (session.status !== 'active' || !session.sessionId) return;
+
+  const applierState = await getStoredApplierState();
+  await appendSessionResumeUpload(tabId, event);
+
+  await postBidSessionEvent('/bid-session/resume-upload', {
+    sessionId: session.sessionId,
+    applierName: applierState.applierName ?? '',
+    profileId: applierState.profileId,
+    url: event.pageUrl,
+    originalName: event.originalName,
+    cleanedName: event.cleanedName,
+    renamed: event.renamed,
+    source: event.source,
+    pageUrl: event.pageUrl,
+    ts: event.ts,
+  });
+}
+
+async function clearStoredResumeUploads(): Promise<void> {
+  await chrome.storage.local.remove(RESUME_UPLOADS_STORAGE_KEY);
+}
+
 // Every bid-session storage key is namespaced by the Chrome tabId so each tab
 // keeps an independent session, screenshots, analysis history and remembered JD
 // context. Switching tabs in the side panel restores that tab's state; closing
@@ -140,6 +283,7 @@ const TAB_SESSION_KEY_PREFIXES = [
   'bidSessionFlags',
   'bidAnalysisTurns',
   'bidAnalysisUsage',
+  'bidSessionResumeUploads',
 ] as const;
 
 function tabKey(prefix: string, tabId: number): string {
@@ -364,15 +508,21 @@ async function postBidSessionEvent(
     | '/bid-session/start'
     | '/bid-session/event'
     | '/bid-session/analysis'
+    | '/bid-session/resume-upload'
     | '/bid-session/complete',
   payload: Record<string, unknown>,
 ): Promise<{ sessionId: string }> {
-  const response = await fetch(`${BRIDGE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, storageTarget: BID_STORAGE_TARGET }),
-    signal: AbortSignal.timeout(30000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BRIDGE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (error) {
+    throw new Error(bridgeUnreachableMessage(error));
+  }
 
   const data = (await response.json()) as { ok: boolean; sessionId?: string; error?: string };
   if (!response.ok || !data.ok || !data.sessionId) {
@@ -394,7 +544,7 @@ function sumUsage(a: UsageSummary, b: UsageSummary): UsageSummary {
 }
 
 // Persists a completed analysis (page + skills result and token/cost usage) to
-// the bid_records collection so it shows up in the lancer Vendor Monitor.
+// the main MongoDB bid_records collection for the Vendor Monitor.
 async function persistAnalysisRecord(
   sessionId: string | null,
   applierState: StoredApplierState,
@@ -466,11 +616,9 @@ async function startBidSession(tabId: number): Promise<BidSessionState> {
     throw new Error('Load a profile at the top before starting a session.');
   }
 
-  const bridgeRunning = await checkBridge();
-  if (!bridgeRunning) {
-    throw new Error('Local bridge is not running. Start vender-server with: npm run bridge');
-  }
-
+  // Do not preflight /health here — a flaky short health check can fail while the
+  // bridge is fine (UI already shows "Bridge online"). Let the real start request
+  // be the source of truth and surface its error.
   const tab = await getBidTab(tabId);
   await injectBidRecorder(tabId);
   const screenshot = await captureTabScreenshot(tabId, tab.windowId);
@@ -490,6 +638,7 @@ async function startBidSession(tabId: number): Promise<BidSessionState> {
     [tabKey('bidSessionStartedAt', tabId)]: startedAt,
     [tabKey('bidSessionCompletedAt', tabId)]: null,
     [tabKey('bidSessionShots', tabId)]: [],
+    [tabKey('bidSessionResumeUploads', tabId)]: [],
     // Clear the previous session's analyze history + accumulated usage + flags.
     [tabKey('bidAnalysisTurns', tabId)]: [],
     [tabKey('bidAnalysisUsage', tabId)]: null,
@@ -526,6 +675,7 @@ async function completeBidSession(tabId: number): Promise<BidSessionState> {
   const screenshot = await captureTabScreenshot(tabId, tab.windowId);
   const usageKey = tabKey('bidAnalysisUsage', tabId);
   const stored = await chrome.storage.local.get(usageKey);
+  const resumeUploads = await getSessionResumeUploads(tabId);
 
   await postBidSessionEvent('/bid-session/complete', {
     sessionId: session.sessionId,
@@ -535,6 +685,7 @@ async function completeBidSession(tabId: number): Promise<BidSessionState> {
     title: tab.title ?? '',
     screenshot,
     usage: stored[usageKey] ?? null,
+    resumeUploads,
   });
 
   const completedAt = new Date().toISOString();
@@ -639,6 +790,288 @@ async function injectBidRecorder(tabId: number): Promise<void> {
   }
 }
 
+/**
+ * Inject FormData/fetch/XHR resume rename hooks into the page MAIN world.
+ * Uses chrome.scripting.executeScript so page CSP cannot block it (unlike
+ * CRX dynamic import() of world:MAIN content scripts on Greenhouse).
+ */
+async function injectResumeUploadHooks(
+  tabId: number,
+  profileFileBase: string | null,
+  frameId?: number,
+): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target:
+        frameId != null
+          ? { tabId, frameIds: [frameId] }
+          : { tabId, allFrames: true },
+      world: 'MAIN',
+      args: [profileFileBase],
+      func: (initialProfileFileBase: string | null) => {
+        const w = window as unknown as {
+          __resumeUploadHook?: boolean;
+          __resumeUploadProfileBase?: string | null;
+        };
+
+        w.__resumeUploadProfileBase =
+          typeof initialProfileFileBase === 'string' && initialProfileFileBase.length > 0
+            ? initialProfileFileBase
+            : null;
+
+        const HOOK_SOURCE = 'resume-upload-hook';
+        const BRIDGE_SOURCE = 'resume-upload-bridge';
+        const TARGET_EXT_RE = /\.(pdf|docx)$/i;
+
+        const getProfileBase = () => w.__resumeUploadProfileBase ?? null;
+
+        const isTarget = (name: string) => TARGET_EXT_RE.test(name.trim());
+
+        const buildCleanName = (originalName: string, base: string | null): string | null => {
+          if (!base || !isTarget(originalName)) return null;
+          const match = originalName.trim().match(TARGET_EXT_RE);
+          if (!match) return null;
+          const next = `${base}${match[0]}`;
+          return next === originalName ? null : next;
+        };
+
+        const cloneFile = (file: File, newName: string, originalName: string) => {
+          const next = new File([file], newName, {
+            type: file.type,
+            lastModified: file.lastModified,
+          });
+          try {
+            Object.defineProperty(next, '__bidOriginalName', {
+              value: originalName,
+              enumerable: false,
+              configurable: true,
+            });
+          } catch {
+            (next as File & { __bidOriginalName?: string }).__bidOriginalName = originalName;
+          }
+          return next;
+        };
+
+        const readOriginalName = (file: File, fallback: string): string => {
+          const stamped = (file as File & { __bidOriginalName?: unknown }).__bidOriginalName;
+          return typeof stamped === 'string' && stamped.length > 0 ? stamped : fallback;
+        };
+
+        const postLog = (partial: {
+          originalName: string;
+          cleanedName: string | null;
+          renamed: boolean;
+          uploadSource: string;
+          fileSize?: number;
+          lastModified?: number;
+        }) => {
+          // Only record real renames — never "already matched" noise.
+          if (!partial.renamed || !partial.cleanedName) return;
+          try {
+            window.postMessage(
+              {
+                source: HOOK_SOURCE,
+                kind: 'log',
+                pageUrl: location.href,
+                ts: Date.now(),
+                profileFileBase: getProfileBase(),
+                ...partial,
+              },
+              '*',
+            );
+          } catch {
+            // ignore
+          }
+        };
+
+        const rewriteFile = (file: File, uploadSource: string): File => {
+          if (!isTarget(file.name)) return file;
+          const bidderOriginal = readOriginalName(file, file.name);
+          const cleanedName = buildCleanName(file.name, getProfileBase());
+          if (!cleanedName) {
+            // Input layer already renamed; still surface original if stamped.
+            if (bidderOriginal !== file.name) {
+              postLog({
+                originalName: bidderOriginal,
+                cleanedName: file.name,
+                renamed: true,
+                uploadSource,
+                fileSize: file.size,
+                lastModified: file.lastModified,
+              });
+            }
+            return file;
+          }
+          postLog({
+            originalName: bidderOriginal,
+            cleanedName,
+            renamed: true,
+            uploadSource,
+            fileSize: file.size,
+            lastModified: file.lastModified,
+          });
+          return cloneFile(file, cleanedName, bidderOriginal);
+        };
+
+        const rewriteBlob = (
+          value: Blob,
+          filename: string | undefined,
+          uploadSource: string,
+        ): { value: Blob; filename?: string } => {
+          const name = filename || (value instanceof File ? value.name : '');
+          if (!name || !isTarget(name)) return { value, filename };
+          const bidderOriginal =
+            value instanceof File ? readOriginalName(value, name) : name;
+          const cleanedName = buildCleanName(name, getProfileBase());
+          if (!cleanedName) {
+            if (bidderOriginal !== name) {
+              postLog({
+                originalName: bidderOriginal,
+                cleanedName: name,
+                renamed: true,
+                uploadSource,
+                fileSize: value.size,
+                lastModified: value instanceof File ? value.lastModified : undefined,
+              });
+            }
+            return { value, filename };
+          }
+          postLog({
+            originalName: bidderOriginal,
+            cleanedName,
+            renamed: true,
+            uploadSource,
+            fileSize: value.size,
+            lastModified: value instanceof File ? value.lastModified : undefined,
+          });
+          if (value instanceof File) {
+            return {
+              value: cloneFile(value, cleanedName, bidderOriginal),
+              filename: cleanedName,
+            };
+          }
+          const next = new File([value], cleanedName, {
+            type: value.type,
+            lastModified: Date.now(),
+          });
+          try {
+            Object.defineProperty(next, '__bidOriginalName', {
+              value: bidderOriginal,
+              enumerable: false,
+              configurable: true,
+            });
+          } catch {
+            (next as File & { __bidOriginalName?: string }).__bidOriginalName = bidderOriginal;
+          }
+          return { value: next, filename: cleanedName };
+        };
+
+        // Always refresh profile base from bridge messages (idempotent).
+        window.addEventListener('message', (event: MessageEvent) => {
+          if (event.source !== window) return;
+          const data = event.data as {
+            source?: string;
+            kind?: string;
+            profileFileBase?: string | null;
+          } | null;
+          if (!data || data.source !== BRIDGE_SOURCE || data.kind !== 'config') return;
+          w.__resumeUploadProfileBase =
+            typeof data.profileFileBase === 'string' && data.profileFileBase.length > 0
+              ? data.profileFileBase
+              : null;
+        });
+
+        if (w.__resumeUploadHook) {
+          try {
+            window.postMessage({ source: HOOK_SOURCE, kind: 'ready' }, '*');
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        w.__resumeUploadHook = true;
+
+        // File <input> rewriting is handled in the isolated bridge (CSP-safe).
+        // MAIN world only patches network upload APIs.
+
+        const originalAppend = FormData.prototype.append;
+        const originalSet = FormData.prototype.set;
+
+        FormData.prototype.append = function append(
+          name: string,
+          value: string | Blob,
+          filename?: string,
+        ) {
+          if (typeof value === 'string') {
+            return originalAppend.call(this, name, value);
+          }
+          const rewritten = rewriteBlob(value, filename, 'formdata');
+          if (rewritten.filename !== undefined) {
+            return originalAppend.call(this, name, rewritten.value, rewritten.filename);
+          }
+          return originalAppend.call(this, name, rewritten.value);
+        } as typeof FormData.prototype.append;
+
+        FormData.prototype.set = function set(
+          name: string,
+          value: string | Blob,
+          filename?: string,
+        ) {
+          if (typeof value === 'string') {
+            return originalSet.call(this, name, value);
+          }
+          const rewritten = rewriteBlob(value, filename, 'formdata');
+          if (rewritten.filename !== undefined) {
+            return originalSet.call(this, name, rewritten.value, rewritten.filename);
+          }
+          return originalSet.call(this, name, rewritten.value);
+        } as typeof FormData.prototype.set;
+
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = function patchedFetch(
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ): Promise<Response> {
+          try {
+            if (init?.body instanceof File) {
+              const next = rewriteFile(init.body, 'fetch');
+              if (next !== init.body) {
+                return originalFetch(input, { ...init, body: next });
+              }
+            }
+          } catch {
+            // fall through
+          }
+          return originalFetch(input, init);
+        };
+
+        const originalSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function patchedSend(
+          body?: Document | XMLHttpRequestBodyInit | null,
+        ) {
+          try {
+            if (body instanceof File) {
+              return originalSend.call(this, rewriteFile(body, 'xhr'));
+            }
+          } catch {
+            // fall through
+          }
+          return originalSend.call(this, body);
+        };
+
+        try {
+          window.postMessage({ source: HOOK_SOURCE, kind: 'ready' }, '*');
+        } catch {
+          // ignore
+        }
+        console.info('[resume-upload] MAIN hooks installed via executeScript');
+      },
+    });
+  } catch (error) {
+    console.warn('[resume-upload] executeScript inject failed', error);
+  }
+}
+
 async function recordBidProcessClick(
   triggerText: string,
   sender: chrome.runtime.MessageSender,
@@ -650,10 +1083,11 @@ async function recordBidProcessClick(
   }
 
   // Kick off the capture before anything else — the page is navigating away.
-  // Best-effort full page (captureTabScreenshot stitches via CDP, falling back
-  // to a viewport grab if the tab navigates before stitching finishes).
+  // Use a viewport-only grab (no CDP): attaching chrome.debugger mid-click
+  // interrupts the page's own event handling, so the SPA's submit handler never
+  // runs and the browser falls back to a native form submission (full refresh).
   const windowId = sender.tab?.windowId;
-  const screenshotPromise = captureTabScreenshot(tabId, windowId);
+  const screenshotPromise = captureTabScreenshot(tabId, windowId, { fullPage: false });
 
   const session = await getStoredBidSession(tabId);
   if (session.status !== 'active' || !session.sessionId) {
@@ -736,9 +1170,15 @@ async function getBridgeStatus(): Promise<{
   mongoError: string | null;
 }> {
   try {
-    const response = await fetch(`${BRIDGE_URL}/health`, { signal: AbortSignal.timeout(2000) });
+    const response = await fetch(`${BRIDGE_URL}/health`, {
+      signal: AbortSignal.timeout(BRIDGE_HEALTH_TIMEOUT_MS),
+    });
     if (!response.ok) {
-      return { running: false, mongoConnected: false, mongoError: 'Bridge unreachable' };
+      return {
+        running: false,
+        mongoConnected: false,
+        mongoError: bridgeUnreachableMessage(`HTTP ${response.status}`),
+      };
     }
     const data = (await response.json()) as {
       mongoConnected?: boolean;
@@ -749,28 +1189,18 @@ async function getBridgeStatus(): Promise<{
       mongoConnected: Boolean(data.mongoConnected),
       mongoError: data.mongoConnected ? null : data.mongoError ?? 'Database not connected',
     };
-  } catch {
+  } catch (error) {
     return {
       running: false,
       mongoConnected: false,
-      mongoError: 'Bridge is not running. Start vender-server with: npm run bridge',
+      mongoError: bridgeUnreachableMessage(error),
     };
   }
-}
-
-async function checkBridge(): Promise<boolean> {
-  const status = await getBridgeStatus();
-  return status.running && status.mongoConnected;
 }
 
 async function bridgePost(path: string, payload: Record<string, unknown>) {
   const applierState = await getStoredApplierState();
   const credentials = await getStoredCredentials();
-
-  const bridgeRunning = await checkBridge();
-  if (!bridgeRunning) {
-    throw new Error('IMAP bridge is not running. Start vender-server with: npm run bridge');
-  }
 
   const body: Record<string, unknown> = {
     label: GMAIL_LABEL,
@@ -786,12 +1216,17 @@ async function bridgePost(path: string, payload: Record<string, unknown>) {
     throw new Error('Load a profile at the top, or add Gmail credentials in Inbox settings.');
   }
 
-  const response = await fetch(`${BRIDGE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BRIDGE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (error) {
+    throw new Error(bridgeUnreachableMessage(error));
+  }
 
   const data = (await response.json()) as { ok: boolean; error?: string };
   if (!response.ok || !data.ok) {
@@ -802,17 +1237,17 @@ async function bridgePost(path: string, payload: Record<string, unknown>) {
 }
 
 async function verifyApplierProfile(applierName: string): Promise<ProfileVerification> {
-  const bridgeRunning = await checkBridge();
-  if (!bridgeRunning) {
-    throw new Error('Bridge is not running. Start vender-server with: npm run bridge');
+  let response: Response;
+  try {
+    response = await fetch(`${BRIDGE_URL}/profile/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ applierName: applierName.trim() }),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (error) {
+    throw new Error(bridgeUnreachableMessage(error));
   }
-
-  const response = await fetch(`${BRIDGE_URL}/profile/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ applierName: applierName.trim() }),
-    signal: AbortSignal.timeout(120000),
-  });
 
   const data = (await response.json()) as ProfileVerification & { ok: boolean; error?: string };
   if (!response.ok || !data.ok) {
@@ -899,17 +1334,17 @@ async function bridgeAnalyze<T>(
   sessionContext: BidSessionContext,
   extraBody: Record<string, unknown> = {},
 ): Promise<{ result: T; usage: UsageSummary }> {
-  const bridgeRunning = await checkBridge();
-  if (!bridgeRunning) {
-    throw new Error('Local bridge is not running. Start vender-server with: npm run bridge');
+  let response: Response;
+  try {
+    response = await fetch(`${BRIDGE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pageContext, applierName, sessionContext, ...extraBody }),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (error) {
+    throw new Error(bridgeUnreachableMessage(error));
   }
-
-  const response = await fetch(`${BRIDGE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pageContext, applierName, sessionContext, ...extraBody }),
-    signal: AbortSignal.timeout(120000),
-  });
 
   const data = (await response.json()) as {
     ok: boolean;
@@ -1169,6 +1604,33 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
         }
         case 'BID_PROCESS_CLICK': {
           await recordBidProcessClick(message.triggerText, sender);
+          sendResponse({ ok: true } satisfies Response);
+          break;
+        }
+        case 'LOG_UPLOAD': {
+          await recordResumeUpload(message, sender);
+          sendResponse({ ok: true } satisfies Response);
+          break;
+        }
+        case 'INJECT_RESUME_UPLOAD_HOOKS': {
+          const tabId = sender.tab?.id;
+          if (tabId != null) {
+            await injectResumeUploadHooks(
+              tabId,
+              message.profileFileBase,
+              sender.frameId,
+            );
+          }
+          sendResponse({ ok: true } satisfies Response);
+          break;
+        }
+        case 'GET_RESUME_UPLOADS': {
+          const uploads = await getStoredResumeUploads();
+          sendResponse({ ok: true, uploads });
+          break;
+        }
+        case 'CLEAR_RESUME_UPLOADS': {
+          await clearStoredResumeUploads();
           sendResponse({ ok: true } satisfies Response);
           break;
         }

@@ -181,8 +181,11 @@ async function callOpenAi(messages, { jsonMode = false, cacheKey } = {}) {
     messages,
   };
 
-  // gpt-5 family only supports the default temperature.
-  if (!OPENAI_MODEL.startsWith('gpt-5')) {
+  if (OPENAI_MODEL.startsWith('gpt-5')) {
+    // gpt-5* default to "medium" effort. "minimal" is the cheapest valid value
+    // ("none" is rejected by the API for this model family).
+    body.reasoning_effort = 'minimal';
+  } else {
     body.temperature = 0.2;
   }
 
@@ -593,5 +596,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Gmail IMAP bridge listening on http://${HOST}:${PORT}`);
-  console.log('Keep this running while using the Gmail Assistant extension.');
+  console.log('Keep this running while using the Bid-Copilot extension.');
 });

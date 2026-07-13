@@ -27,11 +27,15 @@ export async function streamSSE(
         else if (line.startsWith("data:")) data += line.slice(5).trim();
       }
       if (data) {
+        let parsed: Record<string, unknown>;
         try {
-          onEvent(event, JSON.parse(data));
+          parsed = JSON.parse(data) as Record<string, unknown>;
         } catch {
           /* ignore malformed event */
+          continue;
         }
+        // Let onEvent throw (e.g. SSE "error" events) — do not swallow.
+        onEvent(event, parsed);
       }
     }
   }

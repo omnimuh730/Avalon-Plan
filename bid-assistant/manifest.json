@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Gmail Assistant",
+  "name": "Bid-Copilot",
   "description": "Read Gmail in a Chrome sidebar using your email and app password.",
   "version": "1.0.0",
   "icons": {
@@ -9,7 +9,7 @@
     "128": "public/icons/icon128.png"
   },
   "action": {
-    "default_title": "Open Gmail Assistant",
+    "default_title": "Open Bid-Copilot",
     "default_icon": {
       "16": "public/icons/icon16.png",
       "48": "public/icons/icon48.png",
@@ -27,6 +27,21 @@
     {
       "matches": ["<all_urls>"],
       "js": ["src/content/bid-recorder.ts"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/bid-recorder-main.ts"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/resume-upload-bridge.ts"],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true

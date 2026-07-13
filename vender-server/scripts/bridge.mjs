@@ -18,6 +18,7 @@ import {
   completeBidSession,
   recordBidAnalysisEvent,
   recordBidProcessEvent,
+  recordBidResumeUploadEvent,
   startBidSession,
 } from '../src/services/bidSessionService.js';
 import {
@@ -41,7 +42,8 @@ loadEnv();
 
 const HOST = process.env.BRIDGE_HOST || '127.0.0.1';
 const PORT = Number(process.env.BRIDGE_PORT || 3848);
-const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL ?? 'gpt-5-nano';
+// Job Bid analysis is hardcoded to gpt-5-nano in analyze.js (cheapest tier).
+const DEFAULT_OPENAI_MODEL = 'gpt-5-nano';
 
 // The job-analysis prompt is embedded in the codebase (src/config/jobAnalysisPrompt.js),
 // so it always works without a prompt.md asset in dist/. PROMPT_MD_PATH still lets you
@@ -194,6 +196,10 @@ async function handleBidSessionRequest(pathname, body) {
     const result = await recordBidAnalysisEvent(bidRecordsCollection, body);
     return { status: 200, payload: { ok: true, ...result } };
   }
+  if (pathname === '/bid-session/resume-upload') {
+    const result = await recordBidResumeUploadEvent(bidRecordsCollection, body);
+    return { status: 200, payload: { ok: true, ...result } };
+  }
   const result = await completeBidSession(bidRecordsCollection, body);
   return { status: 200, payload: { ok: true, ...result } };
 }
@@ -289,6 +295,7 @@ const server = http.createServer(async (req, res) => {
       (url.pathname === '/bid-session/start' ||
         url.pathname === '/bid-session/event' ||
         url.pathname === '/bid-session/analysis' ||
+        url.pathname === '/bid-session/resume-upload' ||
         url.pathname === '/bid-session/complete')
     ) {
       // Screenshots are base64 data URLs, so allow a much larger body.

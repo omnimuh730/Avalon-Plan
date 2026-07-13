@@ -11,10 +11,10 @@ export function formatFailureMessage(err, fallback = 'Something went wrong') {
 		err?.name === 'TypeError' ||
 		/failed to fetch|networkerror/i.test(message)
 	) {
-		return 'Failed to connect to backend API. Check that the server is running and VITE_API_URL is correct.';
+		return 'Failed to connect to backend API. Check that the server is running and Extension/.env is configured.';
 	}
 	if (message === 'API base URL is not configured') {
-		return 'API base URL is not configured. Set VITE_API_URL and reload the extension.';
+		return 'API base URL is not configured. Set VITE_API_URL in Extension/.env and reload the extension.';
 	}
 	if (message === 'Request failed') {
 		const detail = err?.data?.message || err?.data?.error;

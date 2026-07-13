@@ -1,30 +1,37 @@
-import React from "react";
+import React, { useState } from "react";
 import { Archive, Star, Trash2, Mail } from "lucide-react";
 import { cn } from "../../../lib/utils";
+import { Checkbox } from "../../../components/ui/checkbox";
 import { labelPillClass } from "../lib/mailLabelStyles";
+import { getDraggedLabelPath, MAIL_LABEL_DRAG_MIME } from "../lib/mailDnD";
 import type { MailThread } from "../../../types";
 
 type MailListRowProps = {
   thread: MailThread;
   selected: boolean;
   onSelect: () => void;
+  onToggleSelect?: (checked: boolean) => void;
   onStar?: () => void;
   onArchive?: () => void;
   onTrash?: () => void;
   onMarkUnread?: () => void;
+  onDropLabel?: (labelPath: string) => void;
 };
 
 export function MailListRow({
   thread,
   selected,
   onSelect,
+  onToggleSelect,
   onStar,
   onArchive,
   onTrash,
   onMarkUnread,
+  onDropLabel,
 }: MailListRowProps) {
   const starred = thread.starred ?? false;
   const senderName = thread.from.split("(")[0]?.trim() || thread.from;
+  const [dragOver, setDragOver] = useState(false);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -33,14 +40,54 @@ export function MailListRow({
     }
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!onDropLabel) return;
+    const types = Array.from(e.dataTransfer.types || []);
+    if (!types.includes(MAIL_LABEL_DRAG_MIME) && !types.includes("text/plain")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (!onDropLabel) return;
+    e.preventDefault();
+    setDragOver(false);
+    const path = getDraggedLabelPath(e.dataTransfer);
+    if (path) onDropLabel(path);
+  };
+
   return (
     <div
       className={cn(
         "group relative flex items-center border-b border-border/30 min-h-[40px]",
         selected && "bg-primary/5",
         thread.unread && "bg-background",
+        dragOver && "bg-primary/15 ring-1 ring-inset ring-primary/40",
       )}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
+      {onToggleSelect && (
+        <div
+          className="pl-3 flex-shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <Checkbox
+            checked={selected}
+            onCheckedChange={(v) => onToggleSelect(v === true)}
+            aria-label={`Select ${thread.subj}`}
+          />
+        </div>
+      )}
+
       <div
         role="button"
         tabIndex={0}

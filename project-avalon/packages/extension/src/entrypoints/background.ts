@@ -2,6 +2,7 @@ import { DEFAULT_SESSION_ID } from '@avalon/shared';
 import {
   AVALON_SERVER_KEY,
   AVALON_SESSION_KEY,
+  AVALON_PROFILE_KEY,
   DEFAULT_SERVER_URL,
   EXTENSION_MESSAGES,
   RELAY_KEEPALIVE_PORT,
@@ -19,10 +20,11 @@ const RELAY_ALARM = 'avalon-relay-heartbeat';
 const keepalivePorts = new Set<Browser.runtime.Port>();
 
 async function autoConnectRelay() {
-  const stored = await browser.storage.local.get([AVALON_SERVER_KEY, AVALON_SESSION_KEY]);
+  const stored = await browser.storage.local.get([AVALON_SERVER_KEY, AVALON_SESSION_KEY, AVALON_PROFILE_KEY]);
   const serverUrl = (stored[AVALON_SERVER_KEY] as string | undefined) ?? DEFAULT_SERVER_URL;
   const sessionId = (stored[AVALON_SESSION_KEY] as string | undefined) ?? DEFAULT_SESSION_ID;
-  await ensureRelayConnected({ serverUrl, sessionId });
+  const profileId = stored[AVALON_PROFILE_KEY] as string | undefined;
+  await ensureRelayConnected({ serverUrl, sessionId, profileId });
 }
 
 function bindRelayKeepalive() {
@@ -61,7 +63,7 @@ export default defineBackground(() => {
 
   browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === EXTENSION_MESSAGES.RELAY_CONNECT) {
-      const config = message.config as { serverUrl?: string; sessionId?: string } | undefined;
+      const config = message.config as { serverUrl?: string; sessionId?: string; profileId?: string } | undefined;
       void waitForRelayRegistration(config)
         .then((registered) => {
           sendResponse({ ok: true, registered });
@@ -80,7 +82,7 @@ export default defineBackground(() => {
     }
 
     if (message?.type === EXTENSION_MESSAGES.RELAY_STATUS) {
-      const config = message.config as { serverUrl?: string; sessionId?: string } | undefined;
+      const config = message.config as { serverUrl?: string; sessionId?: string; profileId?: string } | undefined;
       void ensureRelayConnected(config)
         .then(async () => {
           const socket = getRelaySocket();

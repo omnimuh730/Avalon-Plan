@@ -4,7 +4,15 @@ import { SocketProvider } from './socket.jsx';
 
 const Providers = ({ children }) => {
 	return (
-		<SnackbarProvider maxSnack={4} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+		<SnackbarProvider
+			maxSnack={4}
+			anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+			dense
+			hideIconVariant={false}
+			style={{
+				fontFamily: '"Figtree", system-ui, sans-serif',
+			}}
+		>
 			<SocketProvider>
 				<RuntimeProvider>
 					{children}

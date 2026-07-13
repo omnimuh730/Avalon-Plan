@@ -1,6 +1,7 @@
 import {
 	mailMessagesCollection,
 	mailSyncStateCollection,
+	mailUserLabelsCollection,
 } from '../../db/mongo.js';
 import { ALL_MAIL_PATH, extractCustomLabels } from './folderMapper.js';
 
@@ -138,6 +139,22 @@ export async function updateMessageBody(applierName, uid, bodyPatch, mailbox = A
 	);
 }
 
+/** Cache plain text for AI/search without claiming a full HTML body is loaded. */
+export async function updateMessagePlainText(applierName, uid, { bodyText, preview }, mailbox = ALL_MAIL_PATH) {
+	if (!mailMessagesCollection) return null;
+	const $set = {
+		mailbox,
+		syncedAt: new Date(),
+	};
+	if (typeof bodyText === 'string') $set.bodyText = bodyText;
+	if (typeof preview === 'string') $set.preview = preview;
+	return mailMessagesCollection.findOneAndUpdate(
+		messageFilter(applierName, uid, mailbox),
+		{ $set },
+		{ returnDocument: 'after' },
+	);
+}
+
 export async function clearMessageBody(applierName, uid, mailbox = ALL_MAIL_PATH) {
 	if (!mailMessagesCollection) return null;
 	return mailMessagesCollection.findOneAndUpdate(
@@ -181,27 +198,30 @@ export async function getMessage(applierName, uid, mailbox) {
 
 export async function listMessages(
 	applierName,
-	{ folder, label, search, page = 1, pageSize = 25, limit, beforeDate, mailbox } = {},
+	{ folder, label, search, unlabeled, page = 1, pageSize = 25, limit, beforeDate, mailbox } = {},
 ) {
 	if (!mailMessagesCollection) return [];
 
-	const filter = buildMessageFilter(applierName, { folder, label, search, beforeDate, mailbox });
+	const filter = buildMessageFilter(applierName, { folder, label, search, unlabeled, beforeDate, mailbox });
 	const size = Math.min(Math.max(limit ?? pageSize, 1), 100);
 	const skip = limit ? 0 : (Math.max(page, 1) - 1) * size;
 
 	return mailMessagesCollection.find(filter).sort({ date: -1 }).skip(skip).limit(size).toArray();
 }
 
-export async function countMessages(applierName, { folder, label, search, beforeDate, mailbox } = {}) {
+export async function countMessages(applierName, { folder, label, search, unlabeled, beforeDate, mailbox } = {}) {
 	if (!mailMessagesCollection) return 0;
-	const filter = buildMessageFilter(applierName, { folder, label, search, beforeDate, mailbox });
+	const filter = buildMessageFilter(applierName, { folder, label, search, unlabeled, beforeDate, mailbox });
 	return mailMessagesCollection.countDocuments(filter);
 }
 
-function buildMessageFilter(applierName, { folder, label, search, beforeDate, mailbox } = {}) {
+function buildMessageFilter(applierName, { folder, label, search, unlabeled, beforeDate, mailbox } = {}) {
 	const filter = { applierName };
 	if (mailbox) filter.mailbox = mailbox;
 	if (folder) filter.folder = folder;
+	if (unlabeled) {
+		filter.labels = { $size: 0 };
+	}
 	if (label) {
 		const escaped = String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		filter.gmailLabels = { $regex: escaped, $options: 'i' };
@@ -281,6 +301,59 @@ export async function saveUserLabels(_applierName, labels) {
 	return labels;
 }
 
+/** @param {unknown} raw */
+export function normalizeLabelDefinitions(raw) {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+	const out = {};
+	for (const [key, value] of Object.entries(raw)) {
+		const k = String(key || '').trim();
+		if (!k) continue;
+		out[k] = String(value ?? '').trim().slice(0, 2000);
+	}
+	return out;
+}
+
+/**
+ * Load AI label definitions for an applier from mail_user_labels.
+ * Optionally migrates once from account_info.autoBidProfile.mailLabelDefinitions.
+ * @param {string} applierName
+ * @param {Record<string, string>|null|undefined} [legacyDefinitions]
+ */
+export async function getUserLabelDefinitions(applierName, legacyDefinitions = null) {
+	if (!mailUserLabelsCollection) return normalizeLabelDefinitions(legacyDefinitions);
+
+	const doc = await mailUserLabelsCollection.findOne({ applierName });
+	if (doc?.definitions && typeof doc.definitions === 'object') {
+		return normalizeLabelDefinitions(doc.definitions);
+	}
+
+	const fromLegacy = normalizeLabelDefinitions(legacyDefinitions);
+	if (Object.keys(fromLegacy).length) {
+		await saveUserLabelDefinitions(applierName, fromLegacy);
+		return fromLegacy;
+	}
+	return {};
+}
+
+/**
+ * Persist AI label definitions per applier in mail_user_labels.
+ * @param {string} applierName
+ * @param {Record<string, string>} definitions
+ */
+export async function saveUserLabelDefinitions(applierName, definitions) {
+	if (!mailUserLabelsCollection) {
+		throw new Error('Database not ready');
+	}
+	const normalized = normalizeLabelDefinitions(definitions);
+	const updatedAt = new Date().toISOString();
+	await mailUserLabelsCollection.updateOne(
+		{ applierName },
+		{ $set: { applierName, definitions: normalized, updatedAt } },
+		{ upsert: true },
+	);
+	return normalized;
+}
+
 export function messageToThread(doc, { includeBody = true } = {}) {
 	const date = doc.date instanceof Date ? doc.date : new Date(doc.date);
 	const customLabels = doc.gmailLabels?.length
@@ -292,9 +365,7 @@ export function messageToThread(doc, { includeBody = true } = {}) {
 		uid: doc.uid,
 		mailbox: doc.mailbox || ALL_MAIL_PATH,
 		from: doc.from?.name
-			? doc.from.email
-				? doc.from.name
-				: doc.from.name
+			? doc.from.name
 			: doc.from?.email || 'Unknown',
 		fromEmail: doc.from?.email || '',
 		subj: doc.subject || '(No subject)',

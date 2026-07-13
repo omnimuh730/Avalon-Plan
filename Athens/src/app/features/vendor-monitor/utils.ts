@@ -1,6 +1,7 @@
 import {
   Activity,
   CheckCircle2,
+  FileUp,
   MousePointerClick,
   Sparkles,
   type LucideIcon,
@@ -40,5 +41,6 @@ export const RECORD_META: Record<
   "session-start": { label: "Start", icon: Activity, color: "text-emerald-500" },
   process: { label: "Click", icon: MousePointerClick, color: "text-amber-500" },
   analysis: { label: "Analysis", icon: Sparkles, color: "text-blue-500" },
+  "resume-upload": { label: "Resume", icon: FileUp, color: "text-violet-500" },
   "session-complete": { label: "Done", icon: CheckCircle2, color: "text-indigo-500" },
 };

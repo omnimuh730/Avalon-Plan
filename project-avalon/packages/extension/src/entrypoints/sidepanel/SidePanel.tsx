@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DEFAULT_SESSION_ID, type RegisteredPayload } from '@avalon/shared';
-import { AVALON_SERVER_KEY, AVALON_SESSION_KEY, DEFAULT_SERVER_URL, EXTENSION_MESSAGES, RELAY_KEEPALIVE_PORT } from '../../utils/constants';
+import {
+  AVALON_SERVER_KEY,
+  AVALON_SESSION_KEY,
+  AVALON_PROFILE_KEY,
+  DEFAULT_SERVER_URL,
+  DEFAULT_ATHENS_API_URL,
+  EXTENSION_MESSAGES,
+  RELAY_KEEPALIVE_PORT,
+} from '../../utils/constants';
 import { saveRelayConfig } from '../../utils/relay';
 
 type PanelNotification = {
@@ -13,11 +21,17 @@ type PanelNotification = {
 export default function SidePanel() {
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
   const [sessionId, setSessionId] = useState('');
+  const [profileId, setProfileId] = useState('');
   const [connected, setConnected] = useState(false);
   const [registered, setRegistered] = useState<RegisteredPayload | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<PanelNotification[]>([]);
   const seenErrorRef = useRef<string | null>(null);
+
+  const [signinName, setSigninName] = useState('');
+  const [signinPassword, setSigninPassword] = useState('');
+  const [signinLoading, setSigninLoading] = useState(false);
+  const [signinError, setSigninError] = useState<string | null>(null);
 
   const pushNotification = useCallback((notification: Omit<PanelNotification, 'id'>) => {
     const item = { ...notification, id: `${Date.now()}_${Math.random()}` };
@@ -35,7 +49,7 @@ export default function SidePanel() {
     try {
       const status = (await browser.runtime.sendMessage({
         type: EXTENSION_MESSAGES.RELAY_STATUS,
-        config: { serverUrl, sessionId: sessionId || undefined },
+        config: { serverUrl, sessionId: sessionId || undefined, profileId: profileId || undefined },
       })) as { connected?: boolean; lastError?: string | null };
       const isConnected = Boolean(status?.connected);
       setConnected(isConnected);
@@ -54,16 +68,18 @@ export default function SidePanel() {
     } catch {
       setConnected(false);
     }
-  }, [pushNotification, serverUrl, sessionId]);
+  }, [pushNotification, serverUrl, sessionId, profileId]);
 
   useEffect(() => {
     void browser.storage.local
-      .get([AVALON_SERVER_KEY, AVALON_SESSION_KEY])
+      .get([AVALON_SERVER_KEY, AVALON_SESSION_KEY, AVALON_PROFILE_KEY])
       .then((stored) => {
         const savedUrl = stored[AVALON_SERVER_KEY] as string | undefined;
         const savedSession = stored[AVALON_SESSION_KEY] as string | undefined;
+        const savedProfile = stored[AVALON_PROFILE_KEY] as string | undefined;
         if (savedUrl) setServerUrl(savedUrl);
         if (savedSession) setSessionId(savedSession);
+        if (savedProfile) setProfileId(savedProfile);
       });
   }, []);
 
@@ -80,11 +96,16 @@ export default function SidePanel() {
   }, [refreshStatus]);
 
   const connect = async () => {
-    await saveRelayConfig(serverUrl, sessionId || undefined);
+    if (!profileId) {
+      pushNotification({ kind: 'error', title: 'Sign in required', message: 'Enter your Athens name + password.' });
+      return;
+    }
+
+    await saveRelayConfig(serverUrl, sessionId || undefined, profileId);
     try {
       const response = (await browser.runtime.sendMessage({
         type: EXTENSION_MESSAGES.RELAY_CONNECT,
-        config: { serverUrl, sessionId: sessionId || undefined },
+        config: { serverUrl, sessionId: sessionId || undefined, profileId },
       })) as { ok?: boolean; registered?: RegisteredPayload; error?: string };
 
       if (response?.error) {
@@ -112,6 +133,47 @@ export default function SidePanel() {
     }
   };
 
+  const signIn = async () => {
+    const name = signinName.trim();
+    const password = signinPassword;
+    if (!name || !password) {
+      setSigninError('Enter both name and password.');
+      return;
+    }
+
+    setSigninLoading(true);
+    setSigninError(null);
+    try {
+      const base = DEFAULT_ATHENS_API_URL.replace(/\/$/, '');
+      const res = await fetch(`${base}/auth/signin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, password }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        user?: { _id?: unknown };
+        message?: string;
+      };
+      if (!res.ok || !data?.success || data.user?._id == null) {
+        throw new Error(data?.message || 'Sign in failed');
+      }
+
+      const id = String(data.user._id);
+      setProfileId(id);
+      await browser.storage.local.set({ [AVALON_PROFILE_KEY]: id });
+      setSigninPassword('');
+      pushNotification({ kind: 'info', title: 'Signed in', message: 'Profile connected to Avalon relay.' });
+      await refreshStatus();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Sign in failed';
+      setSigninError(message);
+      pushNotification({ kind: 'error', title: 'Sign in failed', message });
+    } finally {
+      setSigninLoading(false);
+    }
+  };
+
   const disconnect = async () => {
     await browser.runtime.sendMessage({ type: EXTENSION_MESSAGES.RELAY_DISCONNECT });
     setConnected(false);
@@ -130,7 +192,7 @@ export default function SidePanel() {
     <div className="sidepanel">
       <div className="sidepanel-header">
         <div className="sidepanel-logo" aria-hidden>
-          ⚡
+          <img src="/logo.png" alt="" width={40} height={40} />
         </div>
         <div className="sidepanel-brand">
           <h1>Project Avalon</h1>
@@ -168,6 +230,39 @@ export default function SidePanel() {
           <code>{DEFAULT_SESSION_ID}</code>).
         </p>
 
+        {!profileId && (
+          <div className={`status-card ${signinError ? 'error' : ''}`}>
+            <div className="status-label">Sign in (no signup)</div>
+
+            <label htmlFor="signin-name">Athens name</label>
+            <input
+              id="signin-name"
+              value={signinName}
+              onChange={(e) => setSigninName(e.target.value)}
+              placeholder="Your Athens login name"
+              disabled={signinLoading}
+            />
+
+            <label htmlFor="signin-password">Password</label>
+            <input
+              id="signin-password"
+              value={signinPassword}
+              onChange={(e) => setSigninPassword(e.target.value)}
+              type="password"
+              placeholder="••••••••"
+              disabled={signinLoading}
+            />
+
+            {signinError && <div>{signinError}</div>}
+
+            <div className="button-row" style={{ marginTop: 10 }}>
+              <button type="button" onClick={() => void signIn()} disabled={signinLoading}>
+                {signinLoading ? 'Signing in…' : 'Sign in'}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="field">
           <label htmlFor="relay-server">Relay server</label>
           <input
@@ -202,7 +297,7 @@ export default function SidePanel() {
         </div>
 
         <div className="button-row">
-          <button type="button" onClick={() => void connect()}>
+          <button type="button" onClick={() => void connect()} disabled={!profileId}>
             {connected ? 'Reconnect' : 'Connect'}
           </button>
           <button

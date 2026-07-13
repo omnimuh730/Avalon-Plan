@@ -33,7 +33,7 @@ export type JobSearchFilterState = {
   sort: JobSortKey;
   /** Show only jobs whose skills have been AI-extracted. */
   aiExtractedOnly: boolean;
-  /** Also include jobs from external_scraped_jobs in the list. */
+  /** Legacy flag: external_scraped_jobs merge (off — job_market is the sole catalog). */
   includeExternalScraped: boolean;
 };
 
@@ -319,9 +319,10 @@ export function jobSearchFilterFn(job: Job, query: string) {
 }
 
 export function exportJobsCsv(jobs: Job[]): string {
-  const header = "Title,Company,Location,Status,Match,Skill,Posted,Salary,Source";
+  const header = "Link,Title,Company,Location,Status,Match,Skill,Posted,Salary,Source";
   const rows = jobs.map((j) =>
     [
+      j.applyUrl,
       j.title,
       j.company,
       j.location,

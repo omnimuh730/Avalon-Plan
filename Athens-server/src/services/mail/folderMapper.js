@@ -67,11 +67,16 @@ export function extractCustomLabels(gmailLabels) {
 	return result;
 }
 
-/** IMAP label token for Gmail X-GM-LABELS (leading backslash). */
+/**
+ * Token for Gmail X-GM-LABELS via imapflow `useLabels`.
+ * System labels may keep a leading backslash (\Inbox); custom labels are plain names.
+ */
 export function toImapLabelToken(labelName) {
-	const name = displayLabelName(labelName);
-	if (!name) return null;
-	return name.startsWith('\\') ? name : `\\${name}`;
+	const raw = String(labelName ?? '').trim();
+	if (!raw) return null;
+	// Preserve explicit system tokens (\Inbox, \Trash, …)
+	if (raw.startsWith('\\')) return raw;
+	return displayLabelName(raw);
 }
 
 function hasLabel(labels, target) {

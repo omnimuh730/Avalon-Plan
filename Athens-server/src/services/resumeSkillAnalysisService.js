@@ -11,6 +11,7 @@ import { mergeSkillProfiles } from "./resumeSkillMerge.js";
 import { parseSkillProfileJson } from "./resumeSkillProfile.js";
 import { invalidateRecommendationCache } from "./matching/matchingService.js";
 import { decryptAccountDoc } from "./autoBidProfileSecrets.js";
+import { updateAccountInfoById } from "./accountInfoStore.js";
 
 async function findAccount(applierNameRaw) {
   const name = String(applierNameRaw ?? "").trim();
@@ -24,7 +25,100 @@ async function findAccount(applierNameRaw) {
   return acc;
 }
 
-async function extractSkillsWithLlm(extractedText, profile) {
+async function findAccountForResumeAnalysisCatalogSync(applierNameRaw) {
+  const name = String(applierNameRaw ?? "").trim();
+  if (!name || !accountInfoCollection) return null;
+  const proj = { projection: { _id: 1, name: 1, resumeAnalysisCatalog: 1 } };
+  let acc = await accountInfoCollection.findOne({ name }, proj);
+  if (!acc) {
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    acc = await accountInfoCollection.findOne(
+      { name: { $regex: new RegExp(`^${esc}$`, "i") } },
+      proj,
+    );
+  }
+  return acc || null;
+}
+
+function buildCatalogSkillListFromResumes(resumes) {
+  // key: lowercased skill name -> { name, category, level }
+  const skillByKey = new Map();
+
+  for (const resume of resumes || []) {
+    for (const raw of resume.skillProfile || []) {
+      const name = String(raw?.name ?? "").trim();
+      if (!name) continue;
+
+      const level = Number(raw?.level);
+      if (!Number.isFinite(level)) continue;
+      const clampedLevel = Math.max(1, Math.min(5, Math.round(level)));
+
+      const category = String(raw?.category ?? "").trim();
+      const key = name.toLowerCase();
+
+      const prev = skillByKey.get(key);
+      if (!prev || clampedLevel > prev.level) {
+        skillByKey.set(key, { name, category, level: clampedLevel });
+      }
+    }
+  }
+
+  return [...skillByKey.values()].sort((a, b) => b.level - a.level || a.name.localeCompare(b.name));
+}
+
+/**
+ * Sync the *detailed* analyzed resume skills into account_info so that
+ * bid-assistant/vender-server can rank using the same signal as the
+ * Athens "Analysis" tab.
+ *
+ * Writes:
+ * - account_info.resumeAnalysisCatalog[stackName] = [{ name, category, level }]
+ * - account_info.resumeAnalysisCatalogUpdatedAt
+ *
+ * This sync rebuilds only the affected stack from analyzed resumes.
+ */
+async function syncResumeAnalysisCatalogStackFromAnalysis(ownerName, stackName) {
+  const owner = String(ownerName ?? "").trim();
+  const stack = String(stackName ?? "").trim();
+  if (!owner || !stack) return { skipped: true, reason: "missing_owner_or_stack" };
+  if (!userResumesCollection || !accountInfoCollection) return { skipped: true, reason: "db_not_ready" };
+
+  const acc = await findAccountForResumeAnalysisCatalogSync(owner);
+  if (!acc) return { skipped: true, reason: "account_not_found" };
+
+  const analyzedResumes = await userResumesCollection
+    .find({ ownerName: owner, analyzed: true, techStack: stack })
+    .project({ skillProfile: 1 })
+    .toArray();
+
+  if (!Array.isArray(analyzedResumes) || analyzedResumes.length === 0) {
+    return { skipped: true, reason: "no_analyzed_resumes_for_stack" };
+  }
+
+  const skillsList = buildCatalogSkillListFromResumes(analyzedResumes);
+  if (!skillsList || !skillsList.length) {
+    return { skipped: true, reason: "empty_skill_list" };
+  }
+
+  const existingCatalog =
+    acc?.resumeAnalysisCatalog && typeof acc.resumeAnalysisCatalog === "object" && !Array.isArray(acc.resumeAnalysisCatalog)
+      ? acc.resumeAnalysisCatalog
+      : {};
+
+  const updatedCatalog = {
+    ...existingCatalog,
+    [stack]: skillsList,
+  };
+
+  const updatedAt = new Date().toISOString();
+  await updateAccountInfoById(acc._id, acc.name, {
+    $set: { resumeAnalysisCatalog: updatedCatalog, resumeAnalysisCatalogUpdatedAt: updatedAt },
+  });
+
+  return { ok: true, stack, updatedAt };
+}
+
+async function extractSkillsWithLlm(extractedText, profile, ownerName) {
   const { provider: providerId, apiKey, model } = resolveDefaultModel(profile);
   if (!apiKey) {
     throw new Error("No LLM API key configured in profile (OpenAI or DeepSeek).");
@@ -40,6 +134,7 @@ async function extractSkillsWithLlm(extractedText, profile) {
     apiKey,
     model,
     feature: "resume-skill-analysis",
+		applierName: ownerName,
     messages: [
       { role: "system", content: RESUME_SKILL_ANALYSIS_PROMPT },
       { role: "user", content: `Resume text:\n\n${truncated}` },
@@ -86,6 +181,7 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
       skills: doc.skillProfile,
     });
     const profileGraph = await rebuildProfileGraph(ownerName);
+    void syncResumeAnalysisCatalogStackFromAnalysis(ownerName, doc.techStack).catch(() => {});
     return {
       alreadyAnalyzed: true,
       skillProfile: doc.skillProfile,
@@ -104,6 +200,7 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
       skills: doc.skillProfile,
     });
     const profileGraph = await rebuildProfileGraph(ownerName);
+    void syncResumeAnalysisCatalogStackFromAnalysis(ownerName, doc.techStack).catch(() => {});
     return {
       alreadyAnalyzed: true,
       skillProfile: doc.skillProfile,
@@ -123,7 +220,7 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
   let model;
 
   try {
-    const llmResult = await extractSkillsWithLlm(doc.extractedText, profile);
+		const llmResult = await extractSkillsWithLlm(doc.extractedText, profile, ownerName);
     skillProfile = llmResult.skillProfile;
     usage = llmResult.usage;
     provider = llmResult.provider;
@@ -162,6 +259,7 @@ export async function analyzeResumeSkills(resumeId, ownerName, { force = false }
   const profileGraph = await rebuildProfileGraph(ownerName);
 
   invalidateRecommendationCache(ownerName);
+  await syncResumeAnalysisCatalogStackFromAnalysis(ownerName, doc.techStack);
 
   return {
     alreadyAnalyzed: false,

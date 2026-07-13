@@ -131,13 +131,6 @@ export interface JobResume {
   resumePdfPath?: string | null;
 }
 
-export interface SubmissionKitPrompt {
-  jobTitle: string;
-  company: string;
-  generatedFileName: string;
-  kitFileName: string;
-}
-
 interface SubmissionKitCache {
   applierName: string;
   resumeId: string;
@@ -246,6 +239,8 @@ export interface AvalonRelayOptions {
    */
   persistKey?: string;
   accountTier?: string | null;
+  /** User/account namespace for relay pairing (see Project Avalon extension). */
+  profileId?: string;
 }
 
 export const QUEUE_STORAGE_PREFIX = "athens-agent-queue-";
@@ -318,7 +313,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     () => initialPersisted?.pipelineByJobId ?? {},
   );
   const [resumeError, setResumeError] = useState<string | null>(null);
-  const [submissionKitPrompt, setSubmissionKitPrompt] = useState<SubmissionKitPrompt | null>(null);
+  const [kitSubmitJobId, setKitSubmitJobId] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<ManualVerifyResult | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [tabValidity, setTabValidity] = useState<PageValidityResult | null>(null);
@@ -350,18 +345,18 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   >(new Map());
   const resumeGenByJobIdRef = useRef<Map<string, Promise<AttachedFile>>>(new Map());
   const submissionKitCacheRef = useRef<SubmissionKitCache | null>(null);
-  const submissionKitApprovedJobIdsRef = useRef<Set<string>>(new Set());
-  const submissionKitPromptResolveRef = useRef<((approved: boolean) => void) | null>(null);
   // Debug run-logging: current run id, its job, a buffered event list + flush timer.
   const runIdRef = useRef<string | null>(null);
   const runJobRef = useRef<QueuedJob | null>(null);
   const runEventsRef = useRef<ApplyLogEvent[]>([]);
   const runFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef(sessionId);
+  const profileIdRef = useRef(options?.profileId ?? "");
   const selectedTabIdRef = useRef(selectedTabId);
   const jobQueueRef = useRef(jobQueue);
   const activeJobIndexRef = useRef(activeJobIndex);
   sessionIdRef.current = sessionId;
+  profileIdRef.current = options?.profileId ?? "";
   selectedTabIdRef.current = selectedTabId;
   jobQueueRef.current = jobQueue;
   activeJobIndexRef.current = activeJobIndex;
@@ -389,7 +384,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const executeDisabledReason = !connected
     ? "Connect to the Avalon relay server first."
     : !peers.extension
-      ? `Extension not on session "${sessionId || DEFAULT_SESSION_ID}". Install the Avalon extension and match the session ID.`
+      ? `Extension not on your profile (id "${profileIdRef.current || 'default'}") + session "${sessionId || DEFAULT_SESSION_ID}". Install the Avalon extension, sign in, and match the session ID.`
       : null;
 
   /** Flush buffered run-log events to the backend (local JSONL + Mongo). */
@@ -547,6 +542,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     setGeneratedScript("");
     setFieldScriptsById({});
     setSelectedTreeFieldId(null);
+    setKitSubmitJobId(null);
   }, []);
 
   const resetJobUsage = useCallback(() => setUsageRequests([]), []);
@@ -622,7 +618,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       pushLog("Connected to relay server");
       next.emit(
         SOCKET_EVENTS.REGISTER,
-        { role: "controller", sessionId: sessionIdRef.current || undefined },
+        { role: "controller", sessionId: sessionIdRef.current || undefined, profileId: profileIdRef.current || undefined },
         (response: RegisteredPayload) => {
           setRegistered(response);
           setSessionId((prev) => prev || response.sessionId);
@@ -773,7 +769,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       if (!sock?.connected) return;
       sock.emit(
         SOCKET_EVENTS.REGISTER,
-        { role: "controller", sessionId: desired },
+        { role: "controller", sessionId: desired, profileId: profileIdRef.current || undefined },
         (response: RegisteredPayload) => {
           setRegistered(response);
           setPeers(response.peers);
@@ -994,54 +990,10 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     [resumesByJobId],
   );
 
-  const resolveSubmissionKitPrompt = useCallback((approved: boolean) => {
-    const resolve = submissionKitPromptResolveRef.current;
-    submissionKitPromptResolveRef.current = null;
-    setSubmissionKitPrompt(null);
-    resolve?.(approved);
-  }, []);
-
   useEffect(() => {
     submissionKitCacheRef.current = null;
-    submissionKitApprovedJobIdsRef.current.clear();
-    resolveSubmissionKitPrompt(false);
-  }, [applierName, accountIsPro, resolveSubmissionKitPrompt]);
-
-  const requestSubmissionKitApproval = useCallback(
-    (prompt: SubmissionKitPrompt, signal?: AbortSignal): Promise<boolean> =>
-      new Promise((resolve) => {
-        if (signal?.aborted) {
-          resolve(false);
-          return;
-        }
-
-        submissionKitPromptResolveRef.current?.(false);
-        let settled = false;
-        const finish = (approved: boolean) => {
-          if (settled) return;
-          settled = true;
-          if (signal) signal.removeEventListener("abort", onAbort);
-          if (submissionKitPromptResolveRef.current === finish) {
-            submissionKitPromptResolveRef.current = null;
-            setSubmissionKitPrompt(null);
-          }
-          resolve(approved);
-        };
-        const onAbort = () => finish(false);
-        if (signal) signal.addEventListener("abort", onAbort, { once: true });
-        submissionKitPromptResolveRef.current = finish;
-        setSubmissionKitPrompt(prompt);
-      }),
-    [],
-  );
-
-  useEffect(
-    () => () => {
-      submissionKitPromptResolveRef.current?.(false);
-      submissionKitPromptResolveRef.current = null;
-    },
-    [],
-  );
+    setKitSubmitJobId(null);
+  }, [applierName, accountIsPro]);
 
   const loadSubmissionKitFile = useCallback(async (): Promise<AttachedFile> => {
     if (!applierName) throw new Error("Select an applier profile before applying");
@@ -1065,25 +1017,18 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
   const resolveResumeForSubmission = useCallback(
     async (job: QueuedJob, generatedFile: AttachedFile): Promise<AttachedFile> => {
-      if (accountIsPro) return generatedFile;
-      const kitFile = await loadSubmissionKitFile();
-      if (!submissionKitApprovedJobIdsRef.current.has(job.id)) {
-        const approved = await requestSubmissionKitApproval(
-          {
-            jobTitle: job.title,
-            company: job.company,
-            generatedFileName: generatedFile.name,
-            kitFileName: kitFile.name,
-          },
-          runSignal(),
-        );
-        if (!approved) throw new Error("Submission canceled");
-        submissionKitApprovedJobIdsRef.current.add(job.id);
+      if (accountIsPro) {
+        setKitSubmitJobId(null);
+        return generatedFile;
       }
-      pushLog(`Resume Generator Kit PDF selected for "${job.title}" (${kitFile.name})`, true);
-      return kitFile;
+      const kitFile = await loadSubmissionKitFile();
+      // Free tier uploads kit PDF bytes, but uses the same filename Pro would (generated resume name).
+      const submissionFile: AttachedFile = { ...kitFile, name: generatedFile.name };
+      setKitSubmitJobId(job.id);
+      pushLog(`Resume Generator Kit PDF selected for "${job.title}" (${submissionFile.name})`, true);
+      return submissionFile;
     },
-    [accountIsPro, loadSubmissionKitFile, pushLog, requestSubmissionKitApproval, runSignal],
+    [accountIsPro, loadSubmissionKitFile, pushLog],
   );
 
   const analyzeTree = useCallback(async () => {
@@ -2814,7 +2759,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           mimeType: submissionFile.mimeType,
           base64Bytes: submissionFile.base64?.length ?? 0,
           generatedFileName: resumeFile.name,
-          submissionKit: submissionFile.name !== resumeFile.name,
+          submissionKit: !accountIsPro,
         });
         const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, {
           autoSubmit: true,
@@ -3015,8 +2960,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     resumeGenerateStep,
     resumeGeneratedSections,
     resumeError,
-    submissionKitPrompt,
-    resolveSubmissionKitPrompt,
+    kitSubmitJobId,
     applyPhase,
     verifyResult,
     verifying,

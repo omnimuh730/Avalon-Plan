@@ -12,7 +12,16 @@ async function mailFetch<T>(path: string, options: RequestInit = {}): Promise<T>
       ...(options.headers as Record<string, string> | undefined),
     },
   });
-  const data = (await res.json()) as ApiResult<T>;
+  const raw = await res.text();
+  let data: ApiResult<T>;
+  try {
+    data = JSON.parse(raw) as ApiResult<T>;
+  } catch {
+    if (res.status === 504 || res.status === 502 || res.status === 503) {
+      throw new Error(`Mail request timed out (HTTP ${res.status}). Try a smaller batch.`);
+    }
+    throw new Error(res.ok ? "Mail request returned invalid JSON" : `Mail request failed (HTTP ${res.status})`);
+  }
   if (!res.ok || data.success === false) {
     throw new Error(data.error || "Mail request failed");
   }
@@ -109,7 +118,35 @@ export async function sendMailMessage(
   applierName: string,
   payload: { to: string; subject: string; body: string; replyToUid?: string },
 ) {
-  return mailFetch<{ messageId: string }>("mail/send", {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45_000);
+  try {
+    return await mailFetch<{ messageId: string }>("mail/send", {
+      method: "POST",
+      body: JSON.stringify({ applierName, ...payload }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("Send timed out. Check your network and Gmail app password, then try again.");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function aiWriteMail(
+  applierName: string,
+  payload: {
+    mode: "write" | "fine-tune" | "reply";
+    prompt?: string;
+    body?: string;
+    subject?: string;
+    replyContext?: string;
+  },
+) {
+  return mailFetch<{ body: string; usage?: Record<string, unknown> }>("mail/ai-write", {
     method: "POST",
     body: JSON.stringify({ applierName, ...payload }),
   });
@@ -166,4 +203,67 @@ export async function checkMailCredentials(applierName: string) {
   return mailFetch<{ configured: boolean; email?: string; error?: string }>(
     `mail/credentials${qs({ applierName })}`,
   );
+}
+
+export type MailLabelDefinitions = Record<string, string>;
+
+export type MailAiLabelResult = {
+  uid: number;
+  label: string | null;
+  applied: boolean;
+  error?: string;
+};
+
+export async function fetchUnlabeledThreads(
+  applierName: string,
+  opts: { page?: number; pageSize?: number } = {},
+): Promise<MailThreadsResult> {
+  const query = qs({
+    applierName,
+    folder: "inbox",
+    unlabeled: "true",
+    page: opts.page,
+    pageSize: opts.pageSize,
+    cacheOnly: "true",
+  });
+  const data = await mailFetch<MailThreadsResult>(`mail/threads${query}`);
+  return {
+    threads: data.threads,
+    total: data.total,
+    page: data.page,
+    pageSize: data.pageSize,
+    fromCache: data.fromCache,
+  };
+}
+
+export async function fetchMailLabelDefinitions(applierName: string) {
+  const data = await mailFetch<{ definitions: MailLabelDefinitions }>(
+    `mail/label-definitions${qs({ applierName })}`,
+  );
+  const definitions = data.definitions;
+  return definitions && typeof definitions === "object" && !Array.isArray(definitions)
+    ? definitions
+    : {};
+}
+
+export async function saveMailLabelDefinitions(applierName: string, definitions: MailLabelDefinitions) {
+  const data = await mailFetch<{ definitions: MailLabelDefinitions }>("mail/label-definitions", {
+    method: "PUT",
+    body: JSON.stringify({ applierName, definitions }),
+  });
+  const saved = data.definitions;
+  return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
+}
+
+export async function runMailAiLabel(
+  applierName: string,
+  payload: {
+    messages: { uid: number; mailbox?: string }[];
+    labelDefinitions: MailLabelDefinitions;
+  },
+) {
+  return mailFetch<{ results: MailAiLabelResult[]; usage?: Record<string, unknown> }>("mail/ai-label", {
+    method: "POST",
+    body: JSON.stringify({ applierName, ...payload }),
+  });
 }

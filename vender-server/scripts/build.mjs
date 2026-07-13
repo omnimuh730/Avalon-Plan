@@ -10,9 +10,6 @@ const distDir = path.join(root, 'dist');
 
 fs.mkdirSync(distDir, { recursive: true });
 
-console.log('[build] Generating embedded MongoDB secrets…');
-await import('./generate-mongo-secrets.mjs');
-
 console.log('[build] Bundling bridge entry…');
 await esbuild.build({
   entryPoints: [path.join(root, 'scripts/bridge.mjs')],
@@ -81,11 +78,8 @@ fs.writeFileSync(
   `# vender-server (distribution build)
 
 1. Run \`npm install --omit=dev\` in this folder.
-2. Start with \`npm start\`.
-
-MongoDB cloud connection is embedded in the obfuscated \`bridge.mjs\` — no \`.env\` required for the database.
-
-Optional: copy \`.env.example\` to \`.env\` only if you need to override bridge host/port or default applier.
+2. Copy \`.env.example\` to \`.env\` and set \`MONGO_URL\`, \`MONGO_DB\`, and \`API_KEYS_ENCRYPTION_KEY\`.
+3. Start with \`npm start\`.
 
 Ship this folder together with the built bid-assistant extension (\`bid-assistant/dist\`).
 The job-analysis prompt is embedded in \`bridge.mjs\` — no \`prompt.md\` asset is needed.

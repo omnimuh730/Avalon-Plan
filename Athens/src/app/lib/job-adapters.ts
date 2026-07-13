@@ -51,6 +51,7 @@ function parseWorkMode(remote: string): WorkMode {
 export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccount | null): Job {
   const backendId = normalizeId(doc._id);
   const isExternal = doc.catalog === "external" || (typeof doc.jobTitle === "string" && !doc.title);
+  const isAnalyzedExternal = isExternal && doc.aiSkillStatus === "extracted";
   const company = (doc.company as { name?: string; tags?: string[]; logo?: string } | undefined) || {};
   const details = (doc.details as Record<string, string | undefined> | undefined) || {};
   const title = String(doc.title || doc.jobTitle || "Untitled role");
@@ -73,8 +74,12 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
   const st = isExternal ? "none" : resolveStatusForApplier(doc.status as unknown[] | undefined, applierId);
   const status = mapApiStatusToJob(st);
 
-  const location = String(details.position || (isExternal ? "—" : "—"));
-  const workMode = isExternal ? "onsite" : parseWorkMode(String(details.remote || ""));
+  const location = String(details.position || (isAnalyzedExternal ? "—" : isExternal ? "—" : "—"));
+  const workMode = isAnalyzedExternal
+    ? parseWorkMode(String(details.remote || ""))
+    : isExternal
+      ? "onsite"
+      : parseWorkMode(String(details.remote || ""));
   const type = String(details.time || (isExternal ? "—" : "Full-time"));
   const seniority = String(details.seniority || "—");
   const salary = String(details.money || (isExternal ? "—" : "Undisclosed"));
@@ -89,8 +94,9 @@ export function mapDocToJob(doc: Record<string, unknown>, applier: ApplierAccoun
         ? doc.sender
         : inferJobSource(String(doc.applyLink || doc.jobLink || ""));
 
-  const skill = isExternal ? 0 : readScore(doc, "scoreSkill", "matchScore", "skillScore") ?? 0;
-  const overall = isExternal ? 0 : readScore(doc, "_score", "scoreOverall") ?? skill;
+  const useScores = !isExternal || isAnalyzedExternal;
+  const skill = useScores ? readScore(doc, "scoreSkill", "matchScore", "skillScore") ?? 0 : 0;
+  const overall = useScores ? readScore(doc, "_score", "scoreOverall") ?? skill : 0;
   const skillsCovered = readScore(doc, "skillsCovered") ?? undefined;
   const skillsRequired = readScore(doc, "skillsRequired") ?? undefined;
   const scoreVector = readScore(doc, "scoreVector");

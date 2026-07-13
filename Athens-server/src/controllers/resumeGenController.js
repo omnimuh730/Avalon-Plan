@@ -207,6 +207,7 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
       cacheKey: `resume-${applierName || "anon"}`, // stable → prompt-cache the prefix
       reasoningEffort,
       feature: `resume-generate:${step.purpose || step.kind || "step"}`,
+      applierName,
     });
     messages.push({ role: "assistant", content });
     usage = addUsage(usage, stepUsage);

@@ -1,14 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { checkMailCredentials, fetchMailFolderCounts, type FolderCounts } from "@/api/mail";
 import { useApplier } from "@/context/applier-context";
+import { isProTier } from "../../lib/pro";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { SearchField } from "../../components/shared/SearchField";
 import { PATHS } from "../../config/routes";
 import { MailSidebar } from "./components/MailSidebar";
 import { MailDetailPane } from "./components/MailDetailPane";
 import { MailComposeSheet } from "./components/MailComposeSheet";
+import { MailAiLabelDialog } from "./components/MailAiLabelDialog";
 import { ThreadList } from "./components/ThreadList";
 import { useMailThreads } from "./hooks/useMailThreads";
 import { useMailLabels } from "./hooks/useMailLabels";
@@ -22,6 +24,7 @@ export function MailPage() {
   const navigate = useNavigate();
   const { applier, applierReady } = useApplier();
   const applierName = applier?.name;
+  const isPro = isProTier(applier?.tier);
 
   const [folder, setFolder] = useState<MailFolderId>("inbox");
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
@@ -30,6 +33,8 @@ export function MailPage() {
   const [folderCounts, setFolderCounts] = useState<FolderCounts | undefined>();
   const [activeThread, setActiveThread] = useState<MailThread | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [aiLabelOpen, setAiLabelOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const mail = useMailThreads(applierName);
   const { labels, createLabel, removeLabel, reload: reloadLabels } = useMailLabels(applierName);
@@ -109,6 +114,7 @@ export function MailPage() {
   useEffect(() => {
     if (!applierReady || !applierName || credentialsConfigured !== true) return;
     void loadThreads({ folder, labelFilter, search, page, pageSize });
+    setSelectedIds(new Set());
   }, [applierReady, applierName, credentialsConfigured, folder, labelFilter, search, page, pageSize, loadThreads]);
 
   useEffect(() => {
@@ -160,6 +166,23 @@ export function MailPage() {
   const handleTrash = (id: string) => {
     mail.trash(id);
     void refreshFolderCounts();
+  };
+
+  const handleToggleSelect = (id: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const handleDropLabel = (threadId: string, labelPath: string) => {
+    const targets =
+      selectedIds.has(threadId) && selectedIds.size > 1
+        ? [...selectedIds]
+        : [threadId];
+    void mail.applyLabel(targets, labelPath);
   };
 
   const handleSendCompose = async (to: string, subject: string, body: string) => {
@@ -242,6 +265,16 @@ export function MailPage() {
               placeholder="Search mail..."
               className="flex-1 max-w-xl"
             />
+            {isPro && (
+              <button
+                type="button"
+                onClick={() => setAiLabelOpen(true)}
+                className="flex items-center gap-2 bg-primary/10 hover:bg-primary/15 border border-primary/20 text-primary px-3 py-2 rounded-xl text-sm font-bold transition-colors min-h-10"
+              >
+                <Sparkles className="w-4 h-4" />
+                AI Label
+              </button>
+            )}
             <button
               type="button"
               onClick={forceRefresh}
@@ -264,11 +297,14 @@ export function MailPage() {
             loading={mail.loading}
             syncing={isSyncing}
             threadsLength={mail.threads.length}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
             onOpenThread={openThread}
             onStar={mail.star}
             onArchive={handleArchive}
             onTrash={handleTrash}
             onMarkUnread={handleMarkUnread}
+            onDropLabel={handleDropLabel}
           />
 
           <div className="border-t border-border flex-shrink-0 px-3">
@@ -280,6 +316,14 @@ export function MailPage() {
               onPageSizeChange={(size) => {
                 setPageSize(size);
                 setPage(1);
+                void loadThreads({
+                  folder,
+                  labelFilter,
+                  search,
+                  page: 1,
+                  pageSize: size,
+                  forceRefresh: true,
+                });
               }}
               pageSizeOptions={[10, 25, 50, 100]}
               detailed
@@ -292,10 +336,12 @@ export function MailPage() {
           thread={activeThread}
           fullView
           loading={detailLoading}
+          aiReplyEnabled={isPro}
           onBack={backToList}
           onArchive={() => activeThread && handleArchive(activeThread.id)}
           onTrash={() => activeThread && handleTrash(activeThread.id)}
           onReply={() => activeThread && mail.openCompose(activeThread)}
+          onAiReply={() => activeThread && mail.openCompose(activeThread, { aiAssist: true })}
         />
       )}
 
@@ -305,7 +351,21 @@ export function MailPage() {
         onSend={handleSendCompose}
         sending={mail.sending}
         replyTo={mail.replyTo}
+        aiAssist={mail.aiAssist}
       />
+
+      {isPro && (
+        <MailAiLabelDialog
+          open={aiLabelOpen}
+          onOpenChange={setAiLabelOpen}
+          applierName={applierName}
+          labels={labels}
+          onComplete={() => {
+            loadCurrentPage();
+            void refreshFolderCounts();
+          }}
+        />
+      )}
     </div>
   );
 }

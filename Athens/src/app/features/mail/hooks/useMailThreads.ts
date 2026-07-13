@@ -39,6 +39,7 @@ export function useMailThreads(applierName: string | undefined) {
   const [threads, setThreads] = useState<MailThread[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<MailThread | null>(null);
+  const [aiAssist, setAiAssist] = useState(false);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [sending, setSending] = useState(false);
@@ -150,7 +151,16 @@ export function useMailThreads(applierName: string | undefined) {
   }, []);
 
   const patchThread = useCallback(
-    async (uid: string, patch: { seen?: boolean; flagged?: boolean; folder?: string }) => {
+    async (
+      uid: string,
+      patch: {
+        seen?: boolean;
+        flagged?: boolean;
+        folder?: string;
+        addLabels?: string[];
+        removeLabels?: string[];
+      },
+    ) => {
       if (!applierName) return;
       try {
         const updated = await patchMailMessage(applierName, uid, {
@@ -170,6 +180,25 @@ export function useMailThreads(applierName: string | undefined) {
       }
     },
     [applierName, currentFolder],
+  );
+
+  const applyLabel = useCallback(
+    async (uids: string[], labelPath: string) => {
+      if (!applierName || !labelPath || !uids.length) return;
+      const label = labelPath.trim();
+      if (!label) return;
+
+      setThreads((prev) =>
+        prev.map((t) => {
+          if (!uids.includes(t.id)) return t;
+          if (t.labels.includes(label)) return t;
+          return { ...t, labels: [...t.labels, label], tag: t.tag || label };
+        }),
+      );
+
+      await Promise.all(uids.map((uid) => patchThread(uid, { addLabels: [label] })));
+    },
+    [applierName, patchThread],
   );
 
   const star = useCallback(
@@ -206,14 +235,19 @@ export function useMailThreads(applierName: string | undefined) {
     [patchThread],
   );
 
-  const openCompose = useCallback((thread?: MailThread | null) => {
+  const openCompose = useCallback((thread?: MailThread | null, opts?: { aiAssist?: boolean }) => {
     setReplyTo(thread ?? null);
+    setAiAssist(Boolean(opts?.aiAssist));
     setComposeOpen(true);
   }, []);
 
   const sendCompose = useCallback(
     async (to: string, subject: string, body: string) => {
-      if (!applierName) return;
+      if (!applierName) {
+        const err = new Error("No applier selected");
+        setError(err.message);
+        throw err;
+      }
       setSending(true);
       try {
         await sendMailMessage(applierName, {
@@ -224,6 +258,7 @@ export function useMailThreads(applierName: string | undefined) {
         });
         setComposeOpen(false);
         setReplyTo(null);
+        setAiAssist(false);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to send mail");
         throw e;
@@ -237,8 +272,15 @@ export function useMailThreads(applierName: string | undefined) {
   return {
     threads,
     composeOpen,
-    setComposeOpen,
+    setComposeOpen: (open: boolean) => {
+      setComposeOpen(open);
+      if (!open) {
+        setReplyTo(null);
+        setAiAssist(false);
+      }
+    },
     replyTo,
+    aiAssist,
     openCompose,
     loading,
     syncing,
@@ -259,6 +301,7 @@ export function useMailThreads(applierName: string | undefined) {
     archive,
     trash,
     markUnread,
+    applyLabel,
     sendCompose,
   };
 }
