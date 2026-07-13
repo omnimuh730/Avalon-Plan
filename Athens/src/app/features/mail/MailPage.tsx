@@ -34,6 +34,7 @@ export function MailPage() {
   const [activeThread, setActiveThread] = useState<MailThread | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [aiLabelOpen, setAiLabelOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const mail = useMailThreads(applierName);
   const { labels, createLabel, removeLabel, reload: reloadLabels } = useMailLabels(applierName);
@@ -113,6 +114,7 @@ export function MailPage() {
   useEffect(() => {
     if (!applierReady || !applierName || credentialsConfigured !== true) return;
     void loadThreads({ folder, labelFilter, search, page, pageSize });
+    setSelectedIds(new Set());
   }, [applierReady, applierName, credentialsConfigured, folder, labelFilter, search, page, pageSize, loadThreads]);
 
   useEffect(() => {
@@ -164,6 +166,23 @@ export function MailPage() {
   const handleTrash = (id: string) => {
     mail.trash(id);
     void refreshFolderCounts();
+  };
+
+  const handleToggleSelect = (id: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const handleDropLabel = (threadId: string, labelPath: string) => {
+    const targets =
+      selectedIds.has(threadId) && selectedIds.size > 1
+        ? [...selectedIds]
+        : [threadId];
+    void mail.applyLabel(targets, labelPath);
   };
 
   const handleSendCompose = async (to: string, subject: string, body: string) => {
@@ -278,11 +297,14 @@ export function MailPage() {
             loading={mail.loading}
             syncing={isSyncing}
             threadsLength={mail.threads.length}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
             onOpenThread={openThread}
             onStar={mail.star}
             onArchive={handleArchive}
             onTrash={handleTrash}
             onMarkUnread={handleMarkUnread}
+            onDropLabel={handleDropLabel}
           />
 
           <div className="border-t border-border flex-shrink-0 px-3">
@@ -294,6 +316,14 @@ export function MailPage() {
               onPageSizeChange={(size) => {
                 setPageSize(size);
                 setPage(1);
+                void loadThreads({
+                  folder,
+                  labelFilter,
+                  search,
+                  page: 1,
+                  pageSize: size,
+                  forceRefresh: true,
+                });
               }}
               pageSizeOptions={[10, 25, 50, 100]}
               detailed
@@ -306,10 +336,12 @@ export function MailPage() {
           thread={activeThread}
           fullView
           loading={detailLoading}
+          aiReplyEnabled={isPro}
           onBack={backToList}
           onArchive={() => activeThread && handleArchive(activeThread.id)}
           onTrash={() => activeThread && handleTrash(activeThread.id)}
           onReply={() => activeThread && mail.openCompose(activeThread)}
+          onAiReply={() => activeThread && mail.openCompose(activeThread, { aiAssist: true })}
         />
       )}
 
@@ -319,6 +351,7 @@ export function MailPage() {
         onSend={handleSendCompose}
         sending={mail.sending}
         replyTo={mail.replyTo}
+        aiAssist={mail.aiAssist}
       />
 
       {isPro && (

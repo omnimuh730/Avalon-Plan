@@ -1,6 +1,7 @@
 import {
 	mailMessagesCollection,
 	mailSyncStateCollection,
+	mailUserLabelsCollection,
 } from '../../db/mongo.js';
 import { ALL_MAIL_PATH, extractCustomLabels } from './folderMapper.js';
 
@@ -300,6 +301,59 @@ export async function saveUserLabels(_applierName, labels) {
 	return labels;
 }
 
+/** @param {unknown} raw */
+export function normalizeLabelDefinitions(raw) {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+	const out = {};
+	for (const [key, value] of Object.entries(raw)) {
+		const k = String(key || '').trim();
+		if (!k) continue;
+		out[k] = String(value ?? '').trim().slice(0, 2000);
+	}
+	return out;
+}
+
+/**
+ * Load AI label definitions for an applier from mail_user_labels.
+ * Optionally migrates once from account_info.autoBidProfile.mailLabelDefinitions.
+ * @param {string} applierName
+ * @param {Record<string, string>|null|undefined} [legacyDefinitions]
+ */
+export async function getUserLabelDefinitions(applierName, legacyDefinitions = null) {
+	if (!mailUserLabelsCollection) return normalizeLabelDefinitions(legacyDefinitions);
+
+	const doc = await mailUserLabelsCollection.findOne({ applierName });
+	if (doc?.definitions && typeof doc.definitions === 'object') {
+		return normalizeLabelDefinitions(doc.definitions);
+	}
+
+	const fromLegacy = normalizeLabelDefinitions(legacyDefinitions);
+	if (Object.keys(fromLegacy).length) {
+		await saveUserLabelDefinitions(applierName, fromLegacy);
+		return fromLegacy;
+	}
+	return {};
+}
+
+/**
+ * Persist AI label definitions per applier in mail_user_labels.
+ * @param {string} applierName
+ * @param {Record<string, string>} definitions
+ */
+export async function saveUserLabelDefinitions(applierName, definitions) {
+	if (!mailUserLabelsCollection) {
+		throw new Error('Database not ready');
+	}
+	const normalized = normalizeLabelDefinitions(definitions);
+	const updatedAt = new Date().toISOString();
+	await mailUserLabelsCollection.updateOne(
+		{ applierName },
+		{ $set: { applierName, definitions: normalized, updatedAt } },
+		{ upsert: true },
+	);
+	return normalized;
+}
+
 export function messageToThread(doc, { includeBody = true } = {}) {
 	const date = doc.date instanceof Date ? doc.date : new Date(doc.date);
 	const customLabels = doc.gmailLabels?.length
@@ -311,9 +365,7 @@ export function messageToThread(doc, { includeBody = true } = {}) {
 		uid: doc.uid,
 		mailbox: doc.mailbox || ALL_MAIL_PATH,
 		from: doc.from?.name
-			? doc.from.email
-				? doc.from.name
-				: doc.from.name
+			? doc.from.name
 			: doc.from?.email || 'Unknown',
 		fromEmail: doc.from?.email || '',
 		subj: doc.subject || '(No subject)',

@@ -118,7 +118,35 @@ export async function sendMailMessage(
   applierName: string,
   payload: { to: string; subject: string; body: string; replyToUid?: string },
 ) {
-  return mailFetch<{ messageId: string }>("mail/send", {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45_000);
+  try {
+    return await mailFetch<{ messageId: string }>("mail/send", {
+      method: "POST",
+      body: JSON.stringify({ applierName, ...payload }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("Send timed out. Check your network and Gmail app password, then try again.");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function aiWriteMail(
+  applierName: string,
+  payload: {
+    mode: "write" | "fine-tune" | "reply";
+    prompt?: string;
+    body?: string;
+    subject?: string;
+    replyContext?: string;
+  },
+) {
+  return mailFetch<{ body: string; usage?: Record<string, unknown> }>("mail/ai-write", {
     method: "POST",
     body: JSON.stringify({ applierName, ...payload }),
   });

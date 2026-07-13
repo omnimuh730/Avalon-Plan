@@ -14,11 +14,14 @@ interface ThreadListProps {
   loading: boolean;
   syncing?: boolean;
   threadsLength: number;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string, checked: boolean) => void;
   onOpenThread: (id: string) => void;
   onStar: (id: string) => void;
   onArchive: (id: string) => void;
   onTrash: (id: string) => void;
   onMarkUnread: (id: string, unread: boolean) => void;
+  onDropLabel: (threadId: string, labelPath: string) => void;
 }
 
 /** Approximate pixel heights for virtual scrolling calculations. */
@@ -35,11 +38,14 @@ export function ThreadList({
   loading,
   syncing = false,
   threadsLength,
+  selectedIds,
+  onToggleSelect,
   onOpenThread,
   onStar,
   onArchive,
   onTrash,
   onMarkUnread,
+  onDropLabel,
 }: ThreadListProps) {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = React.useState(0);
@@ -88,6 +94,21 @@ export function ThreadList({
     return () => el.removeEventListener("scroll", onScroll);
   }, [useVirtual]);
 
+  const renderRow = (t: MailThread) => (
+    <MailListRow
+      key={t.id}
+      thread={t}
+      selected={selectedIds.has(t.id)}
+      onSelect={() => onOpenThread(t.id)}
+      onToggleSelect={(checked) => onToggleSelect(t.id, checked)}
+      onStar={() => onStar(t.id)}
+      onArchive={() => onArchive(t.id)}
+      onTrash={() => onTrash(t.id)}
+      onMarkUnread={() => onMarkUnread(t.id, true)}
+      onDropLabel={(labelPath) => onDropLabel(t.id, labelPath)}
+    />
+  );
+
   // Loading state
   if (loading && threadsLength === 0) {
     return (
@@ -128,18 +149,7 @@ export function ThreadList({
                 {group.label}
               </div>
             )}
-            {group.threads.map((t) => (
-              <MailListRow
-                key={t.id}
-                thread={t}
-                selected={false}
-                onSelect={() => onOpenThread(t.id)}
-                onStar={() => onStar(t.id)}
-                onArchive={() => onArchive(t.id)}
-                onTrash={() => onTrash(t.id)}
-                onMarkUnread={() => onMarkUnread(t.id, true)}
-              />
-            ))}
+            {group.threads.map((t) => renderRow(t))}
           </div>
         ))}
       </div>
@@ -153,8 +163,6 @@ export function ThreadList({
 
   // Find visible range by walking items and accumulating heights
   let accY = 0;
-  let startIdx = 0;
-  let endIdx = flatItems.length;
   const visible: Array<{ item: (typeof flatItems)[number]; y: number; height: number }> = [];
 
   for (let i = 0; i < flatItems.length; i++) {
@@ -165,7 +173,6 @@ export function ThreadList({
 
     if (itemBottom < viewportTop - OVERSCAN * ROW_HEIGHT) continue;
     if (itemTop > viewportBottom + OVERSCAN * ROW_HEIGHT) {
-      endIdx = i;
       break;
     }
     visible.push({ item: flatItems[i], y: itemTop, height: h });
@@ -185,15 +192,7 @@ export function ThreadList({
                 {item.label}
               </div>
             ) : (
-              <MailListRow
-                thread={item.thread}
-                selected={false}
-                onSelect={() => onOpenThread(item.thread.id)}
-                onStar={() => onStar(item.thread.id)}
-                onArchive={() => onArchive(item.thread.id)}
-                onTrash={() => onTrash(item.thread.id)}
-                onMarkUnread={() => onMarkUnread(item.thread.id, true)}
-              />
+              renderRow(item.thread)
             )}
           </div>
         ))}

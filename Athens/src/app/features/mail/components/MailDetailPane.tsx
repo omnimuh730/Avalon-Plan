@@ -1,6 +1,7 @@
 import React from "react";
 import { ArrowLeft, Send, Sparkles, Archive, Trash2, Loader2, Star } from "lucide-react";
 import { Av } from "../../../components/ui";
+import { cn } from "../../../lib/utils";
 import { labelPillClass } from "../lib/mailLabelStyles";
 import type { MailThread } from "../../../types";
 
@@ -8,20 +9,25 @@ type MailDetailPaneProps = {
   thread: MailThread | null;
   fullView?: boolean;
   loading?: boolean;
+  /** Pro workspace — enables AI Reply */
+  aiReplyEnabled?: boolean;
   onBack?: () => void;
   onArchive?: () => void;
   onTrash?: () => void;
   onReply?: () => void;
+  onAiReply?: () => void;
 };
 
 export function MailDetailPane({
   thread,
   fullView = false,
   loading = false,
+  aiReplyEnabled = false,
   onBack,
   onArchive,
   onTrash,
   onReply,
+  onAiReply,
 }: MailDetailPaneProps) {
   if (!thread) {
     return (
@@ -30,6 +36,8 @@ export function MailDetailPane({
       </div>
     );
   }
+
+  const actionsDisabled = loading || !thread;
 
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-background">
@@ -53,6 +61,9 @@ export function MailDetailPane({
           <Av name={thread.from} size={fullView ? "md" : "sm"} />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-foreground">{thread.from}</p>
+            {thread.fromEmail && (
+              <p className="text-xs text-muted-foreground truncate">{thread.fromEmail}</p>
+            )}
             <p className="text-xs text-muted-foreground">{thread.time}</p>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -67,10 +78,20 @@ export function MailDetailPane({
                 {l}
               </span>
             ))}
-            <button type="button" onClick={onArchive} className="icon-btn text-muted-foreground hover:text-foreground border border-border">
+            <button
+              type="button"
+              onClick={onArchive}
+              disabled={actionsDisabled}
+              className="icon-btn text-muted-foreground hover:text-foreground border border-border disabled:opacity-50"
+            >
               <Archive className="w-4 h-4" />
             </button>
-            <button type="button" onClick={onTrash} className="icon-btn text-muted-foreground hover:text-foreground border border-border">
+            <button
+              type="button"
+              onClick={onTrash}
+              disabled={actionsDisabled}
+              className="icon-btn text-muted-foreground hover:text-foreground border border-border disabled:opacity-50"
+            >
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
@@ -98,15 +119,39 @@ export function MailDetailPane({
       </div>
       <div className={`border-t border-border p-4 flex-shrink-0 ${fullView ? "max-w-3xl mx-auto w-full" : ""}`}>
         <div className="flex items-center gap-2 flex-wrap">
-          <button type="button" onClick={onReply} className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10">
+          <button
+            type="button"
+            onClick={onReply}
+            disabled={actionsDisabled}
+            className={cn(
+              "flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10",
+              "disabled:opacity-50 disabled:pointer-events-none",
+            )}
+          >
             <Send className="w-4 h-4" />
             Reply
           </button>
-          <button type="button" onClick={onReply} className="flex items-center gap-2 bg-secondary border border-border px-4 py-2 rounded-xl text-sm font-bold hover:bg-muted min-h-10">
-            <Sparkles className="w-4 h-4 text-violet-600" />
-            AI Reply
-          </button>
+          {aiReplyEnabled && (
+            <button
+              type="button"
+              onClick={onAiReply}
+              disabled={actionsDisabled}
+              className={cn(
+                "flex items-center gap-2 bg-background border border-border px-4 py-2 rounded-xl text-sm font-bold min-h-10",
+                "hover:bg-secondary text-foreground",
+                "disabled:opacity-50 disabled:pointer-events-none",
+              )}
+            >
+              <Sparkles className="w-4 h-4 text-primary" />
+              AI Reply
+            </button>
+          )}
         </div>
+        {aiReplyEnabled && (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            AI Reply drafts a response from this email — pick an intent, edit, then send.
+          </p>
+        )}
       </div>
     </div>
   );

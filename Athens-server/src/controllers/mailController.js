@@ -1,4 +1,3 @@
-import { accountInfoCollection } from '../db/mongo.js';
 import { resolveMailCredentials, findAccountByApplierName } from '../services/mail/credentials.js';
 import {
 	archiveMessage,
@@ -19,8 +18,11 @@ import {
 	messageToThread,
 	updateMessageFlags,
 	upsertSyncState,
+	getUserLabelDefinitions,
+	saveUserLabelDefinitions,
+	normalizeLabelDefinitions,
 } from '../services/mail/mailStore.js';
-import { mailMessagesCollection } from '../db/mongo.js';
+import { mailMessagesCollection, mailUserLabelsCollection } from '../db/mongo.js';
 import {
 	ensureMessageBody,
 	runIncrementalSync,
@@ -34,6 +36,7 @@ import {
 import { ALL_MAIL_PATH } from '../services/mail/folderMapper.js';
 import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js';
 import { runMailAiLabelBatch } from '../services/mail/aiLabelService.js';
+import { runMailAiWrite } from '../services/mail/aiWriteService.js';
 import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
 import { isProTier } from '../lib/proTier.js';
 
@@ -626,28 +629,24 @@ export async function checkMailCredentials(req, res) {
 	}
 }
 
-function normalizeLabelDefinitions(raw) {
-	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-	const out = {};
-	for (const [key, value] of Object.entries(raw)) {
-		const k = String(key || '').trim();
-		if (!k) continue;
-		out[k] = String(value ?? '').trim().slice(0, 2000);
-	}
-	return out;
-}
-
 export async function getMailLabelDefinitions(req, res) {
 	try {
 		const applierName = await requireProApplier(req, res);
 		if (!applierName) return;
+
+		if (!mailUserLabelsCollection) {
+			return res.status(503).json({ success: false, error: 'Database not ready' });
+		}
 
 		const acc = await findAccountByApplierName(applierName);
 		if (!acc) {
 			return res.status(404).json({ success: false, error: `No account named "${applierName}".` });
 		}
 
-		const definitions = normalizeLabelDefinitions(acc.autoBidProfile?.mailLabelDefinitions);
+		const definitions = await getUserLabelDefinitions(
+			applierName,
+			acc.autoBidProfile?.mailLabelDefinitions,
+		);
 		return res.json({ success: true, definitions });
 	} catch (err) {
 		console.error('GET /api/mail/label-definitions error', err);
@@ -660,7 +659,7 @@ export async function putMailLabelDefinitions(req, res) {
 		const applierName = await requireProApplier(req, res);
 		if (!applierName) return;
 
-		if (!accountInfoCollection) {
+		if (!mailUserLabelsCollection) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
 		}
 
@@ -669,17 +668,7 @@ export async function putMailLabelDefinitions(req, res) {
 			return res.status(404).json({ success: false, error: `No account named "${applierName}".` });
 		}
 
-		const definitions = normalizeLabelDefinitions(req.body?.definitions);
-		await accountInfoCollection.updateOne(
-			{ name: acc.name },
-			{
-				$set: {
-					'autoBidProfile.mailLabelDefinitions': definitions,
-					'autoBidProfile.updatedAt': new Date().toISOString(),
-				},
-			},
-		);
-
+		const definitions = await saveUserLabelDefinitions(applierName, req.body?.definitions);
 		return res.json({ success: true, definitions });
 	} catch (err) {
 		console.error('PUT /api/mail/label-definitions error', err);
@@ -711,8 +700,12 @@ export async function postMailAiLabel(req, res) {
 
 		const acc = await findAccountByApplierName(applierName);
 		const profile = decryptProfileApiKeys(acc?.autoBidProfile || {});
+		const storedDefinitions = await getUserLabelDefinitions(
+			applierName,
+			acc?.autoBidProfile?.mailLabelDefinitions,
+		);
 		const labelDefinitions = normalizeLabelDefinitions(
-			req.body?.labelDefinitions || acc?.autoBidProfile?.mailLabelDefinitions,
+			req.body?.labelDefinitions || storedDefinitions,
 		);
 
 		const gmailLabels = await fetchGmailLabelList(creds.email, creds.password);
@@ -749,6 +742,46 @@ export async function postMailAiLabel(req, res) {
 		});
 	} catch (err) {
 		console.error('POST /api/mail/ai-label error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+export async function postMailAiWrite(req, res) {
+	try {
+		const applierName = await requireProApplier(req, res);
+		if (!applierName) return;
+
+		const acc = await findAccountByApplierName(applierName);
+		if (!acc) {
+			return res.status(404).json({ success: false, error: `No account named "${applierName}".` });
+		}
+
+		const profile = decryptProfileApiKeys(acc.autoBidProfile || {});
+		const mode =
+			req.body?.mode === 'fine-tune'
+				? 'fine-tune'
+				: req.body?.mode === 'reply'
+					? 'reply'
+					: 'write';
+		const result = await runMailAiWrite(
+			{
+				mode,
+				prompt: req.body?.prompt,
+				body: req.body?.body,
+				subject: req.body?.subject,
+				replyContext: req.body?.replyContext,
+			},
+			profile,
+			{ applierName },
+		);
+
+		if (!result.ok) {
+			return res.status(400).json({ success: false, error: result.error });
+		}
+
+		return res.json({ success: true, body: result.body, usage: result.usage });
+	} catch (err) {
+		console.error('POST /api/mail/ai-write error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }

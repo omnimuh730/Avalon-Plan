@@ -54,11 +54,13 @@ export async function loadCachedFolderPage(applierName, folder, page, pageSize) 
  *
  * Smart cache policy:
  *  - If MongoDB has data AND the folder was refreshed < CACHE_STALE_MS ago →
- *    serve from cache immediately, no IMAP call.
+ *    serve from cache immediately, no IMAP call — unless the page is underfilled.
  *  - If MongoDB has data but cache is stale → serve from cache immediately, then
- *    fire-and-forget an IMAP refresh in the background.
+ *    fire-and-forget an IMAP refresh in the background (unless underfilled → sync IMAP).
  *  - If MongoDB has NO data (first load) OR forceRefresh is true → hit IMAP
  *    synchronously.
+ *  - If cache returns fewer rows than expected for the page while more messages
+ *    exist, fall through to synchronous IMAP for the requested page/size.
  */
 export async function loadFolderPage(applierName, folder, page, pageSize, { forceRefresh = false } = {}) {
 	const state = await getSyncState(applierName);
@@ -71,18 +73,34 @@ export async function loadFolderPage(applierName, folder, page, pageSize, { forc
 	const cachedCount = await countMessages(applierName, { folder, mailbox: mailboxPath });
 	const hasCachedData = cachedCount > 0;
 
-	// If cache is fresh AND not forced → serve from MongoDB only (fast path)
+	const cacheUnderfilled = (cached) => {
+		const folderTotal =
+			typeof state?.[`folderTotal_${folder}`] === 'number' ? state[`folderTotal_${folder}`] : cachedCount;
+		const expectedOnPage = Math.max(0, Math.min(pageSize, folderTotal - (page - 1) * pageSize));
+		return expectedOnPage > 0 && cached.threads.length < expectedOnPage;
+	};
+
+	// If cache is fresh AND not forced → try MongoDB first
 	if (!forceRefresh && hasCachedData && cacheIsFresh) {
-		return loadCachedFolderPage(applierName, folder, page, pageSize);
+		const cached = await loadCachedFolderPage(applierName, folder, page, pageSize);
+		if (!cacheUnderfilled(cached)) {
+			return cached;
+		}
+		// Fall through to IMAP to fill the requested page
 	}
 
-	// If we have cached data but it's stale → serve cache + background refresh
+	// If we have cached data but it's stale → serve cache + background refresh,
+	// unless the page is underfilled (then sync IMAP for this page).
 	if (!forceRefresh && hasCachedData) {
-		refreshFolderInBackground(applierName, folder, pageSize);
-		return loadCachedFolderPage(applierName, folder, page, pageSize);
+		const cached = await loadCachedFolderPage(applierName, folder, page, pageSize);
+		if (!cacheUnderfilled(cached)) {
+			refreshFolderInBackground(applierName, folder, pageSize);
+			return cached;
+		}
+		// Fall through to IMAP
 	}
 
-	// No cached data OR forced refresh → hit IMAP synchronously
+	// No cached data, forced refresh, or underfilled cache → hit IMAP synchronously
 	const creds = await resolveMailCredentials(applierName);
 	if (!creds.ok) return { ok: false, error: creds.error };
 
@@ -138,7 +156,7 @@ async function refreshFolderInBackground(applierName, folder, pageSize) {
 			creds.password,
 			folder,
 			1, // always refresh page 1 (newest messages)
-			Math.min(pageSize || 25, 50),
+			pageSize || 25,
 			applierName,
 		);
 
