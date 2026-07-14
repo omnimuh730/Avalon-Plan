@@ -48,5 +48,12 @@
     }
   ],
   "permissions": ["sidePanel", "storage", "unlimitedStorage", "tabs", "scripting", "activeTab", "debugger"],
-  "host_permissions": ["<all_urls>", "http://127.0.0.1:3848/*", "http://localhost:8183/*"]
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:3848/*",
+    "http://localhost:3848/*",
+    "http://127.0.0.1:8979/*",
+    "http://localhost:8979/*",
+    "http://localhost:8183/*"
+  ]
 }

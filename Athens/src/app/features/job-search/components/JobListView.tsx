@@ -16,6 +16,7 @@ type JobListViewProps = {
   onToggleBookmark?: (id: string) => void;
   isJobPending?: (jobId: string) => boolean;
   onApply?: (job: Job) => void;
+  onMarkBidReady?: (job: Job) => void;
   onMarkScheduled?: (job: Job) => void;
   onMarkDeclined?: (job: Job) => void;
   onCancel?: (job: Job) => void;
@@ -34,6 +35,7 @@ export function JobListView({
   onToggleBookmark,
   isJobPending,
   onApply,
+  onMarkBidReady,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -75,6 +77,7 @@ export function JobListView({
           onToggleBookmark={onToggleBookmark ? () => onToggleBookmark(job.id) : undefined}
           statusPending={isJobPending?.(job.id)}
           onApply={onApply ? () => onApply(job) : undefined}
+          onMarkBidReady={onMarkBidReady ? () => onMarkBidReady(job) : undefined}
           onMarkScheduled={onMarkScheduled ? () => onMarkScheduled(job) : undefined}
           onMarkDeclined={onMarkDeclined ? () => onMarkDeclined(job) : undefined}
           onCancel={onCancel ? () => onCancel(job) : undefined}

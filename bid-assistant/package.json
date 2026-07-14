@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "icons": "node scripts/create-icons.mjs",
-    "bridge": "node scripts/imap-bridge.mjs",
+    "bridge": "npm run bridge --prefix ../vender-server",
+    "bridge:imap-legacy": "node scripts/imap-bridge.mjs",
     "dev": "npm run icons && vite",
     "dev:all": "npm run icons && concurrently \"npm run bridge\" \"vite\"",
     "build": "npm run icons && vite build && node scripts/write-dist-readme.mjs",

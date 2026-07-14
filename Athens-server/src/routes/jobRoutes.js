@@ -7,6 +7,8 @@ import {
 	removeJobs,
 	updateJobStatus,
 	unapplyFromJob,
+	updateJobBidStatus,
+	markJobBidCompletedByUrl,
 	getJobsForRule,
 	removeJobsForRule,
 	analyzeJob,
@@ -35,8 +37,10 @@ router.get('/jobs/:id/skill-analysis', getJobSkillAnalysis);
 router.get('/jobs/rule/:name', getJobsForRule);
 router.delete('/jobs/rule/:name', removeJobsForRule);
 router.post('/jobs/remove', removeJobs);
+router.post('/jobs/bid-complete-by-url', markJobBidCompletedByUrl);
 router.post('/jobs/:id/apply', applyToJob);
 router.post('/jobs/:id/status', updateJobStatus);
 router.post('/jobs/:id/unapply', unapplyFromJob);
+router.post('/jobs/:id/bid-status', updateJobBidStatus);
 
 export default router;

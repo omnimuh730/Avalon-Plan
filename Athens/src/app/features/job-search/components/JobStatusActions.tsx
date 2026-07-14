@@ -8,6 +8,7 @@ type JobStatusActionsProps = {
   job: Job;
   pending?: boolean;
   onApply: () => void;
+  onMarkBidReady?: () => void;
   onMarkScheduled: () => void;
   onMarkDeclined: () => void;
   onCancel: () => void;
@@ -86,6 +87,7 @@ export function JobStatusActions({
   job,
   pending = false,
   onApply,
+  onMarkBidReady,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -94,12 +96,20 @@ export function JobStatusActions({
 }: JobStatusActionsProps) {
   if (job.status === "posted") {
     return (
-      <ApplyButton
-        pending={pending}
-        onApply={onApply}
-        size={size}
-        showExternalLinkOnApply={showExternalLinkOnApply}
-      />
+      <>
+        {onMarkBidReady ? (
+          <Button size={size} variant="outline" disabled={pending} onClick={onMarkBidReady}>
+            {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            Bid ready
+          </Button>
+        ) : null}
+        <ApplyButton
+          pending={pending}
+          onApply={onApply}
+          size={size}
+          showExternalLinkOnApply={showExternalLinkOnApply}
+        />
+      </>
     );
   }
 

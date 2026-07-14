@@ -265,9 +265,26 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     setPage(1);
   }, []);
 
-  const patchJob = useCallback((updated: Job) => {
-    setRawJobs((prev) => prev.map((job) => (job.id === updated.id ? updated : job)));
-  }, []);
+  const patchJob = useCallback(
+    (updated: Job) => {
+      const statusTab = debouncedFilters.statusTab;
+      setRawJobs((prev) => {
+        // Drop jobs that no longer match the active status tab (e.g. Apply on New).
+        if (statusTab !== "all" && updated.status !== statusTab) {
+          const ids = new Set(
+            [updated.id, updated.backendId].filter((id): id is string => Boolean(id)),
+          );
+          const next = prev.filter(
+            (job) => !ids.has(job.id) && !ids.has(job.backendId || ""),
+          );
+          setTotal((t) => Math.max(0, t - (prev.length - next.length)));
+          return next;
+        }
+        return prev.map((job) => (job.id === updated.id ? updated : job));
+      });
+    },
+    [debouncedFilters.statusTab],
+  );
 
   const removeJobsById = useCallback((ids: string[]) => {
     if (!ids.length) return;

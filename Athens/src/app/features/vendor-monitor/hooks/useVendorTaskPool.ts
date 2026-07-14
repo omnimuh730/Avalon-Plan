@@ -96,7 +96,10 @@ export function useVendorTaskPool() {
       setMutating(true);
       setError(null);
       try {
-        await request(`/vendor/tasks/${taskId}`, { method: "PATCH", body: { status } });
+        await request(`/vendor/tasks/${encodeURIComponent(taskId)}`, {
+          method: "PATCH",
+          body: { status, applierName: profileName },
+        });
         await load();
       } catch (err) {
         setError(formatVendorMonitorError(err, "Failed to update task."));
@@ -105,15 +108,18 @@ export function useVendorTaskPool() {
         setMutating(false);
       }
     },
-    [load, request],
+    [load, profileName, request],
   );
 
   const removeTask = useCallback(
-    async (taskId: string) => {
+    async (taskId: string, jobId?: string | null) => {
       setMutating(true);
       setError(null);
       try {
-        await del(`/vendor/tasks/${taskId}`);
+        const id = taskId || jobId;
+        if (!id) throw new Error("Missing task id");
+        const params = profileName ? `?applierName=${encodeURIComponent(profileName)}` : "";
+        await del(`/vendor/tasks/${encodeURIComponent(id)}${params}`);
         await load();
       } catch (err) {
         setError(formatVendorMonitorError(err, "Failed to remove task."));
@@ -122,7 +128,7 @@ export function useVendorTaskPool() {
         setMutating(false);
       }
     },
-    [del, load],
+    [del, load, profileName],
   );
 
   const clearPool = useCallback(async () => {

@@ -1,23 +1,22 @@
 import { ObjectId } from "mongodb";
 import {
-	accountInfoCollection,
 	getBidRecordsCollection,
 	getVendorTasksCollection,
 	jobsCollection,
 } from "../db/mongo.js";
 import { detectJobSource } from "../lib/jobSource.js";
+import {
+	clearJobBidStatus,
+	listBidQueueJobs,
+	normalizeApplyUrlKey,
+	resolveApplierId,
+	upsertJobBidStatus,
+} from "../services/jobBidStatusService.js";
 
 const TASK_STATUSES = new Set(["pending", "done", "skipped"]);
 
 function normalizeUrlKey(url) {
-	const raw = String(url ?? "").trim();
-	if (!raw) return "";
-	try {
-		const u = new URL(raw);
-		return `${u.hostname}${u.pathname}`.replace(/\/+$/, "").toLowerCase();
-	} catch {
-		return raw.toLowerCase();
-	}
+	return normalizeApplyUrlKey(url);
 }
 
 function toObjectId(value) {
@@ -28,52 +27,6 @@ function toObjectId(value) {
 	} catch {
 		return null;
 	}
-}
-
-async function resolveApplierId(applierName) {
-	if (!applierName || !accountInfoCollection) return null;
-	const doc = await accountInfoCollection.findOne({ name: applierName }, { projection: { _id: 1 } });
-	return doc?._id ?? null;
-}
-
-/**
- * Permanently mark a job as bid-ready / bid-completed for an applier on job_market.status[].
- * Does not set appliedDate — that stays a separate pipeline step.
- * Existing bid dates are left unchanged.
- */
-async function upsertJobBidStatus(applierName, jobId, { bidReady = false, bidCompleted = false } = {}) {
-	if (!jobsCollection || !applierName || !jobId) return;
-	const objectId = toObjectId(jobId);
-	const applierId = await resolveApplierId(applierName);
-	if (!objectId || !applierId) return;
-
-	const now = new Date().toISOString();
-	const existing = await jobsCollection.findOne(
-		{ _id: objectId, "status.applier": applierId },
-		{ projection: { status: 1 } },
-	);
-
-	if (!existing) {
-		const entry = { applier: applierId };
-		if (bidReady) entry.bidReadyDate = now;
-		if (bidCompleted) entry.bidCompletedDate = now;
-		await jobsCollection.updateOne({ _id: objectId }, { $push: { status: entry } });
-		return;
-	}
-
-	const entry = (Array.isArray(existing.status) ? existing.status : []).find(
-		(s) => s && String(s.applier) === String(applierId),
-	);
-	const $set = {};
-	if (bidReady && !entry?.bidReadyDate) $set["status.$[elem].bidReadyDate"] = now;
-	if (bidCompleted && !entry?.bidCompletedDate) $set["status.$[elem].bidCompletedDate"] = now;
-	if (!Object.keys($set).length) return;
-
-	await jobsCollection.updateOne(
-		{ _id: objectId },
-		{ $set },
-		{ arrayFilters: [{ "elem.applier": applierId }] },
-	);
 }
 
 function serializeTask(doc, sessionMatch = null) {
@@ -172,6 +125,8 @@ function findSessionMatch(applyUrl, matchMap) {
 
 /**
  * GET /vendor/tasks?applierName=
+ * Returns all Bid ready (+ bid-completed) jobs for the applier from job_market,
+ * merged with vendor_tasks metadata and live bid-session progress.
  */
 export async function listVendorTasks(req, res) {
 	try {
@@ -185,27 +140,53 @@ export async function listVendorTasks(req, res) {
 			return res.status(503).json({ success: false, error: error || "Unavailable." });
 		}
 
-		const docs = await collection
-			.find({ applierName })
-			.sort({ addedAt: -1 })
-			.limit(1000)
-			.toArray();
+		const [queueJobs, taskDocs, matchMap] = await Promise.all([
+			listBidQueueJobs(applierName, { limit: 1000, includeCompleted: true }),
+			collection.find({ applierName }).sort({ addedAt: -1 }).limit(1000).toArray(),
+			buildSessionMatchMap(applierName),
+		]);
 
-		const matchMap = await buildSessionMatchMap(applierName);
-		const tasks = docs.map((doc) =>
-			serializeTask(doc, findSessionMatch(doc.applyUrl, matchMap)),
-		);
+		const taskByJobId = new Map();
+		for (const doc of taskDocs) {
+			if (doc.jobId) taskByJobId.set(String(doc.jobId), doc);
+		}
 
-		// Backfill permanent Job Search statuses for pool jobs.
+		const tasks = queueJobs.map((job) => {
+			const doc = taskByJobId.get(job.jobId);
+			const sessionMatch = findSessionMatch(job.applyUrl, matchMap);
+			const base = doc
+				? serializeTask(doc, sessionMatch)
+				: serializeTask(
+						{
+							_id: job.jobId,
+							applierName,
+							jobId: job.jobId,
+							title: job.title,
+							company: job.company,
+							applyUrl: job.applyUrl,
+							source: job.source,
+							location: "",
+							workMode: "",
+							matchScore: null,
+							status: job.completed ? "done" : "pending",
+							addedAt: job.bidReadyDate,
+							updatedAt: job.bidCompletedDate || job.bidReadyDate,
+							completedAt: job.bidCompletedDate,
+						},
+						sessionMatch,
+					);
+
+			if (job.completed && base.progress !== "completed") {
+				return { ...base, status: "done", progress: "completed" };
+			}
+			return base;
+		});
+
+		// Ensure session-completed jobs are persisted as bid-completed.
 		await Promise.all(
 			tasks
-				.filter((t) => t.jobId)
-				.map((t) =>
-					upsertJobBidStatus(applierName, t.jobId, {
-						bidReady: true,
-						bidCompleted: t.progress === "completed",
-					}),
-				),
+				.filter((t) => t.progress === "completed" && t.jobId)
+				.map((t) => upsertJobBidStatus(applierName, t.jobId, { bidCompleted: true })),
 		);
 
 		const totals = {
@@ -332,15 +313,14 @@ export async function addVendorTasks(req, res) {
 
 /**
  * PATCH /vendor/tasks/:taskId
- * body: { status: 'pending' | 'done' | 'skipped' }
+ * body: { status: 'pending' | 'done' | 'skipped', applierName? }
+ * taskId may be a vendor_tasks _id or a jobId for bid-ready-only rows.
  */
 export async function updateVendorTask(req, res) {
 	try {
 		const taskId = String(req.params.taskId ?? "").trim();
 		const status = String(req.body?.status ?? "").trim();
-		if (!ObjectId.isValid(taskId)) {
-			return res.status(400).json({ success: false, error: "Invalid taskId." });
-		}
+		const applierName = String(req.body?.applierName ?? req.query?.applierName ?? "").trim();
 		if (!TASK_STATUSES.has(status)) {
 			return res.status(400).json({ success: false, error: "status must be pending, done, or skipped." });
 		}
@@ -357,19 +337,47 @@ export async function updateVendorTask(req, res) {
 			completedAt: status === "done" ? now : null,
 		};
 
-		const result = await collection.findOneAndUpdate(
-			{ _id: new ObjectId(taskId) },
-			{ $set: update },
-			{ returnDocument: "after" },
-		);
-
-		const doc = result?.value ?? result;
-		if (!doc || !doc._id) {
-			return res.status(404).json({ success: false, error: "Task not found." });
+		let doc = null;
+		if (ObjectId.isValid(taskId)) {
+			const result = await collection.findOneAndUpdate(
+				{ _id: new ObjectId(taskId) },
+				{ $set: update },
+				{ returnDocument: "after" },
+			);
+			doc = result?.value ?? result;
+			if (doc && !doc._id) doc = null;
+		}
+		if (!doc) {
+			const query = applierName ? { applierName, jobId: taskId } : { jobId: taskId };
+			const result = await collection.findOneAndUpdate(query, { $set: update }, { returnDocument: "after" });
+			doc = result?.value ?? result;
+			if (doc && !doc._id) doc = null;
 		}
 
-		if (status === "done" && doc.jobId && doc.applierName) {
-			await upsertJobBidStatus(doc.applierName, doc.jobId, { bidCompleted: true });
+		const jobId = doc?.jobId ? String(doc.jobId) : taskId;
+		const owner = doc?.applierName ? String(doc.applierName) : applierName;
+
+		if (status === "done" && jobId && owner) {
+			await upsertJobBidStatus(owner, jobId, { bidCompleted: true });
+		}
+
+		if (!doc) {
+			if (!owner || !jobId) {
+				return res.status(404).json({ success: false, error: "Task not found." });
+			}
+			return res.json({
+				success: true,
+				task: serializeTask({
+					_id: jobId,
+					applierName: owner,
+					jobId,
+					title: "Untitled role",
+					status,
+					completedAt: status === "done" ? now : null,
+					updatedAt: now,
+					addedAt: now,
+				}),
+			});
 		}
 
 		return res.json({ success: true, task: serializeTask(doc) });
@@ -381,24 +389,40 @@ export async function updateVendorTask(req, res) {
 
 /**
  * DELETE /vendor/tasks/:taskId
+ * Clears Bid ready on the linked job so it returns to New in Job Search.
  */
 export async function deleteVendorTask(req, res) {
 	try {
 		const taskId = String(req.params.taskId ?? "").trim();
-		if (!ObjectId.isValid(taskId)) {
-			return res.status(400).json({ success: false, error: "Invalid taskId." });
-		}
-
 		const { collection, error } = resolveVendorTasks();
 		if (error || !collection) {
 			return res.status(503).json({ success: false, error: error || "Unavailable." });
 		}
 
-		const result = await collection.deleteOne({ _id: new ObjectId(taskId) });
-		if (!result.deletedCount) {
+		let doc = null;
+		if (ObjectId.isValid(taskId)) {
+			doc = await collection.findOne({ _id: new ObjectId(taskId) });
+		}
+		if (!doc) {
+			doc = await collection.findOne({ jobId: taskId });
+		}
+
+		const jobId = doc?.jobId ? String(doc.jobId) : ObjectId.isValid(taskId) ? null : taskId;
+		const applierName = doc?.applierName ? String(doc.applierName) : String(req.query.applierName ?? "").trim();
+
+		if (doc?._id) {
+			await collection.deleteOne({ _id: doc._id });
+		} else if (jobId && applierName) {
+			await collection.deleteMany({ applierName, jobId });
+		} else if (!jobId) {
 			return res.status(404).json({ success: false, error: "Task not found." });
 		}
-		return res.json({ success: true, deleted: 1 });
+
+		if (jobId && applierName) {
+			await clearJobBidStatus(applierName, jobId);
+		}
+
+		return res.json({ success: true, deleted: 1, jobId });
 	} catch (err) {
 		console.error("[vendor/tasks] delete failed", err);
 		return res.status(500).json({ success: false, error: err.message || "Failed to delete task." });
@@ -420,8 +444,18 @@ export async function clearVendorTasks(req, res) {
 			return res.status(503).json({ success: false, error: error || "Unavailable." });
 		}
 
+		const docs = await collection.find({ applierName }).project({ jobId: 1 }).toArray();
+		const jobIds = [...new Set(docs.map((d) => d.jobId).filter(Boolean).map(String))];
+
+		// Also clear every bid-ready job for this applier (source of truth).
+		const queueJobs = await listBidQueueJobs(applierName, { limit: 1000, includeCompleted: true });
+		for (const job of queueJobs) jobIds.push(job.jobId);
+		const uniqueJobIds = [...new Set(jobIds)];
+
 		const result = await collection.deleteMany({ applierName });
-		return res.json({ success: true, deleted: result.deletedCount ?? 0 });
+		await Promise.all(uniqueJobIds.map((jobId) => clearJobBidStatus(applierName, jobId)));
+
+		return res.json({ success: true, deleted: result.deletedCount ?? 0, clearedJobs: uniqueJobIds.length });
 	} catch (err) {
 		console.error("[vendor/tasks] clear failed", err);
 		return res.status(500).json({ success: false, error: err.message || "Failed to clear tasks." });

@@ -591,10 +591,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const pathOnly = String(req.url || '').split('?')[0];
+  if (pathOnly === '/bid-queue') {
+    sendJson(res, 404, {
+      ok: false,
+      error:
+        'This legacy IMAP bridge has no /bid-queue. Stop it and run `npm run bridge` from vender-server (or rebuild bid-assistant to load the queue from Athens).',
+    });
+    return;
+  }
+
   sendJson(res, 404, { ok: false, error: 'Not found' });
 });
 
 server.listen(PORT, HOST, () => {
   console.log(`Gmail IMAP bridge listening on http://${HOST}:${PORT}`);
-  console.log('Keep this running while using the Bid-Copilot extension.');
+  console.log(
+    'Legacy IMAP-only bridge. Prefer: cd ../vender-server && npm run bridge (includes bid queue + Mongo).',
+  );
 });

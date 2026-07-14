@@ -121,9 +121,16 @@ export function useJobApplicationActions(
           job.status === "bid-ready" ||
           job.status === "bid-completed"
         ) {
-          res = (await post(`/jobs/${jobId}/unapply`, {
-            applierName: applier.name,
-          })) as JobMutationResponse;
+          if (job.status === "bid-ready" || job.status === "bid-completed") {
+            res = (await post(`/jobs/${jobId}/bid-status`, {
+              applierName: applier.name,
+              status: "clear",
+            })) as JobMutationResponse;
+          } else {
+            res = (await post(`/jobs/${jobId}/unapply`, {
+              applierName: applier.name,
+            })) as JobMutationResponse;
+          }
         } else if (job.status === "scheduled" || job.status === "declined") {
           res = (await post(`/jobs/${jobId}/status`, {
             applierName: applier.name,
@@ -138,7 +145,7 @@ export function useJobApplicationActions(
           await refreshStatusCounts();
           const message =
             job.status === "bid-ready" || job.status === "bid-completed"
-              ? "Bid status cleared"
+              ? "Bid status cleared — back to New"
               : job.status === "applied"
                 ? "Application removed"
                 : "Moved back to Applied";
@@ -153,10 +160,89 @@ export function useJobApplicationActions(
     [applier, onJobUpdated, post, refreshStatusCounts, setPending],
   );
 
+  const markBidReady = useCallback(
+    async (job: Job) => {
+      if (isExternalJob(job)) return;
+      const jobId = job.backendId || job.id;
+      if (!applier?.name) {
+        toast.error("Select a profile before updating status");
+        return;
+      }
+
+      setPending(jobId, true);
+      try {
+        const res = (await post(`/jobs/${jobId}/bid-status`, {
+          applierName: applier.name,
+          status: "BidReady",
+        })) as JobMutationResponse;
+
+        if (res?.success && res.data) {
+          onJobUpdated(mapDocToJob(res.data, applier));
+          await refreshStatusCounts();
+          toast.success("Marked as Bid ready");
+        }
+      } catch {
+        toast.error("Failed to mark job as Bid ready");
+      } finally {
+        setPending(jobId, false);
+      }
+    },
+    [applier, onJobUpdated, post, refreshStatusCounts, setPending],
+  );
+
+  const markBidReadyBulk = useCallback(
+    async (jobs: Job[]) => {
+      if (!applier?.name) {
+        toast.error("Select a profile before updating status");
+        return;
+      }
+      const eligible = jobs.filter((job) => !isExternalJob(job) && job.status === "posted");
+      if (!eligible.length) {
+        toast.message("Nothing to mark Bid ready", {
+          description: "Select New (posted) jobs only.",
+        });
+        return;
+      }
+
+      let ok = 0;
+      let failed = 0;
+      for (const job of eligible) {
+        const jobId = job.backendId || job.id;
+        setPending(jobId, true);
+        try {
+          const res = (await post(`/jobs/${jobId}/bid-status`, {
+            applierName: applier.name,
+            status: "BidReady",
+          })) as JobMutationResponse;
+          if (res?.success && res.data) {
+            onJobUpdated(mapDocToJob(res.data, applier));
+            ok += 1;
+          } else {
+            failed += 1;
+          }
+        } catch {
+          failed += 1;
+        } finally {
+          setPending(jobId, false);
+        }
+      }
+      await refreshStatusCounts();
+      if (ok > 0) {
+        toast.success(`Marked ${ok} job${ok === 1 ? "" : "s"} as Bid ready`);
+      }
+      if (failed > 0) {
+        toast.error(`Failed on ${failed} job${failed === 1 ? "" : "s"}`);
+      }
+    },
+    [applier, onJobUpdated, post, refreshStatusCounts, setPending],
+  );
+
   return {
     applyToJob,
     updateJobStatus,
     cancelJobStatus,
+    markBidReady,
+    markBidReadyBulk,
     isPending,
   };
 }

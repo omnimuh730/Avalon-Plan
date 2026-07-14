@@ -24,6 +24,7 @@ import { useActiveTab } from '@/app/hooks/useActiveTab';
 import { useBidSession } from '@/app/hooks/useBidSession';
 import { useBidShots } from '@/app/hooks/useBidShots';
 import { useCompletedCounter } from '@/app/hooks/useCompletedCounter';
+import { useBidQueue } from '@/app/hooks/useBidQueue';
 import type { BidShot } from '@/lib/bid-session';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -420,6 +421,7 @@ export function JobBidAssistant() {
   const shots = useBidShots(tabId);
   const { count: completedCount, increment: incrementCompleted, reset: resetCompleted } =
     useCompletedCounter();
+  const queue = useBidQueue(true);
 
   const sessionActive = session.status === 'active';
   const sessionCompleted = session.status === 'completed';
@@ -429,7 +431,10 @@ export function JobBidAssistant() {
 
   const handleComplete = async () => {
     const ok = await completeSession();
-    if (ok) incrementCompleted();
+    if (ok) {
+      incrementCompleted();
+      void queue.reload();
+    }
   };
 
   return (
@@ -499,6 +504,61 @@ export function JobBidAssistant() {
 
       {/* Scrollable content */}
       <div className="flex-1 min-h-0 overflow-y-auto subtle-scroll p-2 space-y-2">
+        <Section title="Bid queue" icon={Target} collapsible defaultCollapsed={false}>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-muted-foreground">
+                {queue.loading ? (
+                  'Loading…'
+                ) : (
+                  <>
+                    <span className="font-bold text-foreground">{queue.total}</span> bid-ready
+                    {queue.total > queue.preview.length
+                      ? ` · showing next ${queue.preview.length}`
+                      : ''}
+                  </>
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => void queue.reload()}
+                className="text-[10px] text-primary hover:underline"
+              >
+                Refresh
+              </button>
+            </div>
+            {queue.error ? (
+              <p className="text-[11px] text-amber-400">{queue.error}</p>
+            ) : queue.preview.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                No queued jobs. Mark jobs as Bid ready in Athens Job Search.
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {queue.preview.map((job) => (
+                  <li
+                    key={job.jobId}
+                    className="rounded-lg border border-border/60 bg-secondary/20 px-2 py-1.5"
+                  >
+                    <div className="text-[11px] font-semibold text-foreground truncate">{job.title}</div>
+                    <div className="text-[10px] text-muted-foreground truncate">
+                      {job.company || '—'}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!job.applyUrl}
+                      onClick={() => void queue.openJob(job)}
+                      className="mt-1 text-[10px] font-semibold text-primary hover:underline disabled:opacity-40"
+                    >
+                      Open job →
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </Section>
+
         <p className="text-[11px] text-muted-foreground leading-relaxed px-0.5">
           Open a job page → <strong className="text-foreground font-semibold">New Session</strong> →{' '}
           <strong className="text-foreground font-semibold">Analyze</strong> → fill the form →{' '}

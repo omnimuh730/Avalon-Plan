@@ -11,6 +11,7 @@ import {
   accountInfoCollection,
   personalInfoCollection,
   bidRecordsCollection,
+  jobsCollection,
   pingMongo,
   getMongoStatus,
 } from '../src/db/mongo.js';
@@ -21,6 +22,10 @@ import {
   recordBidResumeUploadEvent,
   startBidSession,
 } from '../src/services/bidSessionService.js';
+import {
+  listBidReadyQueue,
+  markBidCompletedByUrl,
+} from '../src/services/bidQueueService.js';
 import {
   getPublicProfile,
   listApplierNames,
@@ -201,7 +206,21 @@ async function handleBidSessionRequest(pathname, body) {
     return { status: 200, payload: { ok: true, ...result } };
   }
   const result = await completeBidSession(bidRecordsCollection, body);
-  return { status: 200, payload: { ok: true, ...result } };
+  let jobUpdate = null;
+  try {
+    jobUpdate = await markBidCompletedByUrl(
+      jobsCollection,
+      accountInfoCollection,
+      body.applierName,
+      body.url,
+    );
+  } catch (err) {
+    console.warn(
+      '[vender-server] bid-complete job update failed:',
+      err instanceof Error ? err.message : err,
+    );
+  }
+  return { status: 200, payload: { ok: true, ...result, jobUpdate } };
 }
 
 async function handleJobAnalyzeRequest(pathname, body) {
@@ -266,6 +285,22 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/accounts') {
       await handleAccountsRequest(res);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/bid-queue') {
+      const applierName = String(url.searchParams.get('applierName') || '').trim();
+      if (!applierName) {
+        sendJson(res, 400, { ok: false, error: 'applierName is required.' });
+        return;
+      }
+      const limit = Number(url.searchParams.get('limit') || 8);
+      const preview = Number(url.searchParams.get('preview') || 3);
+      const queue = await listBidReadyQueue(jobsCollection, accountInfoCollection, applierName, {
+        limit,
+        preview,
+      });
+      sendJson(res, 200, { ok: true, ...queue });
       return;
     }
 

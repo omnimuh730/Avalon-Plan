@@ -26,6 +26,11 @@ import {
 } from '@/lib/resume-uploads';
 
 const BRIDGE_URL = (import.meta.env.VITE_BRIDGE_URL ?? 'http://127.0.0.1:3848').replace(/\/$/, '');
+/** Same Athens API the Vendor Monitor Tasks tab uses — source of truth for Bid ready jobs. */
+const ATHENS_API_URL = (import.meta.env.VITE_ATHENS_API_URL ?? 'http://127.0.0.1:8979/api').replace(
+  /\/$/,
+  '',
+);
 /** Remote bridges often need more than 2s; keep status checks honest. */
 const BRIDGE_HEALTH_TIMEOUT_MS = 8_000;
 
@@ -76,6 +81,7 @@ type Message =
   | { type: 'GET_BID_SESSION'; tabId: number }
   | { type: 'START_BID_SESSION'; tabId: number }
   | { type: 'COMPLETE_BID_SESSION'; tabId: number }
+  | { type: 'FETCH_BID_QUEUE'; limit?: number; preview?: number }
   | { type: 'GET_BID_SHOTS'; tabId: number }
   | { type: 'BID_PROCESS_CLICK'; triggerText: string }
   | LogUploadMessage
@@ -92,6 +98,18 @@ type Response =
   | { ok: true; verification: ProfileVerification }
   | { ok: true; session: BidSessionState }
   | { ok: true; shots: BidShot[] }
+  | {
+      ok: true;
+      total: number;
+      preview: {
+        jobId: string;
+        title: string;
+        company: string;
+        applyUrl: string;
+        source: string;
+        bidReadyDate: string | null;
+      }[];
+    }
   | { ok: true }
   | { ok: false; error: string };
 
@@ -690,6 +708,117 @@ async function startBidSession(tabId: number): Promise<BidSessionState> {
   });
 
   return { sessionId, status: 'active', startedAt, completedAt: null };
+}
+
+type BidQueueJobRow = {
+  jobId: string;
+  title: string;
+  company: string;
+  applyUrl: string;
+  source: string;
+  bidReadyDate: string | null;
+};
+
+async function fetchBidQueueFromAthens(
+  applierName: string,
+  limit: number,
+  previewCount: number,
+): Promise<{ total: number; preview: BidQueueJobRow[] }> {
+  const params = new URLSearchParams({ applierName });
+  const response = await fetch(`${ATHENS_API_URL}/vendor/tasks?${params}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await response.json()) as {
+    success?: boolean;
+    error?: string;
+    tasks?: Array<{
+      jobId?: string | null;
+      title?: string;
+      company?: string;
+      applyUrl?: string | null;
+      source?: string;
+      addedAt?: string | null;
+      progress?: string;
+      status?: string;
+    }>;
+  };
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || `Athens bid queue failed (${response.status})`);
+  }
+  const pending = (Array.isArray(data.tasks) ? data.tasks : []).filter(
+    (t) => t.progress !== 'completed' && t.status !== 'done' && t.status !== 'skipped',
+  );
+  const jobs: BidQueueJobRow[] = pending.map((t) => ({
+    jobId: String(t.jobId || ''),
+    title: String(t.title || 'Untitled role'),
+    company: String(t.company || ''),
+    applyUrl: String(t.applyUrl || ''),
+    source: String(t.source || ''),
+    bidReadyDate: t.addedAt ?? null,
+  }));
+  const take = Math.max(1, Math.min(50, limit));
+  const sliced = jobs.slice(0, take);
+  const show = Math.max(0, Math.min(previewCount, sliced.length));
+  return { total: jobs.length, preview: sliced.slice(0, show) };
+}
+
+async function fetchBidQueueFromBridge(
+  applierName: string,
+  limit: number,
+  previewCount: number,
+): Promise<{ total: number; preview: BidQueueJobRow[] }> {
+  const params = new URLSearchParams({
+    applierName,
+    limit: String(limit),
+    preview: String(previewCount),
+  });
+  const response = await fetch(`${BRIDGE_URL}/bid-queue?${params}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await response.json()) as {
+    ok?: boolean;
+    error?: string;
+    total?: number;
+    preview?: BidQueueJobRow[];
+  };
+  if (response.status === 404) {
+    throw new Error(
+      'Bridge is missing /bid-queue — restart vender-server (`npm run bridge`) or use Athens API.',
+    );
+  }
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || `Bid queue failed (${response.status})`);
+  }
+  return {
+    total: data.total ?? 0,
+    preview: Array.isArray(data.preview) ? data.preview : [],
+  };
+}
+
+async function fetchBidQueue(limit = 8, preview = 3): Promise<{
+  total: number;
+  preview: BidQueueJobRow[];
+}> {
+  const applierState = await getStoredApplierState();
+  if (!applierState.ready || !applierState.applierName) {
+    throw new Error('Load a profile at the top before viewing the bid queue.');
+  }
+  const name = applierState.applierName;
+
+  // Prefer Athens (same source as Vendor Monitor Tasks). Fall back to bridge.
+  try {
+    return await fetchBidQueueFromAthens(name, limit, preview);
+  } catch (athensErr) {
+    try {
+      return await fetchBidQueueFromBridge(name, limit, preview);
+    } catch (bridgeErr) {
+      const athensMsg = athensErr instanceof Error ? athensErr.message : String(athensErr);
+      const bridgeMsg = bridgeErr instanceof Error ? bridgeErr.message : String(bridgeErr);
+      throw new Error(
+        `Could not load bid queue. Athens: ${athensMsg}. Bridge: ${bridgeMsg}. Is Athens-server on ${ATHENS_API_URL}?`,
+      );
+    }
+  }
 }
 
 async function completeBidSession(tabId: number): Promise<BidSessionState> {
@@ -1711,6 +1840,11 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
         case 'COMPLETE_BID_SESSION': {
           const session = await completeBidSession(message.tabId);
           sendResponse({ ok: true, session } satisfies Response);
+          break;
+        }
+        case 'FETCH_BID_QUEUE': {
+          const queue = await fetchBidQueue(message.limit, message.preview);
+          sendResponse({ ok: true, ...queue } satisfies Response);
           break;
         }
         case 'GET_BID_SHOTS': {

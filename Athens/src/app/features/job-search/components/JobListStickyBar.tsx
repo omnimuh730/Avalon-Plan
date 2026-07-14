@@ -13,6 +13,8 @@ type JobListStickyBarProps = {
   onToggleSelectAll: () => void;
   onExport: () => void;
   onRemove: () => void;
+  onMarkBidReady?: () => void;
+  bidReadyPending?: boolean;
   onGenerateResumes?: () => void;
   onStopGenerateResumes?: () => void;
   resumeGenerating?: boolean;
@@ -36,6 +38,8 @@ export function JobListStickyBar({
   onToggleSelectAll,
   onExport,
   onRemove,
+  onMarkBidReady,
+  bidReadyPending,
   onGenerateResumes,
   onStopGenerateResumes,
   resumeGenerating,
@@ -61,6 +65,8 @@ export function JobListStickyBar({
           onToggleSelectAll={onToggleSelectAll}
           onExport={onExport}
           onRemove={onRemove}
+          onMarkBidReady={onMarkBidReady}
+          bidReadyPending={bidReadyPending}
           onGenerateResumes={onGenerateResumes}
           onStopGenerateResumes={onStopGenerateResumes}
           resumeGenerating={resumeGenerating}

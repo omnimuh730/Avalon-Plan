@@ -41,9 +41,11 @@ export function JobSearchPage() {
   const { jobs, total, loading, refreshing, page, pageSize, setPage, setPageSize, statusCounts, recommendationFallback, recommendationReason, recommendationWarming, patchJob, refreshStatusCounts } =
     useJobsList(filters, removedIds);
   const { selectedIds, selectedJobs, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
-  const { applyToJob, updateJobStatus, cancelJobStatus, isPending } = useJobApplicationActions(patchJob, refreshStatusCounts);
+  const { applyToJob, updateJobStatus, cancelJobStatus, markBidReady, markBidReadyBulk, isPending } =
+    useJobApplicationActions(patchJob, refreshStatusCounts);
   const { resumeStates, generateForJob, generateBulk, cancelBulk, bulkRunning, bulkProgress } =
     useJobResumeGeneration(jobs);
+  const [bidReadyBulkPending, setBidReadyBulkPending] = useState(false);
 
   useEffect(() => {
     const pending = jobNav?.pendingFilters;
@@ -164,6 +166,18 @@ export function JobSearchPage() {
         onToggleSelectAll={toggleSelectAllOnPage}
         onExport={() => setExportOpen(true)}
         onRemove={handleRemove}
+        onMarkBidReady={() => {
+          void (async () => {
+            setBidReadyBulkPending(true);
+            try {
+              await markBidReadyBulk(selectedJobs);
+              clearSelection();
+            } finally {
+              setBidReadyBulkPending(false);
+            }
+          })();
+        }}
+        bidReadyPending={bidReadyBulkPending}
         onGenerateResumes={() => {
           void generateBulk(selectedJobs);
         }}
@@ -211,6 +225,7 @@ export function JobSearchPage() {
               onToggleBookmark={toggleBookmark}
               isJobPending={isPending}
               onApply={(job) => void applyToJob(job)}
+              onMarkBidReady={(job) => void markBidReady(job)}
               onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
               onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
               onCancel={(job) => void cancelJobStatus(job)}
