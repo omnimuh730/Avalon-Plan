@@ -431,13 +431,14 @@ async function captureFullPageViaDebugger(tabId: number): Promise<string | null>
   }
 }
 
-async function captureVisibleViewport(windowId?: number): Promise<string | null> {
-  // Process clicks (Apply/Submit/Next) navigate within milliseconds. The tab is
-  // often mid-navigation when capture runs, which makes captureVisibleTab throw
-  // ("Cannot capture, tab is navigating"). Retry a couple of times so we still
-  // grab the page as it was at click time.
+async function captureVisibleViewport(
+  windowId?: number,
+  { attempts = 3, delayMs = 120 }: { attempts?: number; delayMs?: number } = {},
+): Promise<string | null> {
+  // Process clicks (Apply/Submit/Next) often navigate within milliseconds.
+  // captureVisibleTab throws while the tab is navigating — retry briefly.
   const targetWindow = windowId ?? chrome.windows.WINDOW_ID_CURRENT;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const shot = await chrome.tabs.captureVisibleTab(targetWindow, {
         format: 'jpeg',
@@ -447,11 +448,52 @@ async function captureVisibleViewport(windowId?: number): Promise<string | null>
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[vender-sw] captureVisibleTab attempt ${attempt + 1} failed: ${message}`);
-      // The "navigating" / rate-limit errors clear quickly; wait and retry.
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
   return null;
+}
+
+async function waitForTabComplete(tabId: number, timeoutMs = 4000): Promise<void> {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === 'complete') return;
+  } catch {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, timeoutMs);
+
+    function finish() {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      resolve();
+    }
+
+    function onUpdated(updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+    }
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+/**
+ * Viewport capture tuned for process clicks that may navigate away immediately.
+ * Tries immediately, then again after the tab settles.
+ */
+async function captureProcessClickViewport(
+  tabId: number,
+  windowId?: number,
+): Promise<string | null> {
+  const immediate = await captureVisibleViewport(windowId, { attempts: 4, delayMs: 80 });
+  if (immediate) return immediate;
+
+  await waitForTabComplete(tabId, 4000);
+  // Small settle delay so layout paints before capture.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  return captureVisibleViewport(windowId, { attempts: 5, delayMs: 150 });
 }
 
 async function captureTabScreenshot(
@@ -459,8 +501,8 @@ async function captureTabScreenshot(
   windowId?: number,
   { fullPage = true }: { fullPage?: boolean } = {},
 ): Promise<string | null> {
-  // Prefer CDP full-page stitching when the click is held. Falls back to a
-  // viewport grab if debugger attach fails or the page is restricted.
+  // Prefer CDP full-page stitching for session start / analyze. Process clicks
+  // pass fullPage:false and use a dedicated viewport helper instead.
   if (fullPage && typeof tabId === 'number') {
     const stitched = await captureFullPageViaDebugger(tabId);
     if (stitched) return stitched;
@@ -889,131 +931,138 @@ async function resolveSenderTab(sender: chrome.runtime.MessageSender): Promise<{
 
 async function injectBidRecorder(tabId: number): Promise<void> {
   try {
-    // Keep SPA navigations hooked with the same hold-capture protocol as
-    // bid-recorder-main.ts (pause click → full-page shot → replay action).
+    // Same fire-and-forget protocol as bid-recorder-main.ts. Uses pointerdown
+    // so Apply <a href> navigations do not unload the page before notify.
     await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
       func: () => {
-        const w = window as unknown as {
-          __bidRecorderMainHook?: boolean;
-          __bidReplayAction?: boolean;
-        };
+        const w = window as unknown as { __bidRecorderMainHook?: boolean };
         if (w.__bidRecorderMainHook) return;
         w.__bidRecorderMainHook = true;
 
         const P = /(apply|submit|next|continue|proceed|save)/i;
+        const ACTION =
+          'a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"], label';
         const SOURCE = 'bid-recorder-hook';
-        const BRIDGE = 'bid-recorder-bridge';
+        let lastPostedAt = 0;
 
-        type Pending =
-          | { kind: 'click'; label: string; element: Element }
-          | {
-              kind: 'submit';
-              label: string;
-              form: HTMLFormElement;
-              submitter: HTMLElement | null;
-            };
-
-        let pending: Pending | null = null;
-        let holding = false;
-
-        const txt = (el: Element | null | undefined) => {
-          if (!el?.getAttribute) return '';
-          return (el.getAttribute('aria-label') || el.textContent || '')
+        const labelFor = (el: Element | null | undefined): string | null => {
+          if (!el?.getAttribute) return null;
+          const aria = el.getAttribute('aria-label')?.trim();
+          if (aria && aria.length <= 120 && P.test(aria)) {
+            return aria.replace(/\s+/g, ' ').trim();
+          }
+          if (el instanceof HTMLInputElement) {
+            const v = (el.value || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+            if (v && v.length <= 120 && P.test(v)) return v;
+          }
+          let direct = '';
+          for (const node of el.childNodes) {
+            if (node.nodeType === Node.TEXT_NODE) direct += node.textContent ?? '';
+          }
+          direct = direct.replace(/\s+/g, ' ').trim();
+          if (direct && direct.length <= 120 && P.test(direct)) return direct;
+          const full = (el.textContent || el.getAttribute('title') || '')
             .replace(/\s+/g, ' ')
             .trim();
-        };
-
-        const findTrigger = (start: EventTarget | null) => {
-          let t = start as Element | null;
-          for (let i = 0; i < 16 && t; i += 1) {
-            if (t.nodeType !== 1) {
-              t = t.parentElement;
-              continue;
+          if (full && full.length <= 120 && P.test(full)) return full;
+          if (el instanceof HTMLAnchorElement) {
+            const href = el.getAttribute('href') || '';
+            if (/apply|application/i.test(href)) {
+              return direct || (full.length <= 120 ? full : '') || 'Apply';
             }
-            const s = txt(t);
-            if (s && s.length <= 80 && P.test(s)) return { label: s, element: t };
-            t = t.parentElement;
           }
           return null;
         };
 
-        const postHold = (label: string) => {
-          window.postMessage({ source: SOURCE, type: 'hold-capture', triggerText: label }, '*');
-        };
-
-        const replay = () => {
-          const action = pending;
-          pending = null;
-          holding = false;
-          if (!action) return;
-          w.__bidReplayAction = true;
-          try {
-            if (action.kind === 'click') {
-              if (action.element instanceof HTMLElement) action.element.click();
-              else {
-                action.element.dispatchEvent(
-                  new MouseEvent('click', { bubbles: true, cancelable: true, view: window }),
-                );
-              }
-            } else if (typeof action.form.requestSubmit === 'function') {
-              action.form.requestSubmit(action.submitter ?? undefined);
-            } else {
-              action.form.submit();
+        const collect = (event: Event) => {
+          const out: Element[] = [];
+          const seen = new Set<Element>();
+          const push = (el: Element | null | undefined) => {
+            if (!el || seen.has(el)) return;
+            seen.add(el);
+            out.push(el);
+          };
+          if (event.target instanceof Element) {
+            let cur: Element | null = event.target;
+            for (let i = 0; i < 16 && cur; i += 1) {
+              push(cur);
+              cur = cur.parentElement;
             }
-          } finally {
-            w.__bidReplayAction = false;
           }
+          if (typeof event.composedPath === 'function') {
+            for (const node of event.composedPath()) {
+              if (node instanceof Element) push(node);
+            }
+          }
+          return out;
         };
 
-        const beginHold = (action: Pending, event: Event) => {
-          if (w.__bidReplayAction || holding) return;
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          holding = true;
-          pending = action;
-          postHold(action.label);
+        const findTrigger = (event: Event) => {
+          for (const node of collect(event)) {
+            const s = labelFor(node);
+            if (!s) continue;
+            if (node.matches(ACTION) || node.closest(ACTION) || node.closest('form')) {
+              return { label: s, element: node };
+            }
+            const tag = node.tagName.toLowerCase();
+            if (tag === 'button' || tag === 'a' || tag === 'label' || tag === 'input') {
+              return { label: s, element: node };
+            }
+          }
+          return null;
         };
 
-        document.addEventListener(
-          'click',
-          (e) => {
-            if (w.__bidReplayAction || holding) return;
-            if (typeof e.button === 'number' && e.button !== 0) return;
-            const hit = findTrigger(e.target);
-            if (!hit) return;
-            beginHold({ kind: 'click', label: hit.label, element: hit.element }, e);
-          },
-          true,
-        );
+        const postProcessClick = (label: string) => {
+          const now = Date.now();
+          if (now - lastPostedAt < 400) return;
+          lastPostedAt = now;
+          window.postMessage({ source: SOURCE, type: 'process-click', triggerText: label }, '*');
+        };
+
+        const onActivate = (e: Event) => {
+          if (e instanceof MouseEvent && typeof e.button === 'number' && e.button !== 0) return;
+          const hit = findTrigger(e);
+          if (!hit) return;
+          postProcessClick(hit.label);
+        };
+
+        document.addEventListener('pointerdown', onActivate, true);
+        document.addEventListener('mousedown', onActivate, true);
+        document.addEventListener('click', onActivate, true);
 
         document.addEventListener(
           'submit',
           (e) => {
-            if (w.__bidReplayAction || holding) return;
             const form = e.target;
             if (!(form instanceof HTMLFormElement)) return;
             const submitter =
               (e as SubmitEvent).submitter instanceof HTMLElement
                 ? ((e as SubmitEvent).submitter as HTMLElement)
                 : null;
-            const fromSubmitter = submitter ? txt(submitter) : '';
-            const label =
-              fromSubmitter && P.test(fromSubmitter)
-                ? fromSubmitter
-                : findTrigger(submitter)?.label || 'Submit';
-            beginHold({ kind: 'submit', label, form, submitter }, e);
+            const label = (submitter && labelFor(submitter)) || findTrigger(e)?.label || 'Submit';
+            postProcessClick(label);
           },
           true,
         );
 
-        window.addEventListener('message', (event) => {
-          if (event.source !== window) return;
-          const data = event.data as { source?: string; type?: string } | null;
-          if (data?.source !== BRIDGE || data.type !== 'resume-action') return;
-          replay();
-        });
+        const notifyIfApplyRoute = () => {
+          if (/\/application(?:\/|$|\?)|\/apply(?:\/|$|\?)/i.test(location.href)) {
+            postProcessClick('Apply');
+          }
+        };
+        const wrapHistory = (method: 'pushState' | 'replaceState') => {
+          const original = history[method].bind(history);
+          history[method] = function (...args: Parameters<History['pushState']>) {
+            const result = original(...args);
+            queueMicrotask(notifyIfApplyRoute);
+            return result;
+          };
+        };
+        wrapHistory('pushState');
+        wrapHistory('replaceState');
+        window.addEventListener('popstate', () => queueMicrotask(notifyIfApplyRoute));
       },
     });
   } catch {
@@ -1313,7 +1362,17 @@ async function recordBidProcessClick(
     return;
   }
 
-  const session = await getStoredBidSession(tabId);
+  const windowId = sender.tab?.windowId;
+  // Kick off capture immediately — Apply links navigate on click and race us.
+  // pointerdown notifies us a few ms earlier; grab the viewport before unload.
+  const earlyCapture = captureVisibleViewport(windowId, { attempts: 3, delayMs: 40 });
+
+  const [session, tabInfo, applierState] = await Promise.all([
+    getStoredBidSession(tabId),
+    resolveSenderTab(sender),
+    getStoredApplierState(),
+  ]);
+
   if (session.status !== 'active' || !session.sessionId) {
     console.warn('[vender-sw] BID_PROCESS_CLICK ignored — no active session', {
       triggerText,
@@ -1322,37 +1381,32 @@ async function recordBidProcessClick(
     return;
   }
 
-  // Click is paused by the content-script hold-capture hook, so full-page CDP
-  // is safe here: the SPA submit handler has not run yet and will be replayed
-  // after we respond. Fallback to viewport if stitching fails.
-  const windowId = sender.tab?.windowId;
-  const [screenshot, tabInfo, applierState] = await Promise.all([
-    captureTabScreenshot(tabId, windowId, { fullPage: true }),
-    resolveSenderTab(sender),
-    getStoredApplierState(),
-  ]);
+  let screenshot = await earlyCapture;
+  if (!screenshot) {
+    screenshot = await captureProcessClickViewport(tabId, windowId);
+  }
+
   const { url, title } = tabInfo;
+  const at = new Date().toISOString();
 
   console.log('[vender-sw] process click captured', {
     triggerText,
-    fullPage: true,
+    fullPage: false,
     hasScreenshot: Boolean(screenshot),
     screenshotKb: screenshot ? Math.round(screenshot.length / 1024) : 0,
     url,
   });
 
-  // Update the live in-extension gallery FIRST so a screenshot always shows,
-  // even if the local bridge / DB write fails.
+  // Always record locally first (even null screenshot → "No capture" tile).
   await recordShot(tabId, {
     type: 'process',
     triggerText,
     url: url || null,
     title: title || null,
     screenshot,
-    at: new Date().toISOString(),
+    at,
   });
 
-  // Persist to MongoDB via the bridge — best effort, never blocks the gallery.
   try {
     await postBidSessionEvent('/bid-session/event', {
       sessionId: session.sessionId,
@@ -1763,17 +1817,115 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-// Re-inject MAIN-world click hooks after SPA navigations while that tab's
-// session is live.
+const lastNavProcessCaptureAt = new Map<number, number>();
+
+function processLabelFromUrl(url: string): string | null {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    if (path.includes('/application') || /\/apply(?:\/|$)/.test(path)) return 'Apply';
+    if (path.includes('submit')) return 'Submit';
+    return null;
+  } catch {
+    return /apply|application/i.test(url) ? 'Apply' : null;
+  }
+}
+
+async function recordNavigationProcessShot(
+  tabId: number,
+  url: string,
+  sessionId: string,
+  triggerText: string,
+): Promise<void> {
+  const now = Date.now();
+  const last = lastNavProcessCaptureAt.get(tabId) ?? 0;
+  if (now - last < 1500) return;
+  lastNavProcessCaptureAt.set(tabId, now);
+
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return;
+  }
+
+  // Let Ashby/SPA paint the application step before capturing.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const screenshot = await captureProcessClickViewport(tabId, tab.windowId);
+  const applierState = await getStoredApplierState();
+  const at = new Date().toISOString();
+
+  console.log('[vender-sw] navigation process capture', {
+    triggerText,
+    hasScreenshot: Boolean(screenshot),
+    url,
+  });
+
+  await recordShot(tabId, {
+    type: 'process',
+    triggerText,
+    url: url || tab.url || null,
+    title: tab.title ?? null,
+    screenshot,
+    at,
+  });
+
+  try {
+    await postBidSessionEvent('/bid-session/event', {
+      sessionId,
+      applierName: applierState.applierName ?? '',
+      profileId: applierState.profileId,
+      url: url || tab.url || '',
+      title: tab.title ?? '',
+      triggerText,
+      screenshot,
+    });
+  } catch (error) {
+    console.warn(
+      '[vender-sw] failed to persist navigation process click:',
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+async function maybeCaptureApplyNavigation(tabId: number, url: string): Promise<void> {
+  const session = await getStoredBidSession(tabId);
+  if (session.status !== 'active' || !session.sessionId) return;
+  const label = processLabelFromUrl(url);
+  if (!label) return;
+  await recordNavigationProcessShot(tabId, url, session.sessionId, label);
+}
+
+// Re-inject hooks after SPA navigations; also capture Apply/application URL
+// changes even if the content script died mid-click (Ashby, Greenhouse, etc.).
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status !== 'complete') return;
   void (async () => {
     const session = await getStoredBidSession(tabId);
-    if (session.status === 'active' && session.sessionId) {
+    if (session.status !== 'active' || !session.sessionId) return;
+
+    if (changeInfo.status === 'complete') {
       await injectBidRecorder(tabId);
     }
+
+    // Only when the URL actually changes (full navigation).
+    if (!changeInfo.url) return;
+    await maybeCaptureApplyNavigation(tabId, changeInfo.url);
   })();
 });
+
+// Ashby and similar SPAs update the URL via history.pushState — tabs.onUpdated
+// often omits changeInfo.url for those. webNavigation catches them reliably.
+if (chrome.webNavigation?.onHistoryStateUpdated) {
+  chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
+    if (details.frameId !== 0) return;
+    void maybeCaptureApplyNavigation(details.tabId, details.url);
+  });
+}
+if (chrome.webNavigation?.onCommitted) {
+  chrome.webNavigation.onCommitted.addListener((details) => {
+    if (details.frameId !== 0) return;
+    void maybeCaptureApplyNavigation(details.tabId, details.url);
+  });
+}
 
 // Closing a tab discards its per-tab session state (a closed tab can't be
 // returned to) and keeps chrome.storage.local from accumulating dead sessions.
@@ -1853,6 +2005,8 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
           break;
         }
         case 'BID_PROCESS_CLICK': {
+          // Await capture + local persist so the MV3 SW stays alive. The page
+          // click is already fire-and-forget from the content script.
           await recordBidProcessClick(message.triggerText, sender);
           sendResponse({ ok: true } satisfies Response);
           break;

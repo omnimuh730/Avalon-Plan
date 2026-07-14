@@ -47,7 +47,16 @@
       "match_about_blank": true
     }
   ],
-  "permissions": ["sidePanel", "storage", "unlimitedStorage", "tabs", "scripting", "activeTab", "debugger"],
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "scripting",
+    "activeTab",
+    "debugger",
+    "webNavigation"
+  ],
   "host_permissions": [
     "<all_urls>",
     "http://127.0.0.1:3848/*",

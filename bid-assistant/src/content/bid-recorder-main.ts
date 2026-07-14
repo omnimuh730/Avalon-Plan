@@ -2,178 +2,185 @@
  * MAIN-world bid click hook. Registered via manifest `world: "MAIN"` so it
  * bypasses page CSP (Greenhouse blocks inline <script> injection).
  *
- * Hold-capture flow:
- * 1. Intercept Apply/Submit/Next click (or form submit) in capture phase
- * 2. Ask the isolated bridge to capture a full-page screenshot
- * 3. After capture finishes (or times out), replay the original action
+ * Fire-and-forget flow (no hold / no synthetic replay):
+ * 1. Detect Apply/Submit/Next on pointerdown (before <a> navigation unloads the page)
+ * 2. Notify the isolated bridge to screenshot asynchronously
+ * 3. Let the real click/navigation proceed untouched
  *
- * Pausing the click avoids attaching chrome.debugger mid-handler, which used
- * to break SPA submit handlers and cause native form refreshes.
+ * Why pointerdown: for "Apply for this Job" links, click navigates immediately and
+ * destroys the content-script context before chrome.runtime.sendMessage completes.
  */
 
 declare global {
   interface Window {
     __bidRecorderMainHook?: boolean;
-    __bidReplayAction?: boolean;
   }
 }
 
 const TRIGGER_PATTERN = /(apply|submit|next|continue|proceed|save)/i;
+const ACTION_SELECTOR =
+  'a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"], label';
 const SOURCE = 'bid-recorder-hook';
-const BRIDGE_SOURCE = 'bid-recorder-bridge';
-/** Safety net if the isolated bridge never answers. */
-const HOLD_TIMEOUT_MS = 7000;
 
-type PendingAction =
-  | { kind: 'click'; label: string; element: Element }
-  | {
-      kind: 'submit';
-      label: string;
-      form: HTMLFormElement;
-      submitter: HTMLElement | null;
-    };
+let lastPostedAt = 0;
 
-let pending: PendingAction | null = null;
-let holding = false;
-let holdTimer: number | null = null;
-
-function txt(el: Element | null): string {
+function txt(el: Element | null | undefined): string {
   if (!el || !el.getAttribute) return '';
-  return (el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const aria = el.getAttribute('aria-label')?.trim();
+  if (aria) return aria.replace(/\s+/g, ' ').trim();
+  if (el instanceof HTMLInputElement) {
+    return (el.value || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+  }
+  return (el.textContent || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
 }
 
-function findTrigger(start: EventTarget | null): { label: string; element: Element } | null {
-  let t: Element | null = start instanceof Element ? start : null;
-  for (let i = 0; i < 16 && t; i += 1) {
-    if (t.nodeType !== 1) {
-      t = t.parentElement;
-      continue;
+/** Prefer short labels; long textContent often includes whole card copy. */
+function labelFor(el: Element): string | null {
+  const aria = el.getAttribute('aria-label')?.trim();
+  if (aria && aria.length <= 120 && TRIGGER_PATTERN.test(aria)) {
+    return aria.replace(/\s+/g, ' ').trim();
+  }
+
+  if (el instanceof HTMLInputElement) {
+    const v = (el.value || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+    if (v && v.length <= 120 && TRIGGER_PATTERN.test(v)) return v;
+  }
+
+  // Direct text only (ignore deep nested boilerplate).
+  let direct = '';
+  for (const node of el.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) direct += node.textContent ?? '';
+  }
+  direct = direct.replace(/\s+/g, ' ').trim();
+  if (direct && direct.length <= 120 && TRIGGER_PATTERN.test(direct)) return direct;
+
+  const full = txt(el);
+  if (full && full.length <= 120 && TRIGGER_PATTERN.test(full)) return full;
+
+  // Greenhouse / Lever: href often contains /apply or /applications
+  if (el instanceof HTMLAnchorElement) {
+    const href = el.getAttribute('href') || '';
+    if (/apply|application/i.test(href)) {
+      if (direct && direct.length <= 120) return direct || 'Apply';
+      if (full && full.length <= 120) return full;
+      return 'Apply';
     }
-    const s = txt(t);
-    if (s && s.length <= 80 && TRIGGER_PATTERN.test(s)) {
-      return { label: s, element: t };
+  }
+
+  return null;
+}
+
+function collectElements(event: Event): Element[] {
+  const out: Element[] = [];
+  const seen = new Set<Element>();
+  const push = (el: Element | null | undefined) => {
+    if (!el || seen.has(el)) return;
+    seen.add(el);
+    out.push(el);
+  };
+
+  if (event.target instanceof Element) {
+    let cur: Element | null = event.target;
+    for (let depth = 0; depth < 16 && cur; depth += 1) {
+      push(cur);
+      cur = cur.parentElement;
     }
-    t = t.parentElement;
+  }
+
+  if (typeof event.composedPath === 'function') {
+    for (const node of event.composedPath()) {
+      if (node instanceof Element) push(node);
+    }
+  }
+
+  return out;
+}
+
+function findTrigger(event: Event): { label: string; element: Element } | null {
+  for (const node of collectElements(event)) {
+    const s = labelFor(node);
+    if (!s) continue;
+
+    if (node.matches(ACTION_SELECTOR)) return { label: s, element: node };
+    if (node.closest(ACTION_SELECTOR)) return { label: s, element: node };
+    if (node.closest('form')) return { label: s, element: node };
+
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'button' || tag === 'a' || tag === 'label' || tag === 'input') {
+      return { label: s, element: node };
+    }
   }
   return null;
 }
 
-function postHold(label: string): void {
+function postProcessClick(label: string): void {
+  const now = Date.now();
+  if (now - lastPostedAt < 400) return;
+  lastPostedAt = now;
   try {
-    window.postMessage({ source: SOURCE, type: 'hold-capture', triggerText: label }, '*');
+    window.postMessage({ source: SOURCE, type: 'process-click', triggerText: label }, '*');
   } catch {
     // ignore
   }
 }
 
-function clearHoldTimer(): void {
-  if (holdTimer != null) {
-    window.clearTimeout(holdTimer);
-    holdTimer = null;
+function onActivate(event: Event): void {
+  if (event instanceof MouseEvent && typeof event.button === 'number' && event.button !== 0) {
+    return;
+  }
+  const hit = findTrigger(event);
+  if (!hit) return;
+  postProcessClick(hit.label);
+}
+
+function notifyIfApplyRoute(): void {
+  // Ashby/Greenhouse SPA: job → /application without a full unload.
+  if (/\/application(?:\/|$|\?)|\/apply(?:\/|$|\?)/i.test(location.href)) {
+    postProcessClick('Apply');
   }
 }
 
-function replayPending(): void {
-  clearHoldTimer();
-  const action = pending;
-  pending = null;
-  holding = false;
-  if (!action) return;
-
-  window.__bidReplayAction = true;
-  try {
-    if (action.kind === 'click') {
-      const el = action.element;
-      if (el instanceof HTMLElement) {
-        el.click();
-      } else {
-        el.dispatchEvent(
-          new MouseEvent('click', { bubbles: true, cancelable: true, view: window }),
-        );
-      }
-      return;
-    }
-
-    if (typeof action.form.requestSubmit === 'function') {
-      action.form.requestSubmit(action.submitter ?? undefined);
-    } else {
-      action.form.submit();
-    }
-  } catch (error) {
-    console.warn('[bid-recorder-main] failed to replay action after capture:', error);
-  } finally {
-    window.__bidReplayAction = false;
-  }
-}
-
-function beginHold(action: PendingAction, event: Event): void {
-  if (window.__bidReplayAction || holding) return;
-
-  event.preventDefault();
-  event.stopImmediatePropagation();
-
-  holding = true;
-  pending = action;
-  clearHoldTimer();
-  holdTimer = window.setTimeout(() => {
-    console.warn('[bid-recorder-main] hold timed out — replaying action');
-    replayPending();
-  }, HOLD_TIMEOUT_MS);
-  postHold(action.label);
+function patchHistory(): void {
+  const wrap = (method: 'pushState' | 'replaceState') => {
+    const original = history[method].bind(history);
+    history[method] = function (this: History, ...args: Parameters<History['pushState']>) {
+      const result = original(...args);
+      queueMicrotask(notifyIfApplyRoute);
+      return result;
+    };
+  };
+  wrap('pushState');
+  wrap('replaceState');
+  window.addEventListener('popstate', () => queueMicrotask(notifyIfApplyRoute));
 }
 
 function install(): void {
   if (window.__bidRecorderMainHook) return;
   window.__bidRecorderMainHook = true;
 
-  document.addEventListener(
-    'click',
-    (e) => {
-      if (window.__bidReplayAction || holding) return;
-      // Only primary-button left clicks.
-      if (typeof e.button === 'number' && e.button !== 0) return;
-      const hit = findTrigger(e.target);
-      if (!hit) return;
-      beginHold({ kind: 'click', label: hit.label, element: hit.element }, e);
-    },
-    true,
-  );
+  // pointerdown/mousedown fire before <a> navigation tears down the page.
+  document.addEventListener('pointerdown', onActivate, true);
+  document.addEventListener('mousedown', onActivate, true);
+  // Keyboard activation (Enter/Space) still goes through click.
+  document.addEventListener('click', onActivate, true);
 
   document.addEventListener(
     'submit',
     (e) => {
-      if (window.__bidReplayAction || holding) return;
       const form = e.target;
       if (!(form instanceof HTMLFormElement)) return;
 
       const submitEvent = e as SubmitEvent;
       const submitter =
         submitEvent.submitter instanceof HTMLElement ? submitEvent.submitter : null;
-      const fromSubmitter = submitter ? txt(submitter) : '';
-      const label =
-        fromSubmitter && TRIGGER_PATTERN.test(fromSubmitter)
-          ? fromSubmitter
-          : findTrigger(submitter)?.label || 'Submit';
-
-      beginHold(
-        {
-          kind: 'submit',
-          label,
-          form,
-          submitter,
-        },
-        e,
-      );
+      const fromSubmitter = submitter ? labelFor(submitter) : null;
+      const label = fromSubmitter || findTrigger(e)?.label || 'Submit';
+      postProcessClick(label);
     },
     true,
   );
 
-  window.addEventListener('message', (event) => {
-    if (event.source !== window) return;
-    const data = event.data as { source?: string; type?: string } | null;
-    if (data?.source !== BRIDGE_SOURCE || data.type !== 'resume-action') return;
-    replayPending();
-  });
+  patchHistory();
 }
 
 install();
