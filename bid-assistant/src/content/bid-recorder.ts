@@ -1,157 +1,74 @@
 /**
- * Isolated-world bid recorder bridge.
+ * Isolated-world bid recorder bridge (hold-until-screenshot).
  *
- * Receives process-click notices from the MAIN-world hook and asks the service
- * worker to capture a viewport screenshot asynchronously. The page click is
- * never paused — Apply/Submit/Next always run as the user intended.
- *
- * Messages are sent on pointerdown (via MAIN) so navigation on Apply links does
- * not kill this context before chrome.runtime.sendMessage is queued.
+ * Receives hold-capture from MAIN only. Does NOT attach its own click/submit
+ * holders — MAIN and isolated worlds both see DOM events, and stopImmediate-
+ * Propagation does not cross worlds. A second holder here caused an infinite
+ * capture loop on every synthetic replay click.
  */
 
 const TRIGGER_PATTERN = /(apply|submit|next|continue|proceed|save)/i;
-const ACTION_SELECTOR =
-  'a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"], label';
 const HOOK_SOURCE = 'bid-recorder-hook';
+const BRIDGE_SOURCE = 'bid-recorder-bridge';
+/** Don't freeze the ATS UI forever if CDP stitching is slow. */
+const CAPTURE_TIMEOUT_MS = 7000;
+/** Ignore further hold-capture messages after a successful shot+resume. */
+const SUPPRESS_AFTER_RESUME_MS = 2500;
 
 let lastSentAt = 0;
+let capturing = false;
+let suppressCapturesUntil = 0;
 
-function readableText(element: Element): string {
-  const aria = element.getAttribute('aria-label')?.trim();
-  if (aria) return aria;
-
-  if (element instanceof HTMLInputElement) {
-    return (element.value || element.getAttribute('title') || '').trim();
-  }
-
-  return (element.textContent ?? element.getAttribute('title') ?? '').replace(/\s+/g, ' ').trim();
-}
-
-function labelFor(element: Element): string | null {
-  const aria = element.getAttribute('aria-label')?.trim();
-  if (aria && aria.length <= 120 && TRIGGER_PATTERN.test(aria)) {
-    return aria.replace(/\s+/g, ' ').trim();
-  }
-
-  if (element instanceof HTMLInputElement) {
-    const v = (element.value || element.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
-    if (v && v.length <= 120 && TRIGGER_PATTERN.test(v)) return v;
-  }
-
-  let direct = '';
-  for (const node of element.childNodes) {
-    if (node.nodeType === Node.TEXT_NODE) direct += node.textContent ?? '';
-  }
-  direct = direct.replace(/\s+/g, ' ').trim();
-  if (direct && direct.length <= 120 && TRIGGER_PATTERN.test(direct)) return direct;
-
-  const full = readableText(element);
-  if (full && full.length <= 120 && TRIGGER_PATTERN.test(full)) return full;
-
-  if (element instanceof HTMLAnchorElement) {
-    const href = element.getAttribute('href') || '';
-    if (/apply|application/i.test(href)) {
-      return direct || (full.length <= 120 ? full : '') || 'Apply';
-    }
-  }
-
-  return null;
-}
-
-function collectElements(event: Event): Element[] {
-  const out: Element[] = [];
-  const seen = new Set<Element>();
-
-  const push = (el: Element | null | undefined) => {
-    if (!el || seen.has(el)) return;
-    seen.add(el);
-    out.push(el);
-  };
-
-  if (event.target instanceof Element) {
-    let cur: Element | null = event.target;
-    for (let depth = 0; depth < 16 && cur; depth += 1) {
-      push(cur);
-      cur = cur.parentElement;
-    }
-  }
-
-  if (typeof event.composedPath === 'function') {
-    for (const node of event.composedPath()) {
-      if (node instanceof Element) push(node);
-    }
-  }
-
-  return out;
-}
-
-function hasPointerCursor(element: Element): boolean {
+function resumeMainHook(): void {
   try {
-    return window.getComputedStyle(element).cursor === 'pointer';
+    window.postMessage({ source: BRIDGE_SOURCE, type: 'resume-action' }, '*');
   } catch {
-    return false;
+    // ignore
   }
 }
 
-function findTriggerFromEvent(event: Event): { label: string; element: Element } | null {
-  for (const node of collectElements(event)) {
-    const text = labelFor(node);
-    if (!text) continue;
-
-    if (node.matches(ACTION_SELECTOR)) return { label: text, element: node };
-    if (node.closest('form')) return { label: text, element: node };
-
-    const tag = node.tagName.toLowerCase();
-    if (tag === 'button' || tag === 'a' || tag === 'label' || tag === 'input') {
-      return { label: text, element: node };
-    }
-    if (hasPointerCursor(node)) return { label: text, element: node };
-    if (node.closest(ACTION_SELECTOR)) return { label: text, element: node };
-  }
-  return null;
-}
-
-function requestCapture(triggerText: string): void {
+async function runHoldCapture(triggerText: string): Promise<void> {
   const text = triggerText.replace(/\s+/g, ' ').trim();
   if (!text || (!TRIGGER_PATTERN.test(text) && text !== 'Apply')) return;
 
-  // Extension was reloaded while this page stayed open — old content scripts
-  // cannot talk to the new service worker. Refresh the tab to recover.
+  // Replay / double-message guard — still resume MAIN if it is waiting.
+  if (Date.now() < suppressCapturesUntil) {
+    resumeMainHook();
+    return;
+  }
+
   if (!chrome.runtime?.id) {
     console.warn('[bid-recorder] extension context invalidated — refresh this tab');
+    resumeMainHook();
     return;
   }
 
   const now = Date.now();
-  if (now - lastSentAt < 400) return;
-  lastSentAt = now;
-
-  console.log('[bid-recorder] process-click → async viewport:', text);
-  try {
-    // Queue immediately; swallow async rejection when the page unloads mid-send.
-    void chrome.runtime
-      .sendMessage({ type: 'BID_PROCESS_CLICK', triggerText: text })
-      .catch((error: unknown) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        if (/context invalidated|message port closed/i.test(msg)) return;
-        console.warn('[bid-recorder] capture request failed:', msg);
-      });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (/context invalidated/i.test(msg)) return;
-    console.warn('[bid-recorder] capture request failed:', msg);
-  }
-}
-
-function onFallbackActivate(event: Event): void {
-  // MAIN-world expandos are not visible here; always run as a safety net.
-  // Debounce shared via lastSentAt with MAIN's postMessage path.
-  if (event instanceof MouseEvent && typeof event.button === 'number' && event.button !== 0) {
+  if (capturing) return;
+  if (now - lastSentAt < 500) {
+    resumeMainHook();
     return;
   }
-  const hit = findTriggerFromEvent(event);
-  if (!hit) return;
-  requestCapture(hit.label);
+  lastSentAt = now;
+  capturing = true;
+
+  try {
+    console.log('[bid-recorder] hold-capture → full page (until shot):', text);
+    await Promise.race([
+      chrome.runtime.sendMessage({ type: 'BID_PROCESS_CLICK', triggerText: text }),
+      new Promise((resolve) => setTimeout(resolve, CAPTURE_TIMEOUT_MS)),
+    ]);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (!/context invalidated|message port closed/i.test(msg)) {
+      console.warn('[bid-recorder] capture request failed:', msg);
+    }
+  } finally {
+    capturing = false;
+    // Block re-entry from the synthetic replay click / duplicate posts.
+    suppressCapturesUntil = Date.now() + SUPPRESS_AFTER_RESUME_MS;
+    resumeMainHook();
+  }
 }
 
 function start(): void {
@@ -164,35 +81,10 @@ function start(): void {
     } | null;
     if (data?.source !== HOOK_SOURCE) return;
 
-    if (
-      (data.type === 'process-click' || data.type === 'hold-capture') &&
-      data.triggerText
-    ) {
-      requestCapture(data.triggerText);
+    if (data.type === 'hold-capture' && data.triggerText) {
+      void runHoldCapture(data.triggerText);
     }
   });
-
-  // Fallback + keyboard: isolated world also listens so we still capture if
-  // MAIN hook is blocked. pointerdown beats Apply-link navigation.
-  document.addEventListener('pointerdown', onFallbackActivate, true);
-  document.addEventListener('mousedown', onFallbackActivate, true);
-  document.addEventListener('click', onFallbackActivate, true);
-
-  document.addEventListener(
-    'submit',
-    (event) => {
-      const form = event.target;
-      if (!(form instanceof HTMLFormElement)) return;
-
-      const submitEvent = event as SubmitEvent;
-      const submitter =
-        submitEvent.submitter instanceof HTMLElement ? submitEvent.submitter : null;
-      const fromSubmitter = submitter ? labelFor(submitter) : null;
-      const label = fromSubmitter || 'Submit';
-      requestCapture(label);
-    },
-    true,
-  );
 }
 
 start();

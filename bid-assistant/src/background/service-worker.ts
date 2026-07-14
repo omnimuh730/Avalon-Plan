@@ -931,21 +931,38 @@ async function resolveSenderTab(sender: chrome.runtime.MessageSender): Promise<{
 
 async function injectBidRecorder(tabId: number): Promise<void> {
   try {
-    // Same fire-and-forget protocol as bid-recorder-main.ts. Uses pointerdown
-    // so Apply <a href> navigations do not unload the page before notify.
+    // Hold-until-screenshot protocol (same as bid-recorder-main.ts hold-v1).
     await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
       func: () => {
-        const w = window as unknown as { __bidRecorderMainHook?: boolean };
-        if (w.__bidRecorderMainHook) return;
-        w.__bidRecorderMainHook = true;
+        const HOOK_VERSION = 'hold-v1';
+        const w = window as unknown as {
+          __bidRecorderMainHook?: string;
+          __bidReplayAction?: boolean;
+        };
+        if (w.__bidRecorderMainHook === HOOK_VERSION) return;
+        w.__bidRecorderMainHook = HOOK_VERSION;
 
         const P = /(apply|submit|next|continue|proceed|save)/i;
         const ACTION =
           'a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"], label';
         const SOURCE = 'bid-recorder-hook';
-        let lastPostedAt = 0;
+        const BRIDGE = 'bid-recorder-bridge';
+        const HOLD_TIMEOUT_MS = 8000;
+
+        type Pending =
+          | { kind: 'click'; label: string; element: Element }
+          | {
+              kind: 'submit';
+              label: string;
+              form: HTMLFormElement;
+              submitter: HTMLElement | null;
+            };
+
+        let pending: Pending | null = null;
+        let holding = false;
+        let holdTimer: number | null = null;
 
         const labelFor = (el: Element | null | undefined): string | null => {
           if (!el?.getAttribute) return null;
@@ -1014,27 +1031,84 @@ async function injectBidRecorder(tabId: number): Promise<void> {
           return null;
         };
 
-        const postProcessClick = (label: string) => {
-          const now = Date.now();
-          if (now - lastPostedAt < 400) return;
-          lastPostedAt = now;
-          window.postMessage({ source: SOURCE, type: 'process-click', triggerText: label }, '*');
+        const clearHoldTimer = () => {
+          if (holdTimer != null) {
+            window.clearTimeout(holdTimer);
+            holdTimer = null;
+          }
         };
 
-        const onActivate = (e: Event) => {
-          if (e instanceof MouseEvent && typeof e.button === 'number' && e.button !== 0) return;
-          const hit = findTrigger(e);
-          if (!hit) return;
-          postProcessClick(hit.label);
+        const replay = () => {
+          clearHoldTimer();
+          const action = pending;
+          pending = null;
+          holding = false;
+          if (!action) return;
+          w.__bidReplayAction = true;
+          try {
+            if (action.kind === 'click') {
+              const el = action.element;
+              if (el instanceof HTMLAnchorElement && el.href) {
+                if (el.target && el.target !== '_self' && el.target !== '') {
+                  window.open(el.href, el.target);
+                } else {
+                  window.location.assign(el.href);
+                }
+              } else if (el instanceof HTMLElement) {
+                el.click();
+              } else {
+                el.dispatchEvent(
+                  new MouseEvent('click', { bubbles: true, cancelable: true, view: window }),
+                );
+              }
+            } else if (typeof action.form.requestSubmit === 'function') {
+              action.form.requestSubmit(action.submitter ?? undefined);
+            } else {
+              action.form.submit();
+            }
+          } finally {
+            queueMicrotask(() => {
+              w.__bidReplayAction = false;
+            });
+            window.setTimeout(() => {
+              w.__bidReplayAction = false;
+            }, 300);
+          }
         };
 
-        document.addEventListener('pointerdown', onActivate, true);
-        document.addEventListener('mousedown', onActivate, true);
-        document.addEventListener('click', onActivate, true);
+        const beginHold = (action: Pending, event: Event) => {
+          if (w.__bidReplayAction || holding) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          holding = true;
+          pending = action;
+          clearHoldTimer();
+          holdTimer = window.setTimeout(() => {
+            console.warn('[bid-recorder-main] hold timed out — replaying action');
+            replay();
+          }, HOLD_TIMEOUT_MS);
+          window.postMessage(
+            { source: SOURCE, type: 'hold-capture', triggerText: action.label },
+            '*',
+          );
+        };
+
+        document.addEventListener(
+          'click',
+          (e) => {
+            if (w.__bidReplayAction || holding) return;
+            if (typeof e.button === 'number' && e.button !== 0) return;
+            const hit = findTrigger(e);
+            if (!hit) return;
+            beginHold({ kind: 'click', label: hit.label, element: hit.element }, e);
+          },
+          true,
+        );
 
         document.addEventListener(
           'submit',
           (e) => {
+            if (w.__bidReplayAction || holding) return;
             const form = e.target;
             if (!(form instanceof HTMLFormElement)) return;
             const submitter =
@@ -1042,27 +1116,17 @@ async function injectBidRecorder(tabId: number): Promise<void> {
                 ? ((e as SubmitEvent).submitter as HTMLElement)
                 : null;
             const label = (submitter && labelFor(submitter)) || findTrigger(e)?.label || 'Submit';
-            postProcessClick(label);
+            beginHold({ kind: 'submit', label, form, submitter }, e);
           },
           true,
         );
 
-        const notifyIfApplyRoute = () => {
-          if (/\/application(?:\/|$|\?)|\/apply(?:\/|$|\?)/i.test(location.href)) {
-            postProcessClick('Apply');
-          }
-        };
-        const wrapHistory = (method: 'pushState' | 'replaceState') => {
-          const original = history[method].bind(history);
-          history[method] = function (...args: Parameters<History['pushState']>) {
-            const result = original(...args);
-            queueMicrotask(notifyIfApplyRoute);
-            return result;
-          };
-        };
-        wrapHistory('pushState');
-        wrapHistory('replaceState');
-        window.addEventListener('popstate', () => queueMicrotask(notifyIfApplyRoute));
+        window.addEventListener('message', (event) => {
+          if (event.source !== window) return;
+          const data = event.data as { source?: string; type?: string } | null;
+          if (data?.source !== BRIDGE || data.type !== 'resume-action') return;
+          replay();
+        });
       },
     });
   } catch {
@@ -1355,17 +1419,12 @@ async function injectResumeUploadHooks(
 async function recordBidProcessClick(
   triggerText: string,
   sender: chrome.runtime.MessageSender,
-): Promise<void> {
+): Promise<{ persist: Promise<void> } | null> {
   const tabId = sender.tab?.id;
   if (tabId == null) {
     console.warn('[vender-sw] BID_PROCESS_CLICK ignored — no sender tab', { triggerText });
-    return;
+    return null;
   }
-
-  const windowId = sender.tab?.windowId;
-  // Kick off capture immediately — Apply links navigate on click and race us.
-  // pointerdown notifies us a few ms earlier; grab the viewport before unload.
-  const earlyCapture = captureVisibleViewport(windowId, { attempts: 3, delayMs: 40 });
 
   const [session, tabInfo, applierState] = await Promise.all([
     getStoredBidSession(tabId),
@@ -1378,12 +1437,14 @@ async function recordBidProcessClick(
       triggerText,
       status: session.status,
     });
-    return;
+    return null;
   }
 
-  let screenshot = await earlyCapture;
+  const windowId = sender.tab?.windowId;
+  // Click is held — full-page CDP captures the filled form before navigation.
+  let screenshot = await captureTabScreenshot(tabId, windowId, { fullPage: true });
   if (!screenshot) {
-    screenshot = await captureProcessClickViewport(tabId, windowId);
+    screenshot = await captureVisibleViewport(windowId, { attempts: 3, delayMs: 80 });
   }
 
   const { url, title } = tabInfo;
@@ -1391,13 +1452,13 @@ async function recordBidProcessClick(
 
   console.log('[vender-sw] process click captured', {
     triggerText,
-    fullPage: false,
+    fullPage: true,
     hasScreenshot: Boolean(screenshot),
     screenshotKb: screenshot ? Math.round(screenshot.length / 1024) : 0,
     url,
   });
 
-  // Always record locally first (even null screenshot → "No capture" tile).
+  // Local gallery before resume (fast). Mongo must not extend the click hold.
   await recordShot(tabId, {
     type: 'process',
     triggerText,
@@ -1407,22 +1468,26 @@ async function recordBidProcessClick(
     at,
   });
 
-  try {
-    await postBidSessionEvent('/bid-session/event', {
-      sessionId: session.sessionId,
-      applierName: applierState.applierName ?? '',
-      profileId: applierState.profileId,
-      url,
-      title,
-      triggerText,
-      screenshot,
-    });
-  } catch (error) {
-    console.warn(
-      '[vender-sw] failed to persist process click to bridge:',
-      error instanceof Error ? error.message : error,
-    );
-  }
+  const persist = (async () => {
+    try {
+      await postBidSessionEvent('/bid-session/event', {
+        sessionId: session.sessionId,
+        applierName: applierState.applierName ?? '',
+        profileId: applierState.profileId,
+        url,
+        title,
+        triggerText,
+        screenshot,
+      });
+    } catch (error) {
+      console.warn(
+        '[vender-sw] failed to persist process click to bridge:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  })();
+
+  return { persist };
 }
 
 async function getStoredCredentials(): Promise<StoredCredentials | null> {
@@ -1895,37 +1960,18 @@ async function maybeCaptureApplyNavigation(tabId: number, url: string): Promise<
   await recordNavigationProcessShot(tabId, url, session.sessionId, label);
 }
 
-// Re-inject hooks after SPA navigations; also capture Apply/application URL
-// changes even if the content script died mid-click (Ashby, Greenhouse, etc.).
+// Re-inject hold-capture hooks after SPA navigations while the session is live.
+// Post-navigation Apply shots are skipped — form verification uses the pre-click
+// full-page capture from BID_PROCESS_CLICK instead.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== 'complete') return;
   void (async () => {
     const session = await getStoredBidSession(tabId);
-    if (session.status !== 'active' || !session.sessionId) return;
-
-    if (changeInfo.status === 'complete') {
+    if (session.status === 'active' && session.sessionId) {
       await injectBidRecorder(tabId);
     }
-
-    // Only when the URL actually changes (full navigation).
-    if (!changeInfo.url) return;
-    await maybeCaptureApplyNavigation(tabId, changeInfo.url);
   })();
 });
-
-// Ashby and similar SPAs update the URL via history.pushState — tabs.onUpdated
-// often omits changeInfo.url for those. webNavigation catches them reliably.
-if (chrome.webNavigation?.onHistoryStateUpdated) {
-  chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
-    if (details.frameId !== 0) return;
-    void maybeCaptureApplyNavigation(details.tabId, details.url);
-  });
-}
-if (chrome.webNavigation?.onCommitted) {
-  chrome.webNavigation.onCommitted.addListener((details) => {
-    if (details.frameId !== 0) return;
-    void maybeCaptureApplyNavigation(details.tabId, details.url);
-  });
-}
 
 // Closing a tab discards its per-tab session state (a closed tab can't be
 // returned to) and keeps chrome.storage.local from accumulating dead sessions.
@@ -2005,10 +2051,11 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
           break;
         }
         case 'BID_PROCESS_CLICK': {
-          // Await capture + local persist so the MV3 SW stays alive. The page
-          // click is already fire-and-forget from the content script.
-          await recordBidProcessClick(message.triggerText, sender);
+          // Reply once the screenshot exists so MAIN can resume Apply/Next.
+          // Mongo write continues afterward and must not extend the click hold.
+          const result = await recordBidProcessClick(message.triggerText, sender);
           sendResponse({ ok: true } satisfies Response);
+          if (result?.persist) await result.persist;
           break;
         }
         case 'LOG_UPLOAD': {
