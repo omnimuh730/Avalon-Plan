@@ -17,6 +17,15 @@ export interface PageContext {
   frameUrl?: string;
 }
 
+/** Diagnostics from allFrames scrape (iframe-aware ATS pages like iCIMS). */
+export interface PageSourceMeta {
+  visibleText: string;
+  charCount: number;
+  frameCount: number;
+  frameUrls: string[];
+  primaryFrameUrl: string | null;
+}
+
 const MAX_MERGED_TEXT_LENGTH = 15000;
 
 /**
@@ -143,15 +152,27 @@ function isUsefulFrame(ctx: PageContext): boolean {
  *
  * Prefers the longest visible-text frame for the JD body, then appends other
  * substantial frames that aren't already covered. Forms are unioned.
+ * Job/ATS iframe hosts (icims, greenhouse, etc.) get a tie-break boost over
+ * short parent chrome when text lengths are within 20%.
  */
 export function mergePageContexts(
   frames: PageContext[],
   topLevel?: { url?: string; title?: string },
-): PageContext | null {
+): (PageContext & { sourceMeta: PageSourceMeta }) | null {
   const useful = frames.filter((frame) => frame && isUsefulFrame(frame));
   if (useful.length === 0) return null;
 
-  const ranked = [...useful].sort((a, b) => b.visibleText.length - a.visibleText.length);
+  const scoreFrame = (ctx: PageContext): number => {
+    const url = (ctx.frameUrl || ctx.url || '').toLowerCase();
+    let boost = 0;
+    if (/icims\.com|greenhouse\.io|lever\.co|myworkdayjobs|ashbyhq\.com|jobvite|smartrecruiters/.test(url)) {
+      boost += 2000;
+    }
+    if (/\/job|\/jobs|\/application|\/apply/.test(url)) boost += 500;
+    return ctx.visibleText.length + boost;
+  };
+
+  const ranked = [...useful].sort((a, b) => scoreFrame(b) - scoreFrame(a));
   const primary = ranked[0];
 
   const textParts: string[] = [];
@@ -181,13 +202,24 @@ export function mergePageContexts(
 
   const topUrl = topLevel?.url?.trim() || '';
   const topTitle = topLevel?.title?.trim() || '';
+  const visibleText = textParts.join('\n\n').slice(0, MAX_MERGED_TEXT_LENGTH);
+  const frameUrls = ranked
+    .map((f) => f.frameUrl || f.url)
+    .filter((u, i, arr) => Boolean(u) && arr.indexOf(u) === i);
 
   return {
     url: topUrl || primary.url,
     title: topTitle || primary.title,
     metaDescription: primary.metaDescription || ranked.find((f) => f.metaDescription)?.metaDescription || '',
-    visibleText: textParts.join('\n\n').slice(0, MAX_MERGED_TEXT_LENGTH),
+    visibleText,
     forms,
     frameUrl: primary.frameUrl || primary.url,
+    sourceMeta: {
+      visibleText,
+      charCount: visibleText.length,
+      frameCount: useful.length,
+      frameUrls,
+      primaryFrameUrl: primary.frameUrl || primary.url || null,
+    },
   };
 }

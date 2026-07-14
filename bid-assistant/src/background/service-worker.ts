@@ -1682,6 +1682,13 @@ async function extractActiveTabContext(tabId: number) {
     throw new Error('Page text is too short. Scroll to load the full job description, then try again.');
   }
 
+  console.log('[vender-sw] page context extracted', {
+    frames: frames.length,
+    usefulChars: pageContext.sourceMeta.charCount,
+    primaryFrame: pageContext.sourceMeta.primaryFrameUrl,
+    frameUrls: pageContext.sourceMeta.frameUrls,
+  });
+
   return pageContext;
 }
 
@@ -1753,7 +1760,15 @@ async function runJobAnalysis(port: chrome.runtime.Port, tabId: number): Promise
 
     send({ stage: 'status', message: 'Reading the active tab…' });
     const pageContext = await extractActiveTabContext(tabId);
-    send({ stage: 'page-context', pageUrl: pageContext.url, pageTitle: pageContext.title });
+    send({
+      stage: 'page-context',
+      pageUrl: pageContext.url,
+      pageTitle: pageContext.title,
+      visibleText: pageContext.sourceMeta.visibleText,
+      frameCount: pageContext.sourceMeta.frameCount,
+      frameUrls: pageContext.sourceMeta.frameUrls,
+      primaryFrameUrl: pageContext.sourceMeta.primaryFrameUrl,
+    });
 
     // Kick off the traffic-light flag check concurrently with page+skills, but
     // only for verdicts not yet resolved this session (sticky: once decided we

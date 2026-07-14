@@ -2,6 +2,62 @@ const SCORE_LINE = /^(.+?)\s+[█#\-*=.\u2588\u2593\u2592\u2591\s]+\s*(\d{1,2})\
 const SIMPLE_LINE = /^(.+?)\s+(\d{1,2})\s*$/;
 const COLON_LINE = /^(.+?):\s*(\d{1,2})\s*$/;
 
+/** Canonical title token → matching aliases found in JD skill names. */
+const TITLE_ALIASES = {
+  ai: [
+    "ai",
+    "artificial intelligence",
+    "llm",
+    "llms",
+    "rag",
+    "agentic",
+    "generative",
+    "openai",
+    "chatgpt",
+    "bedrock",
+    "sagemaker",
+    "embeddings",
+    "machine learning",
+    "ml",
+    "diffusion",
+    "prompt",
+  ],
+  go: ["go", "golang"],
+  golang: ["go", "golang"],
+  nodejs: ["nodejs", "node.js", "node"],
+  node: ["nodejs", "node.js", "node"],
+  "c++": ["c++", "cpp", "cplusplus"],
+  cpp: ["c++", "cpp", "cplusplus"],
+  "c#": ["c#", "csharp", "c sharp", ".net", "dotnet", "asp.net"],
+  csharp: ["c#", "csharp", ".net", "dotnet"],
+  "react native": ["react native", "reactnative"],
+  mern: ["mern", "mongo", "express", "react", "node"],
+  gis: ["gis", "geospatial", "postgis", "mapbox", "geofenc"],
+  healthcare: ["healthcare", "fhir", "hipaa", "hl7", "clinical"],
+  shopify: ["shopify", "ecommerce", "e-commerce"],
+  wordpress: ["wordpress", "cms", "gutenberg"],
+  application: ["desktop", "qt", "mfc", "qml", "native app"],
+  desktop: ["desktop", "qt", "mfc", "qml"],
+  flutter: ["flutter", "dart", "ionic"],
+  ionic: ["ionic", "flutter"],
+  android: ["android", "kotlin", "jetpack"],
+  ios: ["ios", "swift", "swiftui", "uikit"],
+  rust: ["rust", "tokio", "actix"],
+  python: ["python", "fastapi", "pytorch", "pandas"],
+  django: ["django"],
+  angular: ["angular", "rxjs", "ngrx"],
+  vue: ["vue", "vue.js", "vuejs", "pinia"],
+  react: ["react", "next.js", "nextjs", "remix"],
+  java: ["java", "spring", "jvm"],
+  kotlin: ["kotlin"],
+  php: ["php", "laravel", "symfony"],
+  laravel: ["laravel", "php"],
+  ruby: ["ruby", "rails"],
+  rails: ["ruby", "rails"],
+  nextjs: ["next.js", "nextjs", "react"],
+  remix: ["remix", "react"],
+};
+
 function normalizeSkillName(name) {
   return name
     .trim()
@@ -63,85 +119,131 @@ export function parseSkillProfile(skillProfileText) {
   return scores;
 }
 
-function buildResumeSkillMap(resumeProfile) {
-  const map = new Map();
-  if (Array.isArray(resumeProfile)) {
-    for (const s of resumeProfile || []) {
-      const name = String(s?.name ?? "").trim();
-      const level = Number(s?.level);
-      if (!name || !Number.isFinite(level)) continue;
-      const clamped = Math.max(1, Math.min(5, Math.round(level)));
-      const score = Math.max(0, Math.min(10, Math.round(clamped * 2)));
-      map.set(normalizeSkillName(name), score);
+/**
+ * Resume stack titles like "Go + React", "AI", "Mobile(Flutter, Ionic)".
+ * Ignore analyzed skill JSON — prediction uses title tokens only.
+ */
+export function tokenizeResumeTitle(title) {
+  let raw = String(title ?? "");
+  // Drop negative parentheticals: "(not for mobile)", "(Never Django)"
+  raw = raw.replace(/\(([^)]*\b(?:not|never|no)\b[^)]*)\)/gi, " ");
+  // Keep positive parenthetical tokens: "(Flutter, Ionic)" → Flutter Ionic
+  raw = raw.replace(/\(([^)]+)\)/g, " $1 ");
+  raw = raw.replace(/[/&,|]/g, " + ");
+
+  const parts = raw
+    .split(/\+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const tokens = new Set();
+  for (const part of parts) {
+    const cleaned = part
+      .toLowerCase()
+      .replace(/\b(?:for|web|scripting|with|and|the|a|an)\b/g, " ")
+      .replace(/[^a-z0-9+#.\s-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!cleaned) continue;
+
+    tokens.add(normalizeSkillName(cleaned));
+    // Also add shorter fragments for "react native", "next.js", etc.
+    for (const word of cleaned.split(/[\s-]+/)) {
+      const w = normalizeSkillName(word);
+      if (w.length >= 2) tokens.add(w);
     }
-    return map;
+
+    const aliases = TITLE_ALIASES[cleaned] || TITLE_ALIASES[normalizeSkillName(cleaned)];
+    if (aliases) {
+      for (const alias of aliases) tokens.add(normalizeSkillName(alias));
+    }
   }
 
-  for (const [skill, score] of Object.entries(resumeProfile || {})) {
-    map.set(normalizeSkillName(skill), Number(score) || 0);
+  // Single-token titles (AI, GIS, Healthcare, Rust…) — expand aliases on each token.
+  for (const token of [...tokens]) {
+    const aliases = TITLE_ALIASES[token];
+    if (aliases) {
+      for (const alias of aliases) tokens.add(normalizeSkillName(alias));
+    }
   }
-  return map;
+
+  return tokens;
 }
 
-function lookupResumeScore(resumeScores, jdSkill) {
-  const direct = resumeScores.get(jdSkill);
-  if (direct !== undefined) return direct;
-
-  for (const [skill, score] of resumeScores) {
-    if (skill.includes(jdSkill) || jdSkill.includes(skill)) {
-      return score;
-    }
-  }
-
-  return 0;
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function scoreResume(jdScores, resumeProfile) {
-  const resumeScores = buildResumeSkillMap(resumeProfile);
+function titleMatchesSkill(titleTokens, jdSkill) {
+  if (!jdSkill) return false;
+  for (const token of titleTokens) {
+    if (!token) continue;
+    if (token === jdSkill) return true;
+    // Short tokens ("ai", "go", "ml") must match as whole words — not substrings
+    // of unrelated skills ("train", "html", "cargo").
+    if (token.length <= 2) {
+      const re = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(token)}(?:[^a-z0-9]|$)`);
+      if (re.test(jdSkill)) return true;
+      continue;
+    }
+    if (jdSkill.includes(token) || token.includes(jdSkill)) return true;
+  }
+  return false;
+}
+
+/**
+ * Score a resume by how well its *title* lines up with high-scoring JD skills.
+ * The catalog JSON skill lists are ignored.
+ */
+export function scoreResumeByTitle(jdScores, resumeTitle) {
+  const titleTokens = tokenizeResumeTitle(resumeTitle);
+  if (titleTokens.size === 0) return 0;
+
   let weightedSum = 0;
   let totalWeight = 0;
+  let hitWeight = 0;
 
   for (const [skill, jdScore] of jdScores) {
     if (jdScore <= 0) continue;
     const weight = jdScore * jdScore;
     totalWeight += weight;
-    const resumeScore = lookupResumeScore(resumeScores, skill);
-    weightedSum += weight * (Math.min(jdScore, resumeScore) / jdScore);
+    if (titleMatchesSkill(titleTokens, skill)) {
+      weightedSum += weight;
+      hitWeight += weight;
+    }
   }
 
   if (totalWeight === 0) return 0;
-  return weightedSum / totalWeight;
+
+  // Coverage of JD emphasis + bonus for concentrating hits on top skills.
+  const coverage = weightedSum / totalWeight;
+  const focus = hitWeight > 0 ? hitWeight / (hitWeight + totalWeight * 0.15) : 0;
+  return Math.min(1, coverage * 0.85 + focus * 0.15);
 }
 
+/**
+ * Rank resume stacks by title vs JD skill profile (ignores analyzed skill JSON).
+ */
 export function rankResumes(jdSkillProfileText, resumesCatalog, topN = 3) {
   const jdScores = parseSkillProfile(jdSkillProfileText);
   if (jdScores.size === 0) {
     return [];
   }
 
-  const ranked = Object.entries(resumesCatalog || {})
-    .map(([name, profile]) => ({
+  const ranked = Object.keys(resumesCatalog || {})
+    .map((name) => ({
       name,
-      score: scoreResume(jdScores, profile),
+      score: scoreResumeByTitle(jdScores, name),
     }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 
   return ranked.slice(0, topN);
 }
 
-/** Score uploaded resume against JD by matching techStack catalog entry or heuristics. */
-export function scoreUploadedResume(jdScores, resume, catalog) {
-  const stackProfile = catalog?.[resume.techStack];
-  if (stackProfile) {
-    return scoreResume(jdScores, stackProfile);
-  }
-  // Fallback: treat tech stack name tokens as weak skill signals
-  const tokens = String(resume.techStack || "")
-    .split(/[+,&/|]+/)
-    .map((t) => t.trim())
-    .filter(Boolean);
-  const fallbackProfile = Object.fromEntries(tokens.map((t, i) => [t, Math.max(5, 10 - i)]));
-  return scoreResume(jdScores, fallbackProfile);
+
+/** Score uploaded resume by techStack title only (catalog JSON ignored). */
+export function scoreUploadedResume(jdScores, resume, _catalog) {
+  return scoreResumeByTitle(jdScores, resume?.techStack || resume?.fileName || "");
 }
 
 export function rankUploadedResumes(jdSkillProfileText, uploadedResumes, catalog, topN = 5) {

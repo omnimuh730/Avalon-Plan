@@ -1,4 +1,5 @@
 import type { PageAnalysisResult, SkillAnalysisResult } from '@/lib/job-analysis';
+import type { PageSourceMeta } from '@/lib/page-context';
 
 export interface FormAnswer {
   question: string;
@@ -29,6 +30,7 @@ export interface MergedSessionAnalysis {
   skills: SkillAnalysisResult | null;
   formAnswers: FormAnswer[];
   updates: TurnUpdate[];
+  pageSource: PageSourceMeta | null;
 }
 
 const ALL_SECTIONS: AnalysisSections = {
@@ -81,19 +83,27 @@ interface TurnLike {
   pageUrl: string | null;
   page: PageAnalysisResult | null;
   skills: SkillAnalysisResult | null;
+  pageSource?: PageSourceMeta | null;
 }
 
 export function mergeAnalysisTurns(
   turns: TurnLike[],
-  inFlight?: { pageTitle: string | null; pageUrl: string | null; page: PageAnalysisResult | null; skills: SkillAnalysisResult | null } | null,
+  inFlight?: {
+    pageTitle: string | null;
+    pageUrl: string | null;
+    page: PageAnalysisResult | null;
+    skills: SkillAnalysisResult | null;
+    pageSource?: PageSourceMeta | null;
+  } | null,
 ): MergedSessionAnalysis {
   let mergedPage: PageAnalysisResult | null = null;
   let mergedSkills: SkillAnalysisResult | null = null;
   let mergedForms: FormAnswer[] = [];
+  let mergedSource: PageSourceMeta | null = null;
   const updates: TurnUpdate[] = [];
 
   const allTurns = [...turns];
-  if (inFlight?.page) {
+  if (inFlight?.page || inFlight?.pageSource) {
     allTurns.push({
       id: '__inflight__',
       at: new Date().toISOString(),
@@ -101,6 +111,7 @@ export function mergeAnalysisTurns(
       pageUrl: inFlight.pageUrl,
       page: inFlight.page,
       skills: inFlight.skills,
+      pageSource: inFlight.pageSource,
     });
   }
 
@@ -138,6 +149,11 @@ export function mergeAnalysisTurns(
         topResumes: skills.topResumes.length > 0 ? skills.topResumes : mergedSkills?.topResumes ?? [],
       };
     }
+    if (turn.pageSource?.visibleText) {
+      if (!mergedSource || turn.pageSource.charCount >= mergedSource.charCount) {
+        mergedSource = turn.pageSource;
+      }
+    }
   }
 
   const last = allTurns[allTurns.length - 1];
@@ -148,6 +164,7 @@ export function mergeAnalysisTurns(
     skills: mergedSkills,
     formAnswers: mergedForms,
     updates,
+    pageSource: mergedSource,
   };
 }
 
