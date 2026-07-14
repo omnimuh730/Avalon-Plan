@@ -17,7 +17,7 @@ let cloudMirrorConnectError = null;
 let rulesCollection;
 let bidRecordsCollection;
 let bidRecordsLocalCollection;
-let bidRecordsCloudCollection;
+let vendorTasksCollection;
 let skillEnrichmentQueueCollection;
 let skillCooccurrenceCollection;
 let userKnowledgeGraphsCollection;
@@ -225,6 +225,20 @@ async function initMongo() {
 	bidRecordsLocalCollection = db.collection('bid_records');
 	// Vendor Monitor + bid-assistant write/read the main (local) MongoDB.
 	bidRecordsCollection = bidRecordsLocalCollection;
+	vendorTasksCollection = db.collection('vendor_tasks');
+	try {
+		await vendorTasksCollection.createIndex({ applierName: 1, addedAt: -1 });
+		await vendorTasksCollection.createIndex(
+			{ applierName: 1, jobId: 1 },
+			{ unique: true, partialFilterExpression: { jobId: { $type: 'string' } } },
+		);
+		await vendorTasksCollection.createIndex(
+			{ applierName: 1, applyUrl: 1 },
+			{ unique: true, partialFilterExpression: { applyUrl: { $type: 'string' } } },
+		);
+	} catch (err) {
+		console.warn('[vendor_tasks] index creation failed', err.message);
+	}
 
 	const mongoCloudUrl = process.env.MONGO_CLOUD_URL?.trim();
 	if (mongoCloudUrl) {
@@ -234,9 +248,7 @@ async function initMongo() {
 			await mongoCloudClient.connect();
 			const cloudDb = mongoCloudClient.db(mongoDbName);
 			accountInfoCloudCollection = cloudDb.collection('account_info');
-			// Cloud bid_records kept only for the optional "Cloud bid" monitor tab.
-			bidRecordsCloudCollection = cloudDb.collection('bid_records');
-			console.log('Connected to cloud MongoDB (account_info mirror; optional bid_records reads)', mongoDbName);
+			console.log('Connected to cloud MongoDB (account_info mirror)', mongoDbName);
 		} catch (err) {
 			cloudMirrorConnectError = err instanceof Error ? err.message : String(err);
 			console.error('Cloud MongoDB connection failed — account_info will save locally only until fixed:', cloudMirrorConnectError);
@@ -249,7 +261,6 @@ async function initMongo() {
 				mongoCloudClient = null;
 			}
 			accountInfoCloudCollection = null;
-			bidRecordsCloudCollection = null;
 		}
 	} else {
 		console.log('MONGO_CLOUD_URL not set — account_info writes go to local only');
@@ -258,20 +269,19 @@ async function initMongo() {
 	console.log(`Vendor Monitor bid_records source: ${bidRecordsSource}`);
 }
 
-function getBidRecordsCollection(source = 'local') {
-	const normalized = source === 'cloud' ? 'cloud' : 'local';
-	const collection = normalized === 'local' ? bidRecordsLocalCollection : bidRecordsCloudCollection;
-	if (!collection) {
+function getBidRecordsCollection() {
+	if (!bidRecordsLocalCollection) {
 		return {
-			source: normalized,
+			source: 'local',
 			collection: null,
-			error:
-				normalized === 'cloud'
-					? cloudMirrorConnectError || 'Cloud MongoDB is not connected. Set MONGO_CLOUD_URL and restart athens-server.'
-					: 'Local MongoDB is not connected.',
+			error: 'Local MongoDB is not connected.',
 		};
 	}
-	return { source: normalized, collection, error: null };
+	return { source: 'local', collection: bidRecordsLocalCollection, error: null };
+}
+
+function getVendorTasksCollection() {
+	return vendorTasksCollection || null;
 }
 
 function isCloudMirrorConfigured() {
@@ -298,7 +308,7 @@ async function closeMongo() {
 	accountInfoCloudCollection = null;
 	bidRecordsCollection = null;
 	bidRecordsLocalCollection = null;
-	bidRecordsCloudCollection = null;
+	vendorTasksCollection = null;
 	cloudMirrorConfigured = false;
 	cloudMirrorConnectError = null;
 }
@@ -316,10 +326,11 @@ export {
 	isCloudMirrorConfigured,
 	getCloudMirrorStatus,
 	getBidRecordsCollection,
+	getVendorTasksCollection,
 	rulesCollection,
 	bidRecordsCollection,
 	bidRecordsLocalCollection,
-	bidRecordsCloudCollection,
+	vendorTasksCollection,
 	resumeGeneratorConfigCollection,
 	resumeGenerationsCollection,
 	mailMessagesCollection,

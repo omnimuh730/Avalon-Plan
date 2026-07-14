@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 /** Bumped when bid_records document shape changes. */
-export const BID_RECORD_MODEL_VERSION = '2026.7.10';
+export const BID_RECORD_MODEL_VERSION = '2026.7.13';
 
 function cleanString(value) {
   return String(value ?? '').trim();
@@ -63,6 +63,25 @@ function sanitizeAnalysis(analysis) {
     topResumes,
     formAnswers,
   };
+}
+
+/** Traffic-light screening verdicts (remote / no-clearance). Null = unresolved. */
+function sanitizeFlagVerdict(verdict) {
+  if (!verdict || typeof verdict !== 'object') return null;
+  const status = cleanString(verdict.status).toLowerCase();
+  if (status !== 'green' && status !== 'red') return null;
+  return {
+    status,
+    explanation: cleanString(verdict.explanation),
+  };
+}
+
+function sanitizeFlags(flags) {
+  if (!flags || typeof flags !== 'object') return null;
+  const remote = sanitizeFlagVerdict(flags.remote);
+  const clearance = sanitizeFlagVerdict(flags.clearance);
+  if (!remote && !clearance) return null;
+  return { remote, clearance };
 }
 
 function sanitizeTrace(trace) {
@@ -155,6 +174,9 @@ function buildRecord(sessionId, applierName, type, body) {
     analysis: sanitizeAnalysis(body.analysis),
     usage: sanitizeUsage(body.usage),
     trace: sanitizeTrace(body.trace),
+    // Screening traffic lights (modelVersion 2026.7.13+) — analysis + complete only.
+    flags:
+      type === 'analysis' || type === 'session-complete' ? sanitizeFlags(body.flags) : null,
     jobSource: body.jobSource ?? detectJobSource(url || resumeUpload?.pageUrl),
     // Resume rename audit (modelVersion 2026.7.10+)
     originalName: resumeUpload?.originalName ?? null,

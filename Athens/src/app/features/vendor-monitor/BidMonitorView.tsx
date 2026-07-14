@@ -30,17 +30,21 @@ import { detectJobSource } from "@/lib/job-source";
 import { API_BASE } from "@/lib/api-base";
 import { display } from "@/app/lib/utils";
 import { JobSourceChip } from "./components/JobSourceChip";
+import { SessionScreeningLights } from "./components/SessionScreeningLights";
 import { AnalysisPanel, ImageModal, Thumb } from "./components/VendorMonitorPanels";
-import type { AnalysisInfo, BidMonitorSource, BidSessionSummary, SessionDetail } from "./types";
+import type { AnalysisInfo, BidSessionSummary, SessionDetail } from "./types";
 import { durationLabel, formatCost, formatTime, RECORD_META } from "./utils";
 import { formatVendorMonitorError } from "./api-errors";
 
+function sessionJdAnalyzed(session: BidSessionSummary): boolean {
+  return Boolean(session.jdAnalyzed) || session.analysisCount > 0;
+}
+
 interface BidMonitorViewProps {
-  source?: BidMonitorSource;
   subtitle?: string;
 }
 
-export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewProps) {
+export function BidMonitorView({ subtitle }: BidMonitorViewProps) {
   const { get, del, request } = useApi(API_BASE);
   const { applier } = useApplier();
   const profileName = applier?.name ?? null;
@@ -58,13 +62,12 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
 
   const buildListQuery = useCallback(() => {
     const params = new URLSearchParams();
-    params.set("source", source);
     if (profileName) params.set("applierName", profileName);
     params.set("limit", "200");
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
     return params.toString();
-  }, [source, profileName, dateFrom, dateTo]);
+  }, [profileName, dateFrom, dateTo]);
 
   const loadSessions = useCallback(async () => {
     if (!profileName) {
@@ -80,17 +83,11 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
       };
       setSessions(data.sessions ?? []);
     } catch (err) {
-      setError(
-        formatVendorMonitorError(
-          err,
-          source,
-          `Failed to load ${source} bid sessions.`,
-        ),
-      );
+      setError(formatVendorMonitorError(err, "Failed to load bid sessions."));
     } finally {
       setLoadingList(false);
     }
-  }, [get, profileName, buildListQuery, source]);
+  }, [get, profileName, buildListQuery]);
 
   const loadDetail = useCallback(
     async (sessionId: string) => {
@@ -98,26 +95,24 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
       setLoadingDetail(true);
       setDetail(null);
       try {
-        const params = new URLSearchParams({ source });
-        const data = (await get(`/vendor/bid-sessions/${sessionId}?${params.toString()}`)) as {
+        const data = (await get(`/vendor/bid-sessions/${sessionId}`)) as {
           success: boolean;
         } & SessionDetail;
         setDetail({ session: data.session, records: data.records });
       } catch (err) {
-        setError(formatVendorMonitorError(err, source, `Failed to load ${source} session detail.`));
+        setError(formatVendorMonitorError(err, "Failed to load session detail."));
       } finally {
         setLoadingDetail(false);
       }
     },
-    [get, source],
+    [get],
   );
 
   const deleteSession = useCallback(
     async (sessionId: string) => {
       setError(null);
       try {
-        const params = new URLSearchParams({ source });
-        await del(`/vendor/bid-sessions/${sessionId}?${params.toString()}`);
+        await del(`/vendor/bid-sessions/${sessionId}`);
         if (selectedId === sessionId) {
           setSelectedId(null);
           setDetail(null);
@@ -127,14 +122,14 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
         setError("Failed to delete session.");
       }
     },
-    [del, source, selectedId, loadSessions],
+    [del, selectedId, loadSessions],
   );
 
   const deleteFilteredHistory = useCallback(async () => {
     if (!profileName) return;
     setError(null);
     try {
-      const params = new URLSearchParams({ applierName: profileName, source });
+      const params = new URLSearchParams({ applierName: profileName });
       if (dateFrom) params.set("from", dateFrom);
       if (dateTo) params.set("to", dateTo);
       await request(`/vendor/bid-sessions?${params.toString()}`, { method: "DELETE" });
@@ -144,7 +139,7 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
     } catch {
       setError("Failed to delete history.");
     }
-  }, [profileName, source, dateFrom, dateTo, request, loadSessions]);
+  }, [profileName, dateFrom, dateTo, request, loadSessions]);
 
   useEffect(() => {
     setSelectedId(null);
@@ -343,6 +338,11 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
                           {durationLabel(s.startedAt, s.completedAt)}
                         </span>
                       </div>
+                      <SessionScreeningLights
+                        jdAnalyzed={sessionJdAnalyzed(s)}
+                        flags={s.flags}
+                        className="mt-1.5"
+                      />
                       <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
                         <span className="flex items-center gap-0.5">
                           <MousePointerClick className="w-2.5 h-2.5" />
@@ -448,6 +448,12 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
                     </AlertDialog>
                   </div>
                 </div>
+                <SessionScreeningLights
+                  jdAnalyzed={sessionJdAnalyzed(detail.session)}
+                  flags={detail.session.flags}
+                  showReasons
+                  className="mt-3 max-w-xs"
+                />
               </div>
 
               {((detail.session.resumeUploads?.length ?? 0) > 0 ||

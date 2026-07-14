@@ -35,6 +35,8 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
   }, []);
 
   useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       else if (e.key === "+" || e.key === "=") zoomBy(ZOOM_STEP);
@@ -42,10 +44,14 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
       else if (e.key === "0") reset();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
   }, [onClose, zoomBy, reset]);
 
   const onWheel = (e: React.WheelEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     zoomBy(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
   };
@@ -70,10 +76,7 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
   const zoomed = scale > 1;
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 overflow-hidden"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 bg-black/90" onClick={onClose} onWheel={onWheel}>
       <div
         className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 rounded-full bg-black/60 backdrop-blur px-1.5 py-1 text-white shadow-lg"
         onClick={(e) => e.stopPropagation()}
@@ -123,23 +126,30 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
       >
         <X className="w-5 h-5" />
       </Button>
-      <img
-        src={src}
-        alt="Bid screenshot"
-        draggable={false}
-        onClick={(e) => e.stopPropagation()}
-        onWheel={onWheel}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onDoubleClick={() => (zoomed ? reset() : zoomBy(ZOOM_STEP * 4))}
-        style={{
-          transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-          cursor: zoomed ? (dragRef.current ? "grabbing" : "grab") : "zoom-in",
-          touchAction: "none",
-        }}
-        className="max-h-[90vh] max-w-[90vw] rounded-lg shadow-2xl object-contain transition-transform duration-75 select-none"
-      />
+      <div className="absolute inset-0 overflow-auto overscroll-contain" onClick={onClose}>
+        <div className="flex min-h-full min-w-full items-start justify-center p-4 pt-16 pb-8">
+          <img
+            src={src}
+            alt="Bid screenshot"
+            draggable={false}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onDoubleClick={() => (zoomed ? reset() : zoomBy(ZOOM_STEP * 4))}
+            style={{
+              transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+              transformOrigin: "top center",
+              cursor: zoomed ? (dragRef.current ? "grabbing" : "grab") : "zoom-in",
+              touchAction: zoomed ? "none" : "pan-y",
+              width: "min(100vw - 2rem, 100%)",
+              maxWidth: "100%",
+              height: "auto",
+            }}
+            className="rounded-lg shadow-2xl transition-transform duration-75 select-none"
+          />
+        </div>
+      </div>
     </div>
   );
 }

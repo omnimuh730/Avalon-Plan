@@ -1,5 +1,5 @@
 import { GMAIL_LABEL, INBOX_BATCH_SIZE } from '@/lib/constants';
-import { extractPageContext } from '@/lib/page-context';
+import { extractPageContext, mergePageContexts } from '@/lib/page-context';
 import {
   JOB_ANALYSIS_PORT,
   type AnalysisEvent,
@@ -552,6 +552,7 @@ async function persistAnalysisRecord(
   page: PageAnalysisResult,
   skills: SkillAnalysisResult | null,
   usage: UsageSummary,
+  flags: BidFlagVerdicts,
 ): Promise<void> {
   if (!sessionId) return;
   try {
@@ -570,6 +571,7 @@ async function persistAnalysisRecord(
         bestResume: skills?.bestResume ?? null,
         topResumes: skills?.topResumes ?? [],
       },
+      flags,
       usage,
       trace: {
         request: {
@@ -591,6 +593,7 @@ async function persistAnalysisRecord(
                 topResumes: skills.topResumes,
               }
             : null,
+          flags,
           usage,
         },
       },
@@ -676,6 +679,7 @@ async function completeBidSession(tabId: number): Promise<BidSessionState> {
   const usageKey = tabKey('bidAnalysisUsage', tabId);
   const stored = await chrome.storage.local.get(usageKey);
   const resumeUploads = await getSessionResumeUploads(tabId);
+  const flags = await getSessionFlags(tabId);
 
   await postBidSessionEvent('/bid-session/complete', {
     sessionId: session.sessionId,
@@ -686,6 +690,7 @@ async function completeBidSession(tabId: number): Promise<BidSessionState> {
     screenshot,
     usage: stored[usageKey] ?? null,
     resumeUploads,
+    flags,
   });
 
   const completedAt = new Date().toISOString();
@@ -1304,10 +1309,12 @@ async function extractActiveTabContext(tabId: number) {
     throw new Error('Cannot read this page. Open a normal website tab (not chrome:// or extension pages).');
   }
 
-  let injection;
+  let injections;
   try {
-    [injection] = await chrome.scripting.executeScript({
-      target: { tabId },
+    // allFrames: true — iCIMS and similar ATS hosts put the JD / application
+    // form inside an iframe. Parent-frame-only scrapes miss that content.
+    injections = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
       func: extractPageContext,
     });
   } catch (error) {
@@ -1315,7 +1322,15 @@ async function extractActiveTabContext(tabId: number) {
     throw new Error(`Could not read this page (${detail}). Reload the page and try again.`);
   }
 
-  const pageContext = injection?.result;
+  const frames = (injections ?? [])
+    .map((entry) => entry?.result)
+    .filter((result): result is NonNullable<typeof result> => Boolean(result));
+
+  const pageContext = mergePageContexts(frames, {
+    url: tab.url ?? undefined,
+    title: tab.title ?? undefined,
+  });
+
   if (!pageContext) {
     throw new Error('Failed to read page content from the active tab.');
   }
@@ -1472,14 +1487,16 @@ async function runJobAnalysis(port: chrome.runtime.Port, tabId: number): Promise
     // Resolve the concurrent flag request (best-effort — a failed flag check
     // never fails the analysis). Roll its tokens into the session total and
     // persist the merged verdicts so they stay resolved for later Analyze runs.
+    let sessionFlags = storedFlags;
     if (flagsPromise) {
       try {
         const flags = await flagsPromise;
         if (flags.usage) turnUsage = sumUsage(turnUsage, flags.usage);
-        await saveSessionFlags(tabId, {
+        sessionFlags = {
           remote: flags.result.remote ?? storedFlags.remote,
           clearance: flags.result.clearance ?? storedFlags.clearance,
-        });
+        };
+        await saveSessionFlags(tabId, sessionFlags);
         send({ stage: 'flags', result: flags.result, usage: flags.usage });
       } catch (error) {
         console.warn(
@@ -1497,6 +1514,7 @@ async function runJobAnalysis(port: chrome.runtime.Port, tabId: number): Promise
       page.result,
       skillsResult,
       turnUsage,
+      sessionFlags,
     );
     send({ stage: 'done' });
   } catch (error) {

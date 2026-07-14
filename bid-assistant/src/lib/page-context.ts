@@ -13,12 +13,19 @@ export interface PageContext {
   metaDescription: string;
   visibleText: string;
   forms: FormFieldContext[];
+  /** Frame URL when extracted via allFrames; useful for merging iframe content. */
+  frameUrl?: string;
 }
+
+const MAX_MERGED_TEXT_LENGTH = 15000;
 
 /**
  * Injected into the active tab via chrome.scripting.executeScript.
  * Must stay fully self-contained: only this function body is serialized into
  * the page, so all helpers and constants have to live inside it.
+ *
+ * Runs once per frame when called with `allFrames: true` — each iframe that
+ * hosts the real JD / application form (e.g. iCIMS) returns its own context.
  */
 export function extractPageContext(): PageContext {
   const MAX_TEXT_LENGTH = 15000;
@@ -114,5 +121,73 @@ export function extractPageContext(): PageContext {
     metaDescription: getMetaDescription(),
     visibleText,
     forms: extractFormFields(),
+    frameUrl: location.href,
+  };
+}
+
+function formFieldKey(field: FormFieldContext): string {
+  return `${field.type}|${field.name}|${field.label}|${field.placeholder}`.toLowerCase();
+}
+
+function isUsefulFrame(ctx: PageContext): boolean {
+  const url = (ctx.frameUrl || ctx.url || '').toLowerCase();
+  if (url.startsWith('about:blank') || url.startsWith('javascript:')) {
+    return (ctx.forms?.length ?? 0) > 0;
+  }
+  return ctx.visibleText.length >= 40 || (ctx.forms?.length ?? 0) > 0;
+}
+
+/**
+ * Merge per-frame extraction results so ATS pages that host the JD / form in
+ * an iframe (iCIMS, some Workday embeds, etc.) still yield full context.
+ *
+ * Prefers the longest visible-text frame for the JD body, then appends other
+ * substantial frames that aren't already covered. Forms are unioned.
+ */
+export function mergePageContexts(
+  frames: PageContext[],
+  topLevel?: { url?: string; title?: string },
+): PageContext | null {
+  const useful = frames.filter((frame) => frame && isUsefulFrame(frame));
+  if (useful.length === 0) return null;
+
+  const ranked = [...useful].sort((a, b) => b.visibleText.length - a.visibleText.length);
+  const primary = ranked[0];
+
+  const textParts: string[] = [];
+  let remaining = MAX_MERGED_TEXT_LENGTH;
+  for (const frame of ranked) {
+    const text = frame.visibleText.trim();
+    if (!text || remaining <= 0) continue;
+    // Skip text already covered by a longer frame we kept.
+    if (textParts.some((part) => part.includes(text))) continue;
+    const chunk = text.slice(0, remaining);
+    textParts.push(chunk);
+    remaining -= chunk.length + 1;
+  }
+
+  const seenForms = new Set<string>();
+  const forms: FormFieldContext[] = [];
+  for (const frame of ranked) {
+    for (const field of frame.forms ?? []) {
+      const key = formFieldKey(field);
+      if (seenForms.has(key)) continue;
+      seenForms.add(key);
+      forms.push(field);
+      if (forms.length >= 50) break;
+    }
+    if (forms.length >= 50) break;
+  }
+
+  const topUrl = topLevel?.url?.trim() || '';
+  const topTitle = topLevel?.title?.trim() || '';
+
+  return {
+    url: topUrl || primary.url,
+    title: topTitle || primary.title,
+    metaDescription: primary.metaDescription || ranked.find((f) => f.metaDescription)?.metaDescription || '',
+    visibleText: textParts.join('\n\n').slice(0, MAX_MERGED_TEXT_LENGTH),
+    forms,
+    frameUrl: primary.frameUrl || primary.url,
   };
 }
