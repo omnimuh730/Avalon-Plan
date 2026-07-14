@@ -19,6 +19,12 @@ function cancelTooltip(job: Job): string {
   if (job.status === "applied") {
     return "Cancel application — moves back to Posted";
   }
+  if (job.status === "bid-ready") {
+    return "Clear bid-ready — moves back to Posted";
+  }
+  if (job.status === "bid-completed") {
+    return "Clear bid-completed — moves back to Posted";
+  }
   if (job.status === "scheduled" || job.status === "declined") {
     return "Cancel — moves back to Applied";
   }
@@ -54,6 +60,28 @@ function StatusCancelButton({
   );
 }
 
+function ApplyButton({
+  pending,
+  onApply,
+  size,
+  showExternalLinkOnApply,
+  label = "Apply",
+}: {
+  pending: boolean;
+  onApply: () => void;
+  size: "sm" | "default";
+  showExternalLinkOnApply: boolean;
+  label?: string;
+}) {
+  return (
+    <Button size={size} disabled={pending} onClick={onApply}>
+      {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+      {label}
+      {showExternalLinkOnApply ? <ExternalLink className="w-4 h-4" /> : null}
+    </Button>
+  );
+}
+
 export function JobStatusActions({
   job,
   pending = false,
@@ -66,11 +94,26 @@ export function JobStatusActions({
 }: JobStatusActionsProps) {
   if (job.status === "posted") {
     return (
-      <Button size={size} disabled={pending} onClick={onApply}>
-        {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-        Apply
-        {showExternalLinkOnApply ? <ExternalLink className="w-4 h-4" /> : null}
-      </Button>
+      <ApplyButton
+        pending={pending}
+        onApply={onApply}
+        size={size}
+        showExternalLinkOnApply={showExternalLinkOnApply}
+      />
+    );
+  }
+
+  if (job.status === "bid-ready" || job.status === "bid-completed") {
+    return (
+      <>
+        <ApplyButton
+          pending={pending}
+          onApply={onApply}
+          size={size}
+          showExternalLinkOnApply={showExternalLinkOnApply}
+        />
+        <StatusCancelButton job={job} pending={pending} onCancel={onCancel} />
+      </>
     );
   }
 

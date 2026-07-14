@@ -422,25 +422,32 @@ export async function applyToJob(req, res) {
 			return res.status(404).json({ success: false, error: `User ${applierName} not found` });
 		}
 
-		const existingApplication = await jobsCollection.findOne({ _id: objectId, "status.applier": applier._id });
+		const existingJob = await jobsCollection.findOne({ _id: objectId, "status.applier": applier._id });
+		const now = new Date().toISOString();
 
-		if (existingApplication) {
-			return res.json({ success: true, data: existingApplication, message: "User has already applied" });
+		if (existingJob) {
+			const entry = (Array.isArray(existingJob.status) ? existingJob.status : []).find(
+				(s) => s && String(s.applier) === String(applier._id),
+			);
+			if (entry?.appliedDate) {
+				return res.json({ success: true, data: existingJob, message: "User has already applied" });
+			}
+
+			await jobsCollection.updateOne(
+				{ _id: objectId },
+				{ $set: { "status.$[elem].appliedDate": now } },
+				{ arrayFilters: [{ "elem.applier": applier._id }] },
+			);
+			const updatedJob = await jobsCollection.findOne({ _id: objectId });
+			return res.json({ success: true, data: updatedJob });
 		}
 
-		const now = new Date().toISOString();
 		const newApplication = {
 			applier: applier._id,
-			appliedDate: now
+			appliedDate: now,
 		};
 
-		const update = {
-			$push: {
-				status: newApplication
-			}
-		};
-
-		await jobsCollection.updateOne({ _id: objectId }, update);
+		await jobsCollection.updateOne({ _id: objectId }, { $push: { status: newApplication } });
 		const updatedJob = await jobsCollection.findOne({ _id: objectId });
 
 		return res.json({ success: true, data: updatedJob });

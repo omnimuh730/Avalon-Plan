@@ -86,6 +86,68 @@ function pickLatestFlags(docs) {
 	return latest ?? { remote: null, clearance: null };
 }
 
+function normalizeResumeLabel(name) {
+	return String(name ?? "")
+		.replace(/\.(pdf|docx)$/i, "")
+		.trim()
+		.toLowerCase()
+		.replace(/[_-]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function resumeMatchesRecommended(originalName, recommendedName) {
+	const upload = normalizeResumeLabel(originalName);
+	const recommended = normalizeResumeLabel(recommendedName);
+	if (!upload || !recommended) return false;
+	return upload === recommended || upload.includes(recommended) || recommended.includes(upload);
+}
+
+function flagNotRed(verdict) {
+	return !verdict || verdict.status !== "red";
+}
+
+/** Honesty / diligence metrics for Analytics. */
+function summarizeSessionQuality(rows) {
+	let analyzed = 0;
+	let screeningClear = 0;
+	let resumeMatched = 0;
+	let requirementsMet = 0;
+
+	for (const row of rows ?? []) {
+		const jdOk = Boolean(row.jdAnalyzed) || Number(row.analysisCount ?? 0) > 0;
+		if (jdOk) analyzed += 1;
+
+		const flags = normalizeFlags(row.flags);
+		const clear = flagNotRed(flags.remote) && flagNotRed(flags.clearance);
+		if (clear) screeningClear += 1;
+
+		const recommended = String(row.recommendedResumeName ?? "").trim();
+		const originals = Array.isArray(row.resumeOriginals) ? row.resumeOriginals : [];
+		const matched =
+			Boolean(recommended) &&
+			originals.some((name) => resumeMatchesRecommended(name, recommended));
+		if (matched) resumeMatched += 1;
+
+		if (row.status === "completed" && jdOk && clear && matched) {
+			requirementsMet += 1;
+		}
+	}
+
+	const total = (rows ?? []).length;
+	const completed = (rows ?? []).filter((row) => row.status === "completed").length;
+	return {
+		analyzedSessions: analyzed,
+		screeningClearSessions: screeningClear,
+		resumeMatchedSessions: resumeMatched,
+		requirementsMetSessions: requirementsMet,
+		analyzedRate: total > 0 ? analyzed / total : 0,
+		screeningClearRate: total > 0 ? screeningClear / total : 0,
+		resumeMatchRate: total > 0 ? resumeMatched / total : 0,
+		requirementsMetRate: completed > 0 ? requirementsMet / completed : 0,
+	};
+}
+
 function resolveBidRecords() {
 	return getBidRecordsCollection();
 }
@@ -137,6 +199,7 @@ function buildListPipeline({ match, fromDate, toDate, limit }) {
 								source: "$uploadSource",
 								pageUrl: "$url",
 								ts: { $toLong: "$createdAt" },
+								recommendedResumeName: "$recommendedResumeName",
 							},
 							"$$REMOVE",
 						],
@@ -191,6 +254,34 @@ function buildListPipeline({ match, fromDate, toDate, limit }) {
 						],
 					},
 				},
+				recommendedResumeHistory: {
+					$push: {
+						$cond: [
+							{
+								$and: [
+									{ $eq: ["$type", "analysis"] },
+									{ $ne: ["$analysis.bestResume.name", null] },
+								],
+							},
+							"$analysis.bestResume.name",
+							"$$REMOVE",
+						],
+					},
+				},
+				resumeOriginalHistory: {
+					$push: {
+						$cond: [
+							{ $eq: ["$type", "resume-upload"] },
+							{
+								originalName: "$originalName",
+								cleanedName: "$cleanedName",
+								renamed: "$renamed",
+								recommendedResumeName: "$recommendedResumeName",
+							},
+							"$$REMOVE",
+						],
+					},
+				},
 			},
 		},
 		{
@@ -218,6 +309,21 @@ function buildListPipeline({ match, fromDate, toDate, limit }) {
 						},
 					},
 				},
+				recommendedResumeName: {
+					$let: {
+						vars: {
+							history: { $ifNull: ["$recommendedResumeHistory", []] },
+						},
+						in: {
+							$cond: [
+								{ $gt: [{ $size: "$$history" }, 0] },
+								{ $arrayElemAt: ["$$history", -1] },
+								null,
+							],
+						},
+					},
+				},
+				resumeUploadsFromAnalysis: { $ifNull: ["$resumeOriginalHistory", []] },
 				resumeUploads: {
 					$let: {
 						vars: {
@@ -225,14 +331,21 @@ function buildListPipeline({ match, fromDate, toDate, limit }) {
 								$first: { $ifNull: ["$resumeUploadsFromComplete", []] },
 							},
 							fromEvents: { $ifNull: ["$resumeUploadsFromEvents", []] },
+							fromOriginals: { $ifNull: ["$resumeOriginalHistory", []] },
 						},
 						in: {
 							$cond: [
+								{ $gt: [{ $size: { $ifNull: ["$$fromOriginals", []] } }, 0] },
+								"$$fromOriginals",
 								{
-									$gt: [{ $size: { $ifNull: ["$$fromComplete", []] } }, 0],
+									$cond: [
+										{
+											$gt: [{ $size: { $ifNull: ["$$fromComplete", []] } }, 0],
+										},
+										"$$fromComplete",
+										"$$fromEvents",
+									],
 								},
-								"$$fromComplete",
-								"$$fromEvents",
 							],
 						},
 					},
@@ -263,7 +376,10 @@ function buildListPipeline({ match, fromDate, toDate, limit }) {
 				completeTokens: 0,
 				resumeUploadsFromComplete: 0,
 				resumeUploadsFromEvents: 0,
+				resumeUploadsFromAnalysis: 0,
 				flagsHistory: 0,
+				recommendedResumeHistory: 0,
+				resumeOriginalHistory: 0,
 			},
 		},
 		{ $sort: { startedAt: -1 } },
@@ -327,6 +443,7 @@ function mapRecord(doc) {
 		cleanedName: doc.cleanedName ?? null,
 		renamed: Boolean(doc.renamed),
 		uploadSource: doc.uploadSource ?? null,
+		recommendedResumeName: doc.recommendedResumeName ?? null,
 		resumeUploads: Array.isArray(doc.resumeUploads) ? doc.resumeUploads : [],
 		createdAt: doc.createdAt,
 	};
@@ -371,16 +488,25 @@ export async function getBidSessionDetail(req, res) {
 			analysisRecords.length > 0 ? analysisTokens : complete?.usage?.totalTokens ?? 0;
 
 		const resumeUploads =
-			Array.isArray(complete?.resumeUploads) && complete.resumeUploads.length > 0
-				? complete.resumeUploads
-				: resumeUploadRecords.map((r) => ({
+			resumeUploadRecords.length > 0
+				? resumeUploadRecords.map((r) => ({
 						originalName: r.originalName,
 						cleanedName: r.cleanedName,
 						renamed: r.renamed,
 						source: r.uploadSource,
 						pageUrl: r.url,
 						ts: r.createdAt ? new Date(r.createdAt).getTime() : Date.now(),
-					}));
+						recommendedResumeName: r.recommendedResumeName ?? null,
+					}))
+				: Array.isArray(complete?.resumeUploads) && complete.resumeUploads.length > 0
+					? complete.resumeUploads
+					: [];
+
+		const recommendedResumeName =
+			[...analysisRecords]
+				.reverse()
+				.map((r) => r.analysis?.bestResume?.name)
+				.find((name) => typeof name === "string" && name.trim()) ?? null;
 
 		const firstUrl = start.url ?? null;
 		const session = enrichSession({
@@ -401,6 +527,7 @@ export async function getBidSessionDetail(req, res) {
 			lastUrl: complete?.url ?? records[records.length - 1]?.url ?? null,
 			modelVersion: complete?.modelVersion ?? start.modelVersion ?? null,
 			resumeUploads,
+			recommendedResumeName,
 			jdAnalyzed: analysisRecords.length > 0,
 			flags: pickLatestFlags(docs),
 		});
@@ -506,6 +633,43 @@ export async function getBidSessionsAnalytics(req, res) {
 					},
 					firstUrl: { $first: "$url" },
 					lastUrl: { $last: "$url" },
+					flagsHistory: {
+						$push: {
+							$cond: [
+								{
+									$and: [
+										{ $in: ["$type", ["analysis", "session-complete"]] },
+										{ $ne: ["$flags", null] },
+									],
+								},
+								"$flags",
+								"$$REMOVE",
+							],
+						},
+					},
+					recommendedResumeHistory: {
+						$push: {
+							$cond: [
+								{
+									$and: [
+										{ $eq: ["$type", "analysis"] },
+										{ $ne: ["$analysis.bestResume.name", null] },
+									],
+								},
+								"$analysis.bestResume.name",
+								"$$REMOVE",
+							],
+						},
+					},
+					resumeOriginalHistory: {
+						$push: {
+							$cond: [
+								{ $eq: ["$type", "resume-upload"] },
+								"$originalName",
+								"$$REMOVE",
+							],
+						},
+					},
 				},
 			},
 			{
@@ -524,6 +688,32 @@ export async function getBidSessionsAnalytics(req, res) {
 							null,
 						],
 					},
+					jdAnalyzed: { $gt: ["$analysisCount", 0] },
+					flags: {
+						$let: {
+							vars: { history: { $ifNull: ["$flagsHistory", []] } },
+							in: {
+								$cond: [
+									{ $gt: [{ $size: "$$history" }, 0] },
+									{ $arrayElemAt: ["$$history", -1] },
+									null,
+								],
+							},
+						},
+					},
+					recommendedResumeName: {
+						$let: {
+							vars: { history: { $ifNull: ["$recommendedResumeHistory", []] } },
+							in: {
+								$cond: [
+									{ $gt: [{ $size: "$$history" }, 0] },
+									{ $arrayElemAt: ["$$history", -1] },
+									null,
+								],
+							},
+						},
+					},
+					resumeOriginals: { $ifNull: ["$resumeOriginalHistory", []] },
 				},
 			},
 		];
@@ -624,6 +814,18 @@ export async function getBidSessionsAnalytics(req, res) {
 								},
 							},
 						],
+						qualityRows: [
+							{
+								$project: {
+									status: 1,
+									jdAnalyzed: 1,
+									analysisCount: 1,
+									flags: 1,
+									recommendedResumeName: 1,
+									resumeOriginals: 1,
+								},
+							},
+						],
 					},
 				},
 			])
@@ -633,6 +835,8 @@ export async function getBidSessionsAnalytics(req, res) {
 		const completed = rawTotals?.completed ?? 0;
 		const sessions = rawTotals?.sessions ?? 0;
 		const durationCount = rawTotals?.durationCount ?? 0;
+
+		const quality = summarizeSessionQuality(facet?.qualityRows ?? []);
 		const totals = {
 			sessions,
 			completed,
@@ -645,6 +849,7 @@ export async function getBidSessionsAnalytics(req, res) {
 			avgDurationMs:
 				durationCount > 0 ? Math.round((rawTotals?.durationSumMs ?? 0) / durationCount) : 0,
 			completionRate: sessions > 0 ? completed / sessions : 0,
+			...quality,
 		};
 
 		const mapBucket = (row) => ({

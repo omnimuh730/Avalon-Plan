@@ -516,7 +516,11 @@ export function JobBidAssistant() {
           <TrafficLights jdAnalyzed={jdAnalyzed} flags={flags} />
         )}
 
-        <ResumeUploadsPanel />
+        <ResumeUploadsPanel
+          recommendedResumeName={
+            merged.skills?.bestResume?.name ?? merged.skills?.topResumes?.[0]?.name ?? null
+          }
+        />
 
         <RecordingGallery shots={shots} />
 

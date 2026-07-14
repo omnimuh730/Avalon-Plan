@@ -22,6 +22,14 @@ const EMPTY_TOTALS: VendorAnalyticsTotals = {
   resumeUploadCount: 0,
   avgDurationMs: 0,
   completionRate: 0,
+  analyzedSessions: 0,
+  screeningClearSessions: 0,
+  resumeMatchedSessions: 0,
+  requirementsMetSessions: 0,
+  analyzedRate: 0,
+  screeningClearRate: 0,
+  resumeMatchRate: 0,
+  requirementsMetRate: 0,
 };
 
 function clientTimezone(): string {

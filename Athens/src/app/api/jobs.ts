@@ -1,10 +1,9 @@
 import { API_BASE } from "@/lib/api-base";
 import { streamSSE } from "../features/resumes/lib/sse";
-import type { JobStatus } from "../types/job";
 
 export type JobApiStatus = "Applied" | "Scheduled" | "Declined";
 
-export const JOB_STATUS_TO_API: Record<Exclude<JobStatus, "posted">, JobApiStatus> = {
+export const JOB_STATUS_TO_API: Record<"applied" | "scheduled" | "declined", JobApiStatus> = {
   applied: "Applied",
   scheduled: "Scheduled",
   declined: "Declined",

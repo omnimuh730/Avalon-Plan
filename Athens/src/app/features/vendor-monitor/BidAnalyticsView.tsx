@@ -25,6 +25,9 @@ import {
   Loader2,
   MousePointerClick,
   RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Target,
   Timer,
 } from "lucide-react";
 import { AthensSelect } from "../../components/forms";
@@ -363,6 +366,67 @@ export function BidAnalyticsView() {
               accent="sky"
             />
           </div>
+
+          <ChartCard
+            title="Bidder diligence"
+            subtitle="How carefully sessions were screened, analyzed, and matched to the recommended resume"
+          >
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+              <div className="rounded-xl border border-border bg-muted/20 px-3 py-3">
+                <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Analyzed
+                </div>
+                <div className="mt-1 text-xl font-bold" style={mono}>
+                  {formatPercent(totals.analyzedRate ?? 0)}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {totals.analyzedSessions ?? 0} of {totals.sessions} sessions
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-muted/20 px-3 py-3">
+                <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <Target className="w-3.5 h-3.5" />
+                  Screening clear
+                </div>
+                <div className="mt-1 text-xl font-bold" style={mono}>
+                  {formatPercent(totals.screeningClearRate ?? 0)}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {totals.screeningClearSessions ?? 0} with no red flags
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-muted/20 px-3 py-3">
+                <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Resume matched
+                </div>
+                <div className="mt-1 text-xl font-bold" style={mono}>
+                  {formatPercent(totals.resumeMatchRate ?? 0)}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {totals.resumeMatchedSessions ?? 0} matched recommended
+                </div>
+              </div>
+              <div className="rounded-xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 to-transparent px-3 py-3">
+                <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  Requirements met
+                </div>
+                <div className="mt-1 text-xl font-bold text-emerald-700 dark:text-emerald-300" style={mono}>
+                  {formatPercent(totals.requirementsMetRate ?? 0)}
+                </div>
+                <div className="text-[11px] text-emerald-800/70 dark:text-emerald-200/70">
+                  {totals.requirementsMetSessions ?? 0} of {totals.completed} completed
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              <span className="font-medium text-foreground">Requirements met</span> means the bidder
+              completed the session after analyzing the JD, kept Remote / No clearance non-red, and
+              uploaded a resume whose original filename matches the recommended stack.
+            </p>
+          </ChartCard>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <ChartCard

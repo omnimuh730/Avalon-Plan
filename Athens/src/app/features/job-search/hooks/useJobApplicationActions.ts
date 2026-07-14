@@ -5,7 +5,7 @@ import { useApplier } from "@/context/applier-context";
 import { API_BASE } from "@/lib/api-base";
 import { JOB_STATUS_TO_API } from "../../../api/jobs";
 import { mapDocToJob } from "../../../lib/job-adapters";
-import type { Job, JobStatus } from "../../../types";
+import type { Job } from "../../../types";
 import { isExternalJob } from "../../../types/job";
 
 type JobMutationResponse = {
@@ -13,6 +13,8 @@ type JobMutationResponse = {
   data?: Record<string, unknown>;
   message?: string;
 };
+
+type PipelineStatus = "applied" | "scheduled" | "declined";
 
 export function useJobApplicationActions(
   onJobUpdated: (job: Job) => void,
@@ -72,7 +74,7 @@ export function useJobApplicationActions(
   );
 
   const updateJobStatus = useCallback(
-    async (job: Job, status: Exclude<JobStatus, "posted">) => {
+    async (job: Job, status: PipelineStatus) => {
       if (isExternalJob(job)) return;
       const jobId = job.backendId || job.id;
       if (!applier?.name) {
@@ -114,7 +116,11 @@ export function useJobApplicationActions(
       try {
         let res: JobMutationResponse;
 
-        if (job.status === "applied") {
+        if (
+          job.status === "applied" ||
+          job.status === "bid-ready" ||
+          job.status === "bid-completed"
+        ) {
           res = (await post(`/jobs/${jobId}/unapply`, {
             applierName: applier.name,
           })) as JobMutationResponse;
@@ -130,7 +136,13 @@ export function useJobApplicationActions(
         if (res?.success && res.data) {
           onJobUpdated(mapDocToJob(res.data, applier));
           await refreshStatusCounts();
-          toast.success(job.status === "applied" ? "Application removed" : "Moved back to Applied");
+          const message =
+            job.status === "bid-ready" || job.status === "bid-completed"
+              ? "Bid status cleared"
+              : job.status === "applied"
+                ? "Application removed"
+                : "Moved back to Applied";
+          toast.success(message);
         }
       } catch {
         toast.error("Failed to cancel status");

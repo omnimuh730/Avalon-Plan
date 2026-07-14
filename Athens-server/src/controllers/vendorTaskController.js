@@ -20,6 +20,62 @@ function normalizeUrlKey(url) {
 	}
 }
 
+function toObjectId(value) {
+	if (!value) return null;
+	if (value instanceof ObjectId) return value;
+	try {
+		return new ObjectId(String(value));
+	} catch {
+		return null;
+	}
+}
+
+async function resolveApplierId(applierName) {
+	if (!applierName || !accountInfoCollection) return null;
+	const doc = await accountInfoCollection.findOne({ name: applierName }, { projection: { _id: 1 } });
+	return doc?._id ?? null;
+}
+
+/**
+ * Permanently mark a job as bid-ready / bid-completed for an applier on job_market.status[].
+ * Does not set appliedDate — that stays a separate pipeline step.
+ * Existing bid dates are left unchanged.
+ */
+async function upsertJobBidStatus(applierName, jobId, { bidReady = false, bidCompleted = false } = {}) {
+	if (!jobsCollection || !applierName || !jobId) return;
+	const objectId = toObjectId(jobId);
+	const applierId = await resolveApplierId(applierName);
+	if (!objectId || !applierId) return;
+
+	const now = new Date().toISOString();
+	const existing = await jobsCollection.findOne(
+		{ _id: objectId, "status.applier": applierId },
+		{ projection: { status: 1 } },
+	);
+
+	if (!existing) {
+		const entry = { applier: applierId };
+		if (bidReady) entry.bidReadyDate = now;
+		if (bidCompleted) entry.bidCompletedDate = now;
+		await jobsCollection.updateOne({ _id: objectId }, { $push: { status: entry } });
+		return;
+	}
+
+	const entry = (Array.isArray(existing.status) ? existing.status : []).find(
+		(s) => s && String(s.applier) === String(applierId),
+	);
+	const $set = {};
+	if (bidReady && !entry?.bidReadyDate) $set["status.$[elem].bidReadyDate"] = now;
+	if (bidCompleted && !entry?.bidCompletedDate) $set["status.$[elem].bidCompletedDate"] = now;
+	if (!Object.keys($set).length) return;
+
+	await jobsCollection.updateOne(
+		{ _id: objectId },
+		{ $set },
+		{ arrayFilters: [{ "elem.applier": applierId }] },
+	);
+}
+
 function serializeTask(doc, sessionMatch = null) {
 	const applyUrl = doc.applyUrl ?? null;
 	const jobSource = detectJobSource(applyUrl);
@@ -140,6 +196,18 @@ export async function listVendorTasks(req, res) {
 			serializeTask(doc, findSessionMatch(doc.applyUrl, matchMap)),
 		);
 
+		// Backfill permanent Job Search statuses for pool jobs.
+		await Promise.all(
+			tasks
+				.filter((t) => t.jobId)
+				.map((t) =>
+					upsertJobBidStatus(applierName, t.jobId, {
+						bidReady: true,
+						bidCompleted: t.progress === "completed",
+					}),
+				),
+		);
+
 		const totals = {
 			total: tasks.length,
 			pending: tasks.filter((t) => t.status === "pending" && t.progress === "idle").length,
@@ -243,6 +311,12 @@ export async function addVendorTasks(req, res) {
 			}
 		}
 
+		await Promise.all(
+			inserted
+				.filter((d) => d.jobId)
+				.map((d) => upsertJobBidStatus(applierName, d.jobId, { bidReady: true })),
+		);
+
 		return res.json({
 			success: true,
 			added: inserted.map((d) => serializeTask(d)),
@@ -292,6 +366,10 @@ export async function updateVendorTask(req, res) {
 		const doc = result?.value ?? result;
 		if (!doc || !doc._id) {
 			return res.status(404).json({ success: false, error: "Task not found." });
+		}
+
+		if (status === "done" && doc.jobId && doc.applierName) {
+			await upsertJobBidStatus(doc.applierName, doc.jobId, { bidCompleted: true });
 		}
 
 		return res.json({ success: true, task: serializeTask(doc) });

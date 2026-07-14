@@ -135,7 +135,7 @@ function MonitorRow({
 export function TaskPoolView() {
   const [mode, setMode] = useState<PoolMode>("edit");
   const [filters, setFilters] = useState<JobSearchFilterState>(POOL_FILTERS);
-  const [showScores, setShowScores] = useState(true);
+  const [showScores, setShowScores] = useState(false);
   const [monitorFilter, setMonitorFilter] = useState<"all" | VendorTaskProgress>("all");
   const [pickedById, setPickedById] = useState<Map<string, Job>>(() => new Map());
 
@@ -149,6 +149,8 @@ export function TaskPoolView() {
     setPage,
     setPageSize,
     statusCounts,
+    removeJobsById,
+    refreshStatusCounts,
   } = useJobsList(filters);
   const { selectedIds, selectJob, selectAllOnPage, clearSelection } = useJobSelection(jobs);
 
@@ -203,10 +205,15 @@ export function TaskPoolView() {
     }
     try {
       const result = await pool.addJobs(selectableJobs);
+      const addedIds = selectableJobs.map((j) => j.id);
+      removeJobsById(addedIds);
+      void refreshStatusCounts();
       clearSelection();
       setPickedById(new Map());
       toast.success(`Added ${result.addedCount} to task pool`, {
-        description: result.skippedCount ? `${result.skippedCount} already in pool` : undefined,
+        description: result.skippedCount
+          ? `${result.skippedCount} already in pool`
+          : "Marked as Bid ready in Job Search",
       });
     } catch {
       /* error surfaced on pool.error */
@@ -226,8 +233,9 @@ export function TaskPoolView() {
       <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
         <div>
           <p className="text-sm text-muted-foreground">
-            Assign not-yet-applied jobs to this vendor as tasks. Edit the pool with Job Search filters, then monitor
-            progress against bid sessions.
+            Assign New jobs to this vendor as tasks. Adding a job permanently marks it{" "}
+            <span className="font-semibold text-foreground">Bid ready</span> in Job Search. Use the
+            sidebar or Job Search button above to leave this page.
           </p>
           <div className="flex items-center gap-2 mt-2 flex-wrap">
             <Badge v="subtle">Pool {pool.totals.total}</Badge>

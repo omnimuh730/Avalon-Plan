@@ -1,7 +1,13 @@
 export type WorkMode = "remote" | "hybrid" | "onsite";
 
 /** Application pipeline status for Job Search & analytics (Athens-server job_market). */
-export type JobStatus = "posted" | "applied" | "scheduled" | "declined";
+export type JobStatus =
+  | "posted"
+  | "bid-ready"
+  | "bid-completed"
+  | "applied"
+  | "scheduled"
+  | "declined";
 
 export type SkillAnalysisStatus = "pending" | "queued" | "analyzing" | "analyzed" | "failed";
 

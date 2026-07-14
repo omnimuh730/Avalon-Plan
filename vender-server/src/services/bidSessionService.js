@@ -112,6 +112,7 @@ function sanitizeResumeUpload(entry) {
   if (!originalName) return null;
   const cleanedName = cleanString(entry.cleanedName) || null;
   const sourceRaw = cleanString(entry.source).toLowerCase();
+  const recommendedResumeName = cleanString(entry.recommendedResumeName) || null;
   return {
     originalName,
     cleanedName,
@@ -119,6 +120,7 @@ function sanitizeResumeUpload(entry) {
     source: RESUME_UPLOAD_SOURCES.has(sourceRaw) ? sourceRaw : 'input',
     pageUrl: cleanString(entry.pageUrl || entry.url) || null,
     ts: Number.isFinite(Number(entry.ts)) ? Number(entry.ts) : Date.now(),
+    recommendedResumeName,
   };
 }
 
@@ -183,6 +185,7 @@ function buildRecord(sessionId, applierName, type, body) {
     cleanedName: resumeUpload?.cleanedName ?? null,
     renamed: resumeUpload?.renamed ?? false,
     uploadSource: resumeUpload?.source ?? null,
+    recommendedResumeName: resumeUpload?.recommendedResumeName ?? null,
     resumeUploads,
     createdAt: new Date(),
   };

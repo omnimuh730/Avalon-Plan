@@ -110,10 +110,14 @@ export function computeSkillHighlights(
 }
 
 export function rescoreJobWithContext(job: Job, ctx: ProfileMatchContext): Job {
-  const highlights = computeSkillHighlights(job.skills, ctx);
+  const skillNames =
+    job.skills.length > 0
+      ? job.skills
+      : (job.aiSkills?.map((s) => s.name).filter(Boolean) ?? []);
+  const highlights = computeSkillHighlights(skillNames, ctx);
   const covered = highlights.filter((h) => h.matched).length;
   const required = highlights.length;
-  const skill = required ? Math.round((covered / required) * 100) : 0;
+  const skill = required ? Math.round((covered / required) * 100) : job.scores.skill;
   const vector = job.scores.vector;
   const overall =
     vector != null && vector > 0
@@ -132,4 +136,16 @@ export function rescoreJobWithContext(job: Job, ctx: ProfileMatchContext): Job {
     },
     matchScore: overall,
   };
+}
+
+/**
+ * Align list-card scores with the JD modal: keep backend highlights when present,
+ * otherwise recompute coverage from the current profile match context.
+ */
+export function alignJobScoreForDisplay(job: Job, ctx: ProfileMatchContext | null | undefined): Job {
+  if (!ctx?.profileTokens.length && !ctx?.profileCompacts.length) return job;
+  if (job.skillHighlights?.length) return job;
+  const hasSkills = job.skills.length > 0 || (job.aiSkills?.length ?? 0) > 0;
+  if (!hasSkills) return job;
+  return rescoreJobWithContext(job, ctx);
 }

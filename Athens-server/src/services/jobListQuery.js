@@ -60,6 +60,31 @@ function applyStatusFilter(query, { appliedBool, status, applierId }) {
 				query.$and.push({
 					status: { $elemMatch: { applier: applierId, declinedDate: { $exists: true } } },
 				});
+			} else if (status === 'BidReady') {
+				query.$and.push({
+					status: {
+						$elemMatch: {
+							applier: applierId,
+							bidReadyDate: { $exists: true },
+							bidCompletedDate: { $exists: false },
+							appliedDate: { $exists: false },
+							scheduledDate: { $exists: false },
+							declinedDate: { $exists: false },
+						},
+					},
+				});
+			} else if (status === 'BidCompleted') {
+				query.$and.push({
+					status: {
+						$elemMatch: {
+							applier: applierId,
+							bidCompletedDate: { $exists: true },
+							appliedDate: { $exists: false },
+							scheduledDate: { $exists: false },
+							declinedDate: { $exists: false },
+						},
+					},
+				});
 			} else {
 				query.$and.push({ status: { $elemMatch: { applier: applierId } } });
 			}
@@ -79,6 +104,29 @@ function applyStatusFilter(query, { appliedBool, status, applierId }) {
 				query.$and.push({ status: { $elemMatch: { scheduledDate: { $exists: true } } } });
 			} else if (status === 'Declined') {
 				query.$and.push({ status: { $elemMatch: { declinedDate: { $exists: true } } } });
+			} else if (status === 'BidReady') {
+				query.$and.push({
+					status: {
+						$elemMatch: {
+							bidReadyDate: { $exists: true },
+							bidCompletedDate: { $exists: false },
+							appliedDate: { $exists: false },
+							scheduledDate: { $exists: false },
+							declinedDate: { $exists: false },
+						},
+					},
+				});
+			} else if (status === 'BidCompleted') {
+				query.$and.push({
+					status: {
+						$elemMatch: {
+							bidCompletedDate: { $exists: true },
+							appliedDate: { $exists: false },
+							scheduledDate: { $exists: false },
+							declinedDate: { $exists: false },
+						},
+					},
+				});
 			}
 		}
 	}
@@ -119,7 +167,7 @@ const SCORE_FILTER_KEYS = new Set([
 
 /**
  * Build a Mongo filter for POST /jobs/list from the request body.
- * Pass statusTab to override applied/status: all | posted | applied | scheduled | declined
+ * Pass statusTab to override applied/status: all | posted | bid-ready | bid-completed | applied | scheduled | declined
  */
 export async function buildJobsListQuery(body, { statusTab } = {}) {
 	const {
@@ -219,6 +267,12 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 		} else if (statusTab === 'declined') {
 			appliedBool = true;
 			statusFilter = 'Declined';
+		} else if (statusTab === 'bid-ready') {
+			appliedBool = true;
+			statusFilter = 'BidReady';
+		} else if (statusTab === 'bid-completed') {
+			appliedBool = true;
+			statusFilter = 'BidCompleted';
 		} else {
 			appliedBool = undefined;
 			statusFilter = undefined;
@@ -244,7 +298,7 @@ export async function buildJobsListQuery(body, { statusTab } = {}) {
 }
 
 /** Status tab keys aligned with the Athens frontend. */
-export const STATUS_TABS = ['all', 'posted', 'applied', 'scheduled', 'declined'];
+export const STATUS_TABS = ['all', 'posted', 'bid-ready', 'bid-completed', 'applied', 'scheduled', 'declined'];
 
 /** Fields omitted from list responses to reduce payload size. */
 export const JOB_LIST_PROJECTION = { description: 0, jobDescription: 0 };

@@ -30,6 +30,8 @@ type CountsResponse = {
 const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
   all: 0,
   posted: 0,
+  "bid-ready": 0,
+  "bid-completed": 0,
   applied: 0,
   scheduled: 0,
   declined: 0,
@@ -37,6 +39,8 @@ const EMPTY_STATUS_COUNTS: Record<JobStatusTab, number> = {
 
 function statusTabToApi(statusTab: JobStatusTab): { applied?: boolean; status?: string } {
   if (statusTab === "posted") return { applied: false };
+  if (statusTab === "bid-ready") return { applied: true, status: "BidReady" };
+  if (statusTab === "bid-completed") return { applied: true, status: "BidCompleted" };
   if (statusTab === "applied") return { applied: true, status: "Applied" };
   if (statusTab === "scheduled") return { applied: true, status: "Scheduled" };
   if (statusTab === "declined") return { applied: true, status: "Declined" };
@@ -265,6 +269,16 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     setRawJobs((prev) => prev.map((job) => (job.id === updated.id ? updated : job)));
   }, []);
 
+  const removeJobsById = useCallback((ids: string[]) => {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    setRawJobs((prev) => {
+      const next = prev.filter((job) => !idSet.has(job.id) && !idSet.has(job.backendId || ""));
+      setTotal((t) => Math.max(0, t - (prev.length - next.length)));
+      return next;
+    });
+  }, []);
+
   const refreshStatusCounts = useCallback(async () => {
     if (!applierReady) return;
     try {
@@ -293,6 +307,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     recommendationWarming,
     catalogTotal,
     patchJob,
+    removeJobsById,
     refreshStatusCounts,
   };
 }

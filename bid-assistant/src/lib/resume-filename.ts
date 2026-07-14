@@ -76,3 +76,37 @@ export function shouldRenameResume(
   if (!cleaned || cleaned === originalName) return null;
   return cleaned;
 }
+
+/** Strip .pdf / .docx so "C# + Java.docx" can match recommended "C# + Java". */
+export function stripResumeExtension(name: string): string {
+  return String(name ?? '')
+    .replace(/\.(pdf|docx)$/i, '')
+    .trim();
+}
+
+export function normalizeResumeLabel(name: string): string {
+  return stripResumeExtension(name)
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export type ResumeRecommendMatch = 'match' | 'mismatch' | 'unknown';
+
+/**
+ * Compare the bidder's original upload filename to the Analyze recommended
+ * resume stack label (e.g. "C# + Java.docx" ↔ "C# + Java").
+ */
+export function matchUploadToRecommended(
+  originalName: string | null | undefined,
+  recommendedName: string | null | undefined,
+): ResumeRecommendMatch {
+  if (!originalName?.trim() || !recommendedName?.trim()) return 'unknown';
+  const upload = normalizeResumeLabel(originalName);
+  const recommended = normalizeResumeLabel(recommendedName);
+  if (!upload || !recommended) return 'unknown';
+  if (upload === recommended) return 'match';
+  if (upload.includes(recommended) || recommended.includes(upload)) return 'match';
+  return 'mismatch';
+}

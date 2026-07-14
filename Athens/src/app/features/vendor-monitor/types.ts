@@ -7,6 +7,8 @@ export interface ResumeUploadInfo {
   source?: string | null;
   pageUrl?: string | null;
   ts?: number;
+  /** Recommended resume stack at upload time (e.g. "C# + Java"). */
+  recommendedResumeName?: string | null;
 }
 
 /** Traffic-light screening — matches bid-assistant BidFlagVerdicts. */
@@ -41,6 +43,8 @@ export interface BidSessionSummary {
   jobSource?: JobSource | null;
   modelVersion?: string | null;
   resumeUploads?: ResumeUploadInfo[];
+  /** Latest Analyze recommended resume stack for this session. */
+  recommendedResumeName?: string | null;
   /** True once at least one JD analysis was persisted for the session. */
   jdAnalyzed?: boolean;
   /** Screening traffic lights (remote / no clearance). */
@@ -93,6 +97,7 @@ export interface BidRecord {
   cleanedName?: string | null;
   renamed?: boolean;
   uploadSource?: string | null;
+  recommendedResumeName?: string | null;
   resumeUploads?: ResumeUploadInfo[];
   createdAt: string;
 }
@@ -113,6 +118,18 @@ export interface VendorAnalyticsTotals {
   resumeUploadCount: number;
   avgDurationMs: number;
   completionRate: number;
+  /** Sessions with at least one JD analysis. */
+  analyzedSessions?: number;
+  /** Sessions whose Remote / No clearance lights are not red. */
+  screeningClearSessions?: number;
+  /** Sessions where an uploaded original name matched recommended resume. */
+  resumeMatchedSessions?: number;
+  /** Completed sessions that kept all requirements. */
+  requirementsMetSessions?: number;
+  analyzedRate?: number;
+  screeningClearRate?: number;
+  resumeMatchRate?: number;
+  requirementsMetRate?: number;
 }
 
 export interface VendorAnalyticsByDay {

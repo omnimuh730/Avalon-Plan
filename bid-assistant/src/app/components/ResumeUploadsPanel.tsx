@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FileUp, Trash2 } from 'lucide-react';
 import { useResumeUploads } from '@/app/hooks/useResumeUploads';
-import { profileNameToFileBase } from '@/lib/resume-filename';
+import { matchUploadToRecommended, profileNameToFileBase } from '@/lib/resume-filename';
 import { Button } from './ui/button';
 
 function formatTime(ts: number): string {
@@ -53,7 +53,43 @@ function useProfileFileBase(): string | null {
   return fileBase;
 }
 
-export function ResumeUploadsPanel() {
+function RecommendMatchLine({
+  originalName,
+  recommendedName,
+}: {
+  originalName: string;
+  recommendedName: string | null | undefined;
+}) {
+  const match = matchUploadToRecommended(originalName, recommendedName);
+  if (match === 'unknown') {
+    return (
+      <div className="text-[10px] text-muted-foreground/90">
+        {recommendedName
+          ? `Recommended: ${recommendedName}`
+          : 'Analyze first to compare with recommended resume'}
+      </div>
+    );
+  }
+  if (match === 'match') {
+    return (
+      <div className="text-[10px] font-medium text-emerald-400">
+        Matches recommended · {recommendedName}
+      </div>
+    );
+  }
+  return (
+    <div className="text-[10px] font-medium text-amber-400">
+      Differs from recommended · {recommendedName}
+    </div>
+  );
+}
+
+export function ResumeUploadsPanel({
+  recommendedResumeName = null,
+}: {
+  /** Current Analyze recommended resume stack (e.g. "C# + Java"). */
+  recommendedResumeName?: string | null;
+}) {
   const { uploads, clear } = useResumeUploads();
   const fileBase = useProfileFileBase();
 
@@ -97,64 +133,78 @@ export function ResumeUploadsPanel() {
           ) : (
             <span className="text-amber-400">load a profile first</span>
           )}
-          .
+          . Every upload is logged (including re-uploads).
         </p>
+
+        {recommendedResumeName && (
+          <p className="text-[11px] text-foreground/90">
+            Recommended resume:{' '}
+            <span className="font-semibold text-violet-300">{recommendedResumeName}</span>
+          </p>
+        )}
 
         {uploads.length === 0 ? (
           <p className="text-[11px] text-muted-foreground/80 italic">
             No resume uploads detected yet on this browser.
           </p>
         ) : (
-          <ul className="space-y-1.5 max-h-48 overflow-y-auto subtle-scroll">
-            {uploads.map((item) => (
-              <li
-                key={item.id}
-                className="rounded-lg border border-border/60 bg-muted/20 px-2 py-1.5 space-y-0.5"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                      Original
-                    </div>
-                    <div
-                      className="text-[11px] text-foreground font-medium truncate"
-                      title={item.originalName}
-                    >
-                      {item.originalName}
-                    </div>
-                    {item.renamed && item.cleanedName ? (
-                      <>
-                        <div className="text-[10px] text-muted-foreground uppercase tracking-wide pt-0.5">
-                          Uploaded as
-                        </div>
-                        <div
-                          className="text-[11px] text-emerald-400 font-medium truncate"
-                          title={item.cleanedName}
-                        >
-                          {item.cleanedName}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="text-[10px] text-amber-400/90">
-                        {item.profileFileBase
-                          ? 'Name already matched profile'
-                          : 'Not renamed (no profile loaded)'}
+          <ul className="space-y-1.5 max-h-56 overflow-y-auto subtle-scroll">
+            {uploads.map((item) => {
+              const recommended = item.recommendedResumeName || recommendedResumeName;
+              return (
+                <li
+                  key={item.id}
+                  className="rounded-lg border border-border/60 bg-muted/20 px-2 py-1.5 space-y-0.5"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                        Original
                       </div>
-                    )}
+                      <div
+                        className="text-[11px] text-foreground font-medium truncate"
+                        title={item.originalName}
+                      >
+                        {item.originalName}
+                      </div>
+                      {item.renamed && item.cleanedName ? (
+                        <>
+                          <div className="text-[10px] text-muted-foreground uppercase tracking-wide pt-0.5">
+                            Uploaded as
+                          </div>
+                          <div
+                            className="text-[11px] text-emerald-400 font-medium truncate"
+                            title={item.cleanedName}
+                          >
+                            {item.cleanedName}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-[10px] text-amber-400/90">
+                          {item.profileFileBase
+                            ? 'Name already matched profile'
+                            : 'Not renamed (no profile loaded)'}
+                        </div>
+                      )}
+                      <RecommendMatchLine
+                        originalName={item.originalName}
+                        recommendedName={recommended}
+                      />
+                    </div>
+                    <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
+                      {formatTime(item.ts)}
+                    </span>
                   </div>
-                  <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
-                    {formatTime(item.ts)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/80">
-                  <span className="uppercase tracking-wide">{item.source}</span>
-                  <span>·</span>
-                  <span className="truncate" title={item.pageUrl}>
-                    {shortUrl(item.pageUrl)}
-                  </span>
-                </div>
-              </li>
-            ))}
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/80">
+                    <span className="uppercase tracking-wide">{item.source}</span>
+                    <span>·</span>
+                    <span className="truncate" title={item.pageUrl}>
+                      {shortUrl(item.pageUrl)}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

@@ -77,7 +77,7 @@ export function AppRoutes() {
         />
         <Route path={PATHS.aiUsage.slice(1)} element={<AiUsagePage />} />
         <Route
-          path={PATHS.vendorMonitor.slice(1)}
+          path={`${PATHS.vendorMonitor.slice(1)}/:tab?`}
           element={
             <ProRoute>
               <VendorMonitorPage />
