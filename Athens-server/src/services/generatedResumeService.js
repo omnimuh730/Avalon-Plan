@@ -40,6 +40,9 @@ export async function syncGeneratedResumeAfterRun({
   techStack,
   skillAnalysisError,
   generateParentJobId,
+  titlePolicyFingerprint,
+  titlePolicyVersion,
+  isBeta,
 }) {
   if (!userResumesCollection || !sections || !ownerName) return null;
 
@@ -59,6 +62,8 @@ export async function syncGeneratedResumeAfterRun({
 
   const buffer = Buffer.from(extractedText || "Generated resume", "utf8");
   const parentJobId = cleanString(generateParentJobId) || null;
+  const fingerprint = cleanString(titlePolicyFingerprint) || null;
+  const policyVersion = titlePolicyVersion ?? null;
   const doc = {
     ownerId,
     ownerName,
@@ -79,6 +84,9 @@ export async function syncGeneratedResumeAfterRun({
     analyzedAt: analyzed ? now : null,
     skillProfile: profile,
     analysisError: skillAnalysisError ?? null,
+    titlePolicyFingerprint: fingerprint,
+    titlePolicyVersion: policyVersion,
+    isBeta: Boolean(isBeta),
     uploadedAt: now,
     updatedAt: now,
   };
@@ -103,6 +111,9 @@ export async function syncGeneratedResumeAfterRun({
             analysisError: skillAnalysisError ?? null,
             templateId: templateId ?? null,
             generateParentJobId: parentJobId ?? existing.generateParentJobId ?? null,
+            titlePolicyFingerprint: fingerprint ?? existing.titlePolicyFingerprint ?? null,
+            titlePolicyVersion: policyVersion ?? existing.titlePolicyVersion ?? null,
+            isBeta: Boolean(isBeta),
             updatedAt: now,
             contentBase64: doc.contentBase64,
             sizeBytes: doc.sizeBytes,
@@ -134,6 +145,9 @@ export async function syncGeneratedResumeAfterRun({
             analysisError: skillAnalysisError ?? null,
             templateId: templateId ?? null,
             generationId: generationId ? String(generationId) : prior.generationId,
+            titlePolicyFingerprint: fingerprint ?? prior.titlePolicyFingerprint ?? null,
+            titlePolicyVersion: policyVersion ?? prior.titlePolicyVersion ?? null,
+            isBeta: Boolean(isBeta),
             updatedAt: now,
             contentBase64: doc.contentBase64,
             sizeBytes: doc.sizeBytes,
@@ -162,6 +176,13 @@ export async function syncGeneratedResumeAfterRun({
           analyzedAt: analyzed ? now : null,
           skillAnalysisError: skillAnalysisError ?? null,
           libraryResumeId: resumeIdStr,
+          ...(fingerprint
+            ? {
+                titlePolicyFingerprint: fingerprint,
+                titlePolicyVersion: policyVersion,
+                isBeta: Boolean(isBeta),
+              }
+            : {}),
         },
       },
     );

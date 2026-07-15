@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
+import { pdfRenderLimiter } from "../utils/concurrency.js";
 
 /**
  * Server-side resume PDF rendering.
@@ -101,15 +102,17 @@ export async function htmlToPdf({ html, paper = "letter", marginInches, font, ba
 	const body = typeof html === "string" ? html : "";
 	if (!body.trim()) throw new Error("html is required");
 	const doc = buildHtmlDocument({ html: body, paper: paper === "a4" ? "a4" : "letter", marginInches, font, baseSizePt, fontLinks });
-	const browser = await getBrowser();
-	const page = await browser.newPage();
-	try {
-		await page.setContent(doc, { waitUntil: "networkidle0", timeout: 30000 });
-		await page.evaluate(async () => { if (document.fonts && document.fonts.ready) await document.fonts.ready; });
-		return await page.pdf({ printBackground: true, preferCSSPageSize: true });
-	} finally {
-		await page.close().catch(() => {});
-	}
+	return pdfRenderLimiter.run(async () => {
+		const browser = await getBrowser();
+		const page = await browser.newPage();
+		try {
+			await page.setContent(doc, { waitUntil: "networkidle0", timeout: 30000 });
+			await page.evaluate(async () => { if (document.fonts && document.fonts.ready) await document.fonts.ready; });
+			return await page.pdf({ printBackground: true, preferCSSPageSize: true });
+		} finally {
+			await page.close().catch(() => {});
+		}
+	});
 }
 
 /** POST /personal/resume-pdf — render the preview DOM to a downloadable PDF. */

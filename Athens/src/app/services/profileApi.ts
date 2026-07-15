@@ -5,6 +5,7 @@ import {
   mapProfileFromApi,
   type UserProfile,
 } from "../data/settings/profile";
+import { streamSSE } from "../features/resumes/lib/sse";
 
 export type NotificationPrefs = {
   applications: boolean;
@@ -73,6 +74,125 @@ export async function saveAutoBidProfile(
     return { success: false, error: data?.error || "Save failed" };
   }
   return { success: true };
+}
+
+/** Beta-only: refresh all generated résumé PDFs/identity from the current profile (no LLM). */
+export async function refreshGeneratedResumesIdentity(applierName: string): Promise<{
+  success: boolean;
+  updated?: number;
+  pdfs?: number;
+  total?: number;
+  error?: string;
+  betaRequired?: boolean;
+}> {
+  const url = `${API_BASE.replace(/\/$/, "")}/personal/resume-generations/refresh-identity`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applierName }),
+  });
+  const data = (await parseJson(res)) as {
+    success?: boolean;
+    updated?: number;
+    pdfs?: number;
+    total?: number;
+    error?: string;
+    betaRequired?: boolean;
+  } | null;
+  if (!res.ok || !data?.success) {
+    return {
+      success: false,
+      error: data?.error || "Refresh failed",
+      betaRequired: Boolean(data?.betaRequired),
+    };
+  }
+  return {
+    success: true,
+    updated: data.updated,
+    pdfs: data.pdfs,
+    total: data.total,
+  };
+}
+
+export type RefreshResumesProgress = {
+  done: number;
+  total: number;
+  left: number;
+  updated: number;
+  pdfs: number;
+  skipped: number;
+  failed: number;
+  active: number;
+  phase: string;
+};
+
+/**
+ * Beta-only streaming refresh with live progress (done / left / active).
+ * Processes résumés in parallel on the server.
+ */
+export async function refreshGeneratedResumesIdentityStream(
+  applierName: string,
+  onProgress?: (progress: RefreshResumesProgress) => void,
+  signal?: AbortSignal,
+): Promise<{
+  success: boolean;
+  updated?: number;
+  pdfs?: number;
+  total?: number;
+  skipped?: number;
+  failed?: number;
+  error?: string;
+  betaRequired?: boolean;
+}> {
+  const url = `${API_BASE.replace(/\/$/, "")}/personal/resume-generations/refresh-identity/stream`;
+  let donePayload: Record<string, unknown> | null = null;
+  let streamError: string | null = null;
+  let betaRequired = false;
+
+  await streamSSE(
+    url,
+    { applierName },
+    (event, data) => {
+      if (event === "progress") {
+        onProgress?.({
+          done: Number(data.done ?? 0),
+          total: Number(data.total ?? 0),
+          left: Number(data.left ?? 0),
+          updated: Number(data.updated ?? 0),
+          pdfs: Number(data.pdfs ?? 0),
+          skipped: Number(data.skipped ?? 0),
+          failed: Number(data.failed ?? 0),
+          active: Number(data.active ?? 0),
+          phase: String(data.phase ?? "progress"),
+        });
+        return;
+      }
+      if (event === "done") {
+        donePayload = data;
+        return;
+      }
+      if (event === "error") {
+        streamError = String(data.error ?? "Refresh failed");
+        betaRequired = Boolean(data.betaRequired);
+      }
+    },
+    signal,
+  );
+
+  if (streamError) {
+    return { success: false, error: streamError, betaRequired };
+  }
+  if (!donePayload) {
+    return { success: false, error: "Refresh ended without a result" };
+  }
+  return {
+    success: true,
+    updated: Number(donePayload.updated ?? 0),
+    pdfs: Number(donePayload.pdfs ?? 0),
+    total: Number(donePayload.total ?? 0),
+    skipped: Number(donePayload.skipped ?? 0),
+    failed: Number(donePayload.failed ?? 0),
+  };
 }
 
 /** List available models for a provider (uses the profile's stored key for OpenAI). */

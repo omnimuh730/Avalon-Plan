@@ -3,7 +3,7 @@ import { Crown, Linkedin, Github, Globe } from "lucide-react";
 import { Av } from "../../../components/ui";
 import { computeProfileCompletion } from "../../../data/settings/profileCompletion";
 import type { UserProfile } from "../../../data/settings/profile";
-import { isProTier } from "../../../lib/pro";
+import { isBetaTier } from "../../../lib/beta";
 
 export function ProfileBanner({ profile, tier }: { profile: UserProfile; tier?: string | null }) {
   const pct = computeProfileCompletion(profile);
@@ -11,7 +11,7 @@ export function ProfileBanner({ profile, tier }: { profile: UserProfile; tier?: 
   const offset = circumference - (pct / 100) * circumference;
   const displayName =
     profile.fullName.trim() || `${profile.firstName} ${profile.lastName}`.trim() || "Your profile";
-  const pro = isProTier(tier);
+  const beta = isBetaTier(tier);
 
   return (
     <div className="bg-gradient-to-br from-primary/10 via-card to-violet-500/5 border border-border rounded-2xl p-5 shadow-sm mb-4">
@@ -20,11 +20,13 @@ export function ProfileBanner({ profile, tier }: { profile: UserProfile; tier?: 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0 flex-wrap">
             <h2 className="text-xl font-bold text-foreground truncate">{displayName}</h2>
-            {pro && (
+            {beta ? (
               <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-700">
                 <Crown className="w-3.5 h-3.5" />
-                Pro
+                Beta
               </span>
+            ) : (
+              <span className="text-xs font-semibold text-muted-foreground">Job seeker</span>
             )}
           </div>
           <p className="text-sm text-muted-foreground mt-1 truncate">

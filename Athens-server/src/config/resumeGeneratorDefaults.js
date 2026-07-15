@@ -71,7 +71,7 @@ function defaultPromptFor(purpose, kind) {
     case "skills":
       return "Group the candidate's most relevant skills into labeled categories (e.g. Programming Languages, Frameworks, Databases, Cloud & DevOps) for the target role. Return JSON matching the schema.";
     case "experience":
-      return "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Return JSON matching the schema.";
+      return "Rewrite each work experience into strong, quantified, action-oriented bullet points tailored to the target role. Job titles follow server policy: Beta accounts may use concise JD-aligned titles with a plausible career progression; all other accounts keep Profile Settings titles exactly. Return JSON matching the schema.";
     default:
       return "";
   }

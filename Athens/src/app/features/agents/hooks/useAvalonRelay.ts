@@ -35,7 +35,7 @@ import {
   generateJobResumeStream,
   type ResumeSectionPurpose,
 } from "../../../api/jobs";
-import { isProTier } from "../../../lib/pro";
+import { isBetaTier } from "../../../lib/beta";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { clampJobBudgetUsd, loadJobBudgetUsd, saveJobBudgetUsd } from "../lib/agentBudget";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
@@ -284,7 +284,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const persistKey = options?.persistKey;
   const initialPersisted = useMemo(() => (persistKey ? loadPersistedQueue(persistKey) : null), [persistKey]);
   const persistSession = options?.persist !== false;
-  const accountIsPro = isProTier(options?.accountTier);
+  const accountIsBeta = isBetaTier(options?.accountTier);
   const [serverUrl, setServerUrl] = useState(() => avalonRelayUrl());
   const [sessionId, setSessionId] = useState(() => options?.sessionId ?? storedAvalonSessionId());
   const [connected, setConnected] = useState(false);
@@ -1110,7 +1110,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   useEffect(() => {
     submissionKitCacheRef.current = null;
     setKitSubmitJobId(null);
-  }, [applierName, accountIsPro]);
+  }, [applierName, accountIsBeta]);
 
   const loadSubmissionKitFile = useCallback(async (): Promise<AttachedFile> => {
     if (!applierName) throw new Error("Select an applier profile before applying");
@@ -1134,7 +1134,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
   const resolveResumeForSubmission = useCallback(
     async (job: QueuedJob, generatedFile: AttachedFile): Promise<AttachedFile> => {
-      if (accountIsPro) {
+      if (accountIsBeta) {
         setKitSubmitJobId(null);
         return {
           ...generatedFile,
@@ -1142,7 +1142,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         };
       }
       const kitFile = await loadSubmissionKitFile();
-      // Free tier uploads kit PDF bytes, but uses the same filename Pro would (generated resume name).
+      // Non-Beta tiers upload kit PDF bytes, but use the same generated-resume filename Beta uses.
       const submissionFile: AttachedFile = {
         ...kitFile,
         name: profileResumeFileName(generatedFile.name, kitFile.name),
@@ -1151,7 +1151,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       pushLog(`Resume Generator Kit PDF selected for "${job.title}" (${submissionFile.name})`, true);
       return submissionFile;
     },
-    [accountIsPro, loadSubmissionKitFile, pushLog],
+    [accountIsBeta, loadSubmissionKitFile, pushLog],
   );
 
   const analyzeTree = useCallback(async () => {
@@ -2882,7 +2882,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           mimeType: submissionFile.mimeType,
           base64Bytes: submissionFile.base64?.length ?? 0,
           generatedFileName: resumeFile.name,
-          submissionKit: !accountIsPro,
+          submissionKit: !accountIsBeta,
         });
         const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, {
           autoSubmit: true,

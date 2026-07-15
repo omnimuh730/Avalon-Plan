@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Sparkles, Wand2 } from "lucide-react";
 import { aiWriteMail } from "@/api/mail";
 import { useApplier } from "@/context/applier-context";
-import { isProTier } from "../../../lib/pro";
+import { isBetaTier } from "../../../lib/beta";
 import { AthensInput, AthensTextarea, FormField } from "../../../components/forms";
 import { SlidePanel, SlidePanelHeader } from "../../../components/overlays";
 import { Button } from "../../../components/ui/button";
@@ -35,7 +35,7 @@ export function MailComposeSheet({
 }: MailComposeSheetProps) {
   const { applier } = useApplier();
   const applierName = applier?.name;
-  const isPro = isProTier(applier?.tier);
+  const isBeta = isBetaTier(applier?.tier);
   const isAiReply = Boolean(aiAssist && replyTo);
 
   const [to, setTo] = useState("");
@@ -82,13 +82,13 @@ export function MailComposeSheet({
 
   // Auto-draft once when AI Reply opens with a thread that has readable content.
   useEffect(() => {
-    if (!open || !isAiReply || !isPro || !applierName || !replyTo) return;
+    if (!open || !isAiReply || !isBeta || !applierName || !replyTo) return;
     const key = `${replyTo.id}:ai-reply`;
     if (autoDraftKey.current === key) return;
     autoDraftKey.current = key;
     void generateDraft("reply", AI_REPLY_INTENTS.find((i) => i.id === "polite")!.prompt);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally run once per open/thread
-  }, [open, isAiReply, isPro, applierName, replyTo?.id]);
+  }, [open, isAiReply, isBeta, applierName, replyTo?.id]);
 
   const buildReplyContext = () => {
     if (!replyTo) return undefined;
@@ -236,7 +236,7 @@ export function MailComposeSheet({
           <AthensInput value={subject} onChange={(e) => setSubject(e.target.value)} />
         </FormField>
 
-        {isPro && isAiReply && (
+        {isBeta && isAiReply && (
           <div className="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
             <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-primary" />
@@ -304,7 +304,7 @@ export function MailComposeSheet({
           </div>
         )}
 
-        {isPro && !isAiReply && (
+        {isBeta && !isAiReply && (
           <div className="space-y-2 rounded-xl border border-border bg-secondary/30 p-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">

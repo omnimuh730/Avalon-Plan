@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { AlertCircle, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { checkMailCredentials, fetchMailFolderCounts, type FolderCounts } from "@/api/mail";
 import { useApplier } from "@/context/applier-context";
-import { isProTier } from "../../lib/pro";
+import { isBetaTier } from "../../lib/beta";
 import { PaginationBar } from "../../components/shared/PaginationBar";
 import { SearchField } from "../../components/shared/SearchField";
 import { PATHS } from "../../config/routes";
@@ -24,7 +24,7 @@ export function MailPage() {
   const navigate = useNavigate();
   const { applier, applierReady } = useApplier();
   const applierName = applier?.name;
-  const isPro = isProTier(applier?.tier);
+  const isBeta = isBetaTier(applier?.tier);
 
   const [folder, setFolder] = useState<MailFolderId>("inbox");
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
@@ -265,7 +265,7 @@ export function MailPage() {
               placeholder="Search mail..."
               className="flex-1 max-w-xl"
             />
-            {isPro && (
+            {isBeta && (
               <button
                 type="button"
                 onClick={() => setAiLabelOpen(true)}
@@ -336,7 +336,7 @@ export function MailPage() {
           thread={activeThread}
           fullView
           loading={detailLoading}
-          aiReplyEnabled={isPro}
+          aiReplyEnabled={isBeta}
           onBack={backToList}
           onArchive={() => activeThread && handleArchive(activeThread.id)}
           onTrash={() => activeThread && handleTrash(activeThread.id)}
@@ -354,7 +354,7 @@ export function MailPage() {
         aiAssist={mail.aiAssist}
       />
 
-      {isPro && (
+      {isBeta && (
         <MailAiLabelDialog
           open={aiLabelOpen}
           onOpenChange={setAiLabelOpen}

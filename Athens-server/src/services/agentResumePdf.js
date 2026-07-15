@@ -338,7 +338,15 @@ export function sectionsToHtml(sections, identity, config) {
  * Render the generated résumé to a PDF buffer (same pipeline + saved config as the Profile
  * page) and save a copy to a timestamped review folder. Returns { buffer, savedPath, reviewPath }.
  */
-export async function renderAgentResumePdf({ sections, identity, applierName, jobId, config }) {
+export async function renderAgentResumePdf({
+  sections,
+  identity,
+  applierName,
+  jobId,
+  config,
+  titlePolicyFingerprint,
+  identityFingerprint,
+}) {
   const theme = (config && config.theme) || {};
   const html = sectionsToHtml(sections, identity, config);
   const buffer = await htmlToPdf({
@@ -350,12 +358,14 @@ export async function renderAgentResumePdf({ sections, identity, applierName, jo
     fontLinks: fontLinks(theme.font),
   });
 
-  const { draftPath, reviewPath } = writeAgentDraftPdf({
+  const { draftPath, reviewPath } = await writeAgentDraftPdf({
     buffer,
     applierName,
     jobId,
     html,
     config,
+    titlePolicyFingerprint: titlePolicyFingerprint ?? config?.titlePolicyFingerprint,
+    identityFingerprint: identityFingerprint ?? config?.identityFingerprint,
   });
   return { buffer, savedPath: draftPath, reviewPath };
 }

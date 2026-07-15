@@ -5,7 +5,7 @@ import { PATHS } from "../config/routes";
 import { VIEW_COMPONENTS } from "../config/views";
 import { AppLayout } from "./AppLayout";
 import { ProtectedRoute } from "./ProtectedRoute";
-import { ProRoute } from "./ProRoute";
+import { BetaRoute } from "./BetaRoute";
 
 const {
   dashboard: DashboardPage,
@@ -79,9 +79,9 @@ export function AppRoutes() {
         <Route
           path={`${PATHS.vendorMonitor.slice(1)}/:tab?`}
           element={
-            <ProRoute>
+            <BetaRoute>
               <VendorMonitorPage />
-            </ProRoute>
+            </BetaRoute>
           }
         />
         <Route path={`${PATHS.settings.slice(1)}/:tab?`} element={<SettingsPage />} />
