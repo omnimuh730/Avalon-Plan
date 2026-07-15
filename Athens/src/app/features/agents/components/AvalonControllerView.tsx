@@ -741,7 +741,9 @@ export function AvalonControllerView({
           )}
           <button
             type="button"
-            onClick={() => void relay.generateActiveJobResume(hasResumeDraft)}
+            onClick={() =>
+              void relay.generateActiveJobResume(Boolean(hasResumeDraft && relay.activeResume?.file?.base64))
+            }
             disabled={!pipeline.validated || relay.generatingResume || pipelineLocked}
             className={pipelineStepClass(
               4,
@@ -753,9 +755,11 @@ export function AvalonControllerView({
             {relay.generatingResume ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
             {relay.generatingResume
               ? "Generating résumé…"
-              : hasResumeDraft
+              : hasResumeDraft && relay.activeResume?.file?.base64
                 ? "4 · Résumé ready (regenerate)"
-                : "4 · Generate / load résumé"}
+                : hasResumeDraft
+                  ? "4 · Load saved résumé"
+                  : "4 · Generate / load résumé"}
           </button>
           <button
             type="button"

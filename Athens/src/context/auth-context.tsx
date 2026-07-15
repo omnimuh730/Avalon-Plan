@@ -23,8 +23,11 @@ const AuthContext = createContext<AuthContextValue>({
 
 const AUTH_USER_KEY = "athens_auth_user";
 const AUTH_EXPIRES_KEY = "athens_auth_expires_at";
-const AUTH_TTL_MS = 3 * 60 * 60 * 1000;
+/** Sign out only after this long with no user activity. */
+const AUTH_IDLE_TTL_MS = 24 * 60 * 60 * 1000;
 const AUTH_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+/** How often activity may extend the idle window (avoids constant localStorage writes). */
+const AUTH_TOUCH_THROTTLE_MS = 60 * 1000;
 
 function clearStoredAuth() {
   localStorage.removeItem(AUTH_USER_KEY);
@@ -53,7 +56,13 @@ function loadValidUser(): AuthUser | null {
 
 function persistAuth(user: AuthUser) {
   localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
-  localStorage.setItem(AUTH_EXPIRES_KEY, String(Date.now() + AUTH_TTL_MS));
+  localStorage.setItem(AUTH_EXPIRES_KEY, String(Date.now() + AUTH_IDLE_TTL_MS));
+}
+
+/** Slide the idle expiry forward when the user is active. */
+function touchAuth() {
+  if (!localStorage.getItem(AUTH_USER_KEY)) return;
+  localStorage.setItem(AUTH_EXPIRES_KEY, String(Date.now() + AUTH_IDLE_TTL_MS));
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -69,6 +78,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const id = window.setInterval(check, AUTH_CHECK_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, []);
+
+  // While signed in, any interaction resets the 1-day idle clock.
+  useEffect(() => {
+    if (!user) return;
+
+    let lastTouch = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastTouch < AUTH_TOUCH_THROTTLE_MS) return;
+      lastTouch = now;
+      touchAuth();
+    };
+
+    const events: Array<keyof WindowEventMap> = ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "focus"];
+    for (const event of events) {
+      window.addEventListener(event, onActivity, { passive: true });
+    }
+    document.addEventListener("visibilitychange", onActivity);
+
+    return () => {
+      for (const event of events) {
+        window.removeEventListener(event, onActivity);
+      }
+      document.removeEventListener("visibilitychange", onActivity);
+    };
+  }, [user]);
 
   const signin = useCallback(
     async (name: string, password: string) => {

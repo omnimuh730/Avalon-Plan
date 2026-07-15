@@ -724,9 +724,21 @@ export async function getAgentJobResumePdf(req, res) {
       return res.status(404).json({ success: false, error: "No draft PDF for this job yet — generate résumé first" });
     }
 
-    const safeName = applierName.replace(/[^\w.\-()+ ]+/g, "_").trim() || "resume";
+    // Prefer profile full name (what employers should see), fall back to applier name.
+    // Never append job id — that leaked into Greenhouse uploads as "David Moll-6a5656e3.pdf".
+    let displayName = applierName;
+    try {
+      const { loadDecryptedAutoBidProfile } = await import("../services/autoBidProfileSecrets.js");
+      const { identityFromProfile } = await import("../utils/identityFromProfile.js");
+      const profile = await loadDecryptedAutoBidProfile(applierName);
+      const fullName = profile ? identityFromProfile(profile)?.fullName : "";
+      if (fullName) displayName = fullName;
+    } catch {
+      /* keep applierName */
+    }
+    const safeName = String(displayName).replace(/[^\w.\-()+ ]+/g, "_").trim() || "resume";
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${safeName}-${jobId.slice(0, 8)}.pdf"`);
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}.pdf"`);
     return res.end(draft.buffer);
   } catch (err) {
     console.warn("GET /api/personal/agent-job-resume/:jobId/pdf error:", err.message);

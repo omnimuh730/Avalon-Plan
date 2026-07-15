@@ -295,7 +295,22 @@ export async function findExistingAgentJobResume(applierName, jobId) {
     if (!resume && userResumesCollection) {
       resume = await userResumesCollection.findOne({ ownerName: name, generationId: String(generation._id) });
     }
-    if (resume) return { resume, generation, reused: true };
+    // Reuse completed generation sections even when library sync was skipped —
+    // otherwise Agent re-runs the LLM for a Job Search draft that already exists.
+    if (generation.sections) {
+      return {
+        resume: resume || {
+          ownerName: name,
+          generateParentJobId: parentId,
+          source: "generated",
+          generationId: String(generation._id),
+          extractedText: "",
+          techStack: "Generated",
+        },
+        generation,
+        reused: true,
+      };
+    }
   }
 
   return null;
@@ -322,46 +337,22 @@ export async function findAgentJobResumeStatuses(applierName, jobIds) {
     for (const r of resumes) found.add(String(r.generateParentJobId));
   }
 
-  // Same fallback as findExistingAgentJobResume: a completed generation counts
-  // only when a library resume is still linked to it.
+  // Same fallback as findExistingAgentJobResume: a completed generation with
+  // sections counts even when library sync was skipped.
   const remaining = ids.filter((id) => !found.has(id));
-  if (remaining.length && resumeGenerationsCollection && userResumesCollection) {
+  if (remaining.length && resumeGenerationsCollection) {
     const generations = await resumeGenerationsCollection
       .find(
-        { applierName: name, generate_parent_job_id: { $in: remaining }, status: "completed" },
-        { projection: { generate_parent_job_id: 1, libraryResumeId: 1 } },
+        {
+          applierName: name,
+          generate_parent_job_id: { $in: remaining },
+          status: "completed",
+          sections: { $exists: true, $ne: null },
+        },
+        { projection: { generate_parent_job_id: 1 } },
       )
       .toArray();
-    if (generations.length) {
-      const genIds = generations.map((g) => String(g._id));
-      const libIds = generations
-        .map((g) => {
-          try {
-            return g.libraryResumeId ? new ObjectId(String(g.libraryResumeId)) : null;
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      const resumes = await userResumesCollection
-        .find(
-          {
-            $or: [
-              { ownerName: name, generationId: { $in: genIds } },
-              ...(libIds.length ? [{ _id: { $in: libIds } }] : []),
-            ],
-          },
-          { projection: { generationId: 1 } },
-        )
-        .toArray();
-      const linkedGenIds = new Set(resumes.map((r) => String(r.generationId || "")));
-      const linkedLibIds = new Set(resumes.map((r) => String(r._id)));
-      for (const g of generations) {
-        if (linkedGenIds.has(String(g._id)) || (g.libraryResumeId && linkedLibIds.has(String(g.libraryResumeId)))) {
-          found.add(String(g.generate_parent_job_id));
-        }
-      }
-    }
+    for (const g of generations) found.add(String(g.generate_parent_job_id));
   }
 
   return [...found];
