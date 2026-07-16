@@ -17,6 +17,8 @@ export const PATHS = {
   reports: "/reports",
   aiUsage: "/ai-usage",
   vendorMonitor: "/vendor-monitor",
+  firebase: "/firebase",
+  bidManagement: "/bid-management",
   settings: "/settings",
   signin: "/signin",
   signup: "/signup",
@@ -49,6 +51,8 @@ const VIEW_TO_BASE: Record<View, string> = {
   reports: PATHS.reports,
   "ai-usage": PATHS.aiUsage,
   "vendor-monitor": PATHS.vendorMonitor,
+  firebase: PATHS.firebase,
+  "bid-management": PATHS.bidManagement,
   settings: PATHS.settings,
 };
 
@@ -97,6 +101,8 @@ export function viewFromPathname(pathname: string): View {
   if (p.startsWith(PATHS.reports)) return "reports";
   if (p.startsWith(PATHS.aiUsage)) return "ai-usage";
   if (p.startsWith(PATHS.vendorMonitor)) return "vendor-monitor";
+  if (p.startsWith(PATHS.firebase)) return "firebase";
+  if (p.startsWith(PATHS.bidManagement)) return "bid-management";
   if (p.startsWith(PATHS.settings)) return "settings";
   return "dashboard";
 }

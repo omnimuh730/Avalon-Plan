@@ -27,6 +27,7 @@ import settingsRoutes from "./src/routes/settingsRoutes.js";
 import agentRoutes from "./src/routes/agentRoutes.js";
 import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import aiUsageRoutes from "./src/routes/aiUsageRoutes.js";
+import firebaseRoutes from "./src/routes/firebaseRoutes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
 import {
 	getAutoBidProfile,
@@ -71,6 +72,7 @@ app.use('/api', settingsRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api', scrapedJobIngestRoutes);
 app.use('/api', aiUsageRoutes);
+app.use('/api', firebaseRoutes);
 
 app.get("/personal/auto-bid-profile", getAutoBidProfile);
 app.put("/personal/auto-bid-profile", upsertAutoBidProfile);

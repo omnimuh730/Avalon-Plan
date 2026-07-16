@@ -12,6 +12,8 @@ import {
   BarChart2,
   Cpu,
   Activity,
+  Flame,
+  Clapperboard,
   Settings,
 } from "lucide-react";
 import type { View } from "../types";
@@ -35,6 +37,8 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "calendar", label: "Calendar", icon: Calendar, comingSoon: true },
   { id: "interviews", label: "Interview Prep", icon: Video, comingSoon: true },
   { id: "vendor-monitor", label: "Vendor Monitor", icon: Activity, beta: true },
+  { id: "bid-management", label: "Bid Management", icon: Clapperboard },
+  { id: "firebase", label: "Firebase Atlas", icon: Flame },
   { id: "reports", label: "Analytics", icon: BarChart2, comingSoon: true },
   { id: "ai-usage", label: "AI API Usage", icon: Cpu },
   { id: "settings", label: "Settings", icon: Settings },
@@ -43,7 +47,7 @@ export const NAV_ITEMS: NavItem[] = [
 export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
   { label: "WORKSPACE", ids: ["dashboard", "job-board", "resumes"] },
   { label: "PIPELINE", ids: ["ats", "copilot"] },
-  { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews", "vendor-monitor"] },
+  { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews", "vendor-monitor", "bid-management", "firebase"] },
   { label: "INSIGHTS", ids: ["reports", "ai-usage"] },
   { label: null, ids: ["settings"] },
 ];
@@ -61,5 +65,7 @@ export const VIEW_TITLES: Record<View, string> = {
   reports: "Job Search Analytics",
   "ai-usage": "AI API Usage",
   "vendor-monitor": "Vendor Monitor",
+  "bid-management": "Bid Management",
+  firebase: "Firebase Atlas",
   settings: "Settings",
 };

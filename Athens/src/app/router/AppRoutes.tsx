@@ -20,6 +20,8 @@ const {
   reports: AnalyticsPage,
   "ai-usage": AiUsagePage,
   "vendor-monitor": VendorMonitorPage,
+  firebase: FirebaseExplorerPage,
+  "bid-management": BidManagementPage,
   settings: SettingsPage,
 } = VIEW_COMPONENTS;
 
@@ -84,6 +86,8 @@ export function AppRoutes() {
             </BetaRoute>
           }
         />
+        <Route path={PATHS.firebase.slice(1)} element={<FirebaseExplorerPage />} />
+        <Route path={PATHS.bidManagement.slice(1)} element={<BidManagementPage />} />
         <Route path={`${PATHS.settings.slice(1)}/:tab?`} element={<SettingsPage />} />
         <Route path="*" element={<Navigate to={PATHS.dashboard} replace />} />
       </Route>

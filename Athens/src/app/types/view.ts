@@ -11,4 +11,6 @@ export type View =
   | "reports"
   | "ai-usage"
   | "vendor-monitor"
+  | "firebase"
+  | "bid-management"
   | "settings";
