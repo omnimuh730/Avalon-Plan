@@ -478,7 +478,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
 
   if (action.action === 'fetch_actionable_tree') {
     await focusTab(tabId, focusOptsFromAction(action));
-    const result = await runActionInTab(tabId);
+    const result = await runActionInTab(tabId, action);
     if (!result.success) return result;
 
     const page = await readPageContext(tabId);
@@ -525,7 +525,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   }
 
   await focusTab(tabId, focusOptsFromAction(action));
-  return runActionInTab(tabId);
+  return runActionInTab(tabId, action);
 }
 
 export async function connectRelay(

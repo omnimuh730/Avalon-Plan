@@ -41,7 +41,7 @@ export async function executeRemoteAction(action: RemoteAction): Promise<ActionR
     return { actionId: action.id, success: true, data };
   } catch (error) {
     return {
-      actionId: action.id,
+      actionId: action?.id ?? '',
       success: false,
       error: error instanceof Error ? error.message : String(error),
     };

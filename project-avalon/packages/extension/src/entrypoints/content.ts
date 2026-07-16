@@ -65,7 +65,15 @@ export default defineContentScript({
         return false;
       }
 
-      void executeRemoteAction(message.action).then(sendResponse);
+      void executeRemoteAction(message.action)
+        .then(sendResponse)
+        .catch((error) => {
+          sendResponse({
+            actionId: message.action?.id ?? '',
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
       return true;
     });
   },
