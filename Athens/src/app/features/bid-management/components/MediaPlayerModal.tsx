@@ -1,16 +1,18 @@
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, AlertCircle } from "lucide-react";
+import { X, AlertCircle, Loader2 } from "lucide-react";
 
 /**
- * YouTube-style player fed by a direct preview URL (mock or signed).
- * Firebase Storage signing stays in firebase-explorer; this modal is source-agnostic.
+ * YouTube-style player fed by a signed Firebase Storage URL.
+ * Signing is resolved by the caller (useRecordingUrl).
  */
 export function MediaPlayerModal({
   open,
   title,
   subtitle,
   src,
+  loading = false,
+  error = null,
   pathHint,
   onClose,
 }: {
@@ -18,6 +20,8 @@ export function MediaPlayerModal({
   title: string;
   subtitle?: string;
   src: string | null;
+  loading?: boolean;
+  error?: string | null;
   pathHint?: string | null;
   onClose: () => void;
 }) {
@@ -60,7 +64,17 @@ export function MediaPlayerModal({
             </div>
 
             <div className="bm-player-stage">
-              {src ? (
+              {loading ? (
+                <div className="bm-player-state">
+                  <Loader2 className="w-7 h-7 animate-spin" />
+                  <span>Signing stream…</span>
+                </div>
+              ) : error ? (
+                <div className="bm-player-state">
+                  <AlertCircle className="w-7 h-7" />
+                  <span>{error}</span>
+                </div>
+              ) : src ? (
                 <video
                   key={src}
                   className="bm-player-video"

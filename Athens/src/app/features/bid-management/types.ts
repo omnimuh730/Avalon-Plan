@@ -3,7 +3,8 @@ export type BidResultStatus =
   | "in_process"
   | "submitted"
   | "reviewed"
-  | "rejected";
+  | "rejected"
+  | "skipped";
 
 export type FlagLight = "green" | "red" | null;
 
@@ -31,6 +32,8 @@ export type BidResumeInfo = {
 
 export type BidResult = {
   id: string;
+  /** vendor_tasks id (or jobId) used for PATCH /bid-results/:id */
+  taskId?: string | null;
   /** Mongo job id when linked to Job Search / Bid ready. */
   jobId: string | null;
   /** Calendar day key YYYY-MM-DD used for folder grouping (pooled date). */
@@ -55,7 +58,7 @@ export type BidResult = {
     remote: FlagLight;
     clearance: FlagLight;
   };
-  /** Snapshot job fields (mock or enriched). Live fetch overlays when jobId is set. */
+  /** Snapshot job fields. Live fetch overlays when jobId is set. */
   jobDetail: BidJobDetail | null;
   /** Recommended / generated résumé for this job (pending & in-process). */
   recommendedResume: BidResumeInfo | null;
@@ -65,7 +68,8 @@ export type BidResult = {
     storagePath: string;
     contentType: string;
     sizeBytes: number;
-    previewUrl: string;
+    /** Optional direct URL; live tickets resolve storagePath via signed URL. */
+    previewUrl?: string | null;
   } | null;
   notes: string | null;
 };
@@ -89,6 +93,7 @@ export const BID_STATUSES: BidResultStatus[] = [
   "submitted",
   "reviewed",
   "rejected",
+  "skipped",
 ];
 
 /** Kanban drag + preview status edit allowed only among these. */

@@ -1,4 +1,11 @@
-importScripts('video-format.js', 'video-store.js', 'session-recorder.js', 'mock-api.js', 'zip-utils.js');
+importScripts(
+  'video-format.js',
+  'video-store.js',
+  'session-recorder.js',
+  'athens-api.js',
+  'mock-api.js',
+  'zip-utils.js',
+);
 
 const STORAGE_KEY = 'bidMonitorSessions';
 const PENDING_APPLY_KEY = 'pendingApplyTabs';
@@ -597,6 +604,23 @@ async function openApplyOnTab(tabId, poolId, jobId, streamId = null) {
 
   await cleanupOrphanRecordingSessions();
 
+  // Mark Athens Bid Ready job as in-process for Bid Management.
+  if (pool.source === 'athens' || pool.id === 'athens-bid-ready') {
+    try {
+      const settings = await AthensApi.getSettings();
+      const applierName = settings.applierName || auth.applierName || auth.displayName;
+      if (applierName && job.id) {
+        await AthensApi.startBid(applierName, {
+          jobId: job.athensJobId || job.id,
+          bidderName: auth.displayName,
+          applyUrl: job.jdUrl,
+        });
+      }
+    } catch (err) {
+      console.warn('Bid Monitor: failed to mark bid in-process', err);
+    }
+  }
+
   await setPendingApply(tabId, {
     profileName: auth.displayName,
     recorderStatus: 'ready',
@@ -949,14 +973,15 @@ async function resolveApplyJob(message) {
     throw new Error('Only bidders can apply to jobs.');
   }
 
-  const pools = await MockApi.getPoolsForProfile(auth.profileName);
+  const dashboard = await MockApi.getDashboardState();
+  const pools = dashboard.pools || [];
   const pool = MockApi.findPool(pools, message.poolId);
   const job = MockApi.findJob(pool, message.jobId);
   if (!pool || !job) {
     throw new Error('Job not found.');
   }
   if (job.status === 'applied') {
-    throw new Error('This job is already marked as applied.');
+    throw new Error('This job is already submitted.');
   }
 
   return { auth, pool, job };
@@ -1125,11 +1150,14 @@ async function completeRecordingSession({
   tabId,
   closeApplyTab = false,
   recordingResult = null,
+  /** 'submit' → Bid Management Submitted; 'skip' → Skipped */
+  finishAction = 'submit',
 } = {}) {
   if (!tabId) {
     return { ok: false, error: 'No tab specified for stop.' };
   }
 
+  const action = finishAction === 'skip' ? 'skip' : 'submit';
   const session = await getSessionForTab(tabId);
   if (!session) {
     return { ok: false, error: 'No recording for this tab.' };
@@ -1159,19 +1187,16 @@ async function completeRecordingSession({
     status: 'completed',
     stoppedAt: new Date().toISOString(),
     recorderStatus: 'stopped',
+    finishAction: action,
     videoMimeType: stoppedRecording?.mimeType ?? s.videoMimeType,
     videoFormat: stoppedRecording?.videoFormat ?? s.videoFormat,
     videoSizeBytes: stoppedRecording?.size ?? s.videoSizeBytes,
   }));
 
-  let jobMarkedApplied = false;
-  if (session.applyFlow && session.jobId && session.poolId) {
-    const auth = await MockApi.getAuth();
-    if (auth) {
-      await MockApi.markJobApplied(auth.profileName, session.poolId, session.jobId, session.id);
-      jobMarkedApplied = true;
-    }
-  }
+  let jobOutcome = null;
+  let uploadResult = null;
+  let uploadError = null;
+  let statusError = null;
 
   if (closeApplyTab) {
     chrome.tabs.remove(tabId).catch(() => {});
@@ -1201,11 +1226,82 @@ async function completeRecordingSession({
     });
   }
 
+  // Athens status + optional Firebase upload for Bid Ready apply flow.
+  if (session.applyFlow && session.jobId) {
+    try {
+      const auth = await MockApi.getAuth();
+      const settings = await AthensApi.getSettings();
+      const applierName = settings.applierName || auth?.applierName || auth?.displayName;
+      if (applierName) {
+        if (hasVideo) {
+          const entry = await SessionVideoStore.get(session.id);
+          const blob = entry?.blob;
+          if (blob && blob.size > 0) {
+            const videoBase64 = await AthensApi.blobToBase64(blob);
+            const startedAt = session.startedAt ? new Date(session.startedAt).getTime() : null;
+            const stoppedAt = stopped?.stoppedAt ? new Date(stopped.stoppedAt).getTime() : Date.now();
+            const durationSec =
+              startedAt && Number.isFinite(startedAt)
+                ? Math.max(0, Math.round((stoppedAt - startedAt) / 1000))
+                : null;
+            const ext = videoExtension(
+              stoppedRecording?.mimeType ?? stopped.videoMimeType,
+              stoppedRecording?.videoFormat ?? stopped.videoFormat,
+            );
+            uploadResult = await AthensApi.uploadRecording(applierName, {
+              jobId: session.jobId,
+              sessionId: session.id,
+              applyUrl: session.jdUrl || undefined,
+              bidderName: session.bidderName || auth?.displayName,
+              contentType: stoppedRecording?.mimeType || blob.type || 'video/webm',
+              fileName: `session.${ext}`,
+              videoBase64,
+              durationSec,
+              // Submit marks Submitted in upload; Skip uploads then flips to skipped.
+              markCompleted: action === 'submit',
+            });
+            await updateSession(session.id, {
+              recordingPath: uploadResult?.recording?.storagePath || null,
+              uploadedAt: new Date().toISOString(),
+            });
+          }
+        }
+
+        if (action === 'skip') {
+          await AthensApi.skipBid(applierName, {
+            jobId: session.jobId,
+            bidderName: session.bidderName || auth?.displayName,
+          });
+          jobOutcome = 'skipped';
+        } else if (!uploadResult?.recording || !hasVideo) {
+          await AthensApi.completeBid(applierName, {
+            jobId: session.jobId,
+            bidderName: session.bidderName || auth?.displayName,
+          });
+          jobOutcome = 'submitted';
+        } else {
+          jobOutcome = 'submitted';
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.toLowerCase().includes('upload') || hasVideo) uploadError = message;
+      else statusError = message;
+      console.error('Bid Monitor: Athens finish failed', err);
+    }
+  }
+
   return {
     ok: true,
     session: stopped,
     downloaded: hasVideo,
-    jobMarkedApplied,
+    finishAction: action,
+    jobOutcome,
+    jobMarkedApplied: jobOutcome === 'submitted',
+    uploaded: Boolean(uploadResult?.success || uploadResult?.recording),
+    uploadError,
+    statusError,
+    recordingPath: uploadResult?.recording?.storagePath || null,
   };
 }
 
@@ -1408,7 +1504,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     switch (message.type) {
       case 'SIGN_IN': {
-        const result = await MockApi.signIn(message.username, message.password);
+        const result = await MockApi.signIn(message.username, message.password, {
+          applierName: message.applierName || message.username,
+          apiUrl: message.apiUrl,
+          displayName: message.displayName || message.applierName || message.username,
+        });
         sendResponse(result);
         break;
       }
@@ -1431,6 +1531,59 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'DOWNLOAD_POOL': {
         await downloadPoolZip(message.poolId);
         sendResponse({ ok: true });
+        break;
+      }
+
+      case 'OPEN_JOB_RESUME': {
+        try {
+          const settings = await AthensApi.getSettings();
+          const auth = await MockApi.getAuth();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          const jobId = String(message.jobId || '').trim();
+          if (!applierName || !jobId) {
+            sendResponse({ ok: false, error: 'Missing applier or job for résumé.' });
+            break;
+          }
+          const url = await AthensApi.getResumePdfUrl(applierName, jobId);
+          await chrome.tabs.create({ url, active: true });
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Failed to open résumé.' });
+        }
+        break;
+      }
+
+      case 'DOWNLOAD_JOB_RESUME': {
+        try {
+          const settings = await AthensApi.getSettings();
+          const auth = await MockApi.getAuth();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          const jobId = String(message.jobId || '').trim();
+          if (!applierName || !jobId) {
+            sendResponse({ ok: false, error: 'Missing applier or job for résumé.' });
+            break;
+          }
+          const { blob, fileName } = await AthensApi.fetchResumePdf(applierName, jobId);
+          const buffer = await blob.arrayBuffer();
+          const bytes = new Uint8Array(buffer);
+          let binary = '';
+          const chunk = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+          }
+          const dataUrl = `data:application/pdf;base64,${btoa(binary)}`;
+          const safeName = sanitizeFileName(fileName).replace(/\.pdf$/i, '') || 'resume';
+          await chrome.downloads.download({
+            url: dataUrl,
+            filename: `bid-monitor/${safeName}.pdf`,
+            saveAs: true,
+          });
+          sendResponse({ ok: true, fileName });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Failed to download résumé.' });
+        }
         break;
       }
 
@@ -1643,6 +1796,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const result = await completeRecordingSession({
             tabId,
             closeApplyTab: Boolean(message.closeApplyTab),
+            finishAction: message.finishAction === 'skip' ? 'skip' : 'submit',
             recordingResult: {
               mimeType: message.mimeType,
               videoFormat: message.videoFormat,
@@ -1704,7 +1858,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const tabId = sender.tab?.id ?? message.tabId;
         const result = await completeRecordingSession({
           tabId,
-          closeApplyTab: true,
+          closeApplyTab: message.closeApplyTab !== false,
+          finishAction: message.finishAction === 'skip' ? 'skip' : 'submit',
         });
         sendResponse(result);
         break;

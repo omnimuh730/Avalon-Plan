@@ -77,12 +77,38 @@ header h1 {
   color: #1e3a8a;
 }
 
-.apply-session.recording .btn-start {
+.apply-session.recording > .btn-start {
   display: none;
 }
 
-.apply-session .btn-stop {
+.finish-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.finish-actions .btn {
   width: 100%;
+}
+
+.finish-actions .btn-start {
+  background: #15803d;
+  color: #fff;
+  border: 0;
+}
+
+.finish-actions .btn-stop {
+  background: #64748b;
+  color: #fff;
+  border: 0;
+}
+
+.finish-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.75;
 }
 
 .form-section label {

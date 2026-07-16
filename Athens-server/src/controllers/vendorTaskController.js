@@ -29,21 +29,38 @@ function toObjectId(value) {
 	}
 }
 
-function serializeTask(doc, sessionMatch = null) {
+export function serializeTask(doc, sessionMatch = null) {
 	const applyUrl = doc.applyUrl ?? null;
 	const jobSource = detectJobSource(applyUrl);
 	let progress = "idle";
-	if (doc.status === "done") progress = "completed";
+	if (doc.status === "done" || doc.recordingPath) progress = "completed";
 	else if (doc.status === "skipped") progress = "skipped";
 	else if (sessionMatch?.completed) progress = "completed";
-	else if (sessionMatch) progress = "active";
+	else if (doc.bidderInProcess || sessionMatch) progress = "active";
+
+	const recording = doc.recordingPath
+		? {
+				storagePath: String(doc.recordingPath),
+				contentType: doc.recordingContentType || "video/webm",
+				sizeBytes: Number(doc.recordingSize || 0),
+				sessionId: doc.bidSessionId || null,
+			}
+		: null;
+
+	const companyRaw = doc.company;
+	const company =
+		typeof companyRaw === "string"
+			? companyRaw
+			: companyRaw && typeof companyRaw === "object" && typeof companyRaw.name === "string"
+				? companyRaw.name
+				: "";
 
 	return {
 		id: String(doc._id),
 		applierName: doc.applierName ?? null,
 		jobId: doc.jobId ?? null,
 		title: doc.title ?? "Untitled role",
-		company: doc.company ?? "",
+		company,
 		applyUrl,
 		source: doc.source ?? jobSource?.label ?? "",
 		location: doc.location ?? "",
@@ -65,6 +82,16 @@ function serializeTask(doc, sessionMatch = null) {
 			doc.completedAt instanceof Date
 				? doc.completedAt.toISOString()
 				: doc.completedAt ?? null,
+		bidReadyDate:
+			doc.bidReadyDate instanceof Date
+				? doc.bidReadyDate.toISOString()
+				: doc.bidReadyDate ?? null,
+		recording,
+		reviewStatus: doc.reviewStatus || null,
+		bidderName: doc.bidderName || null,
+		bidderInProcess: Boolean(doc.bidderInProcess),
+		recordingDurationSec:
+			typeof doc.recordingDurationSec === "number" ? doc.recordingDurationSec : null,
 	};
 }
 
@@ -76,7 +103,7 @@ function resolveVendorTasks() {
 	return { collection, error: null };
 }
 
-async function buildSessionMatchMap(applierName) {
+export async function buildSessionMatchMap(applierName) {
 	const { collection, error } = getBidRecordsCollection();
 	if (error || !collection) return new Map();
 
@@ -112,7 +139,7 @@ async function buildSessionMatchMap(applierName) {
 	return map;
 }
 
-function findSessionMatch(applyUrl, matchMap) {
+export function findSessionMatch(applyUrl, matchMap) {
 	const key = normalizeUrlKey(applyUrl);
 	if (!key) return null;
 	if (matchMap.has(key)) return matchMap.get(key);

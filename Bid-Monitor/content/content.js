@@ -335,23 +335,42 @@
         word-break: break-all;
       }
 
+      #bid-monitor-finish-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      #bid-monitor-submit-btn,
+      #bid-monitor-skip-btn,
       #bid-monitor-stop-btn {
         width: 100%;
         border: none;
         border-radius: 8px;
         padding: 8px 12px;
-        margin-top: 10px;
         background: #fff;
-        color: #7f1d1d;
         font: inherit;
         font-weight: 700;
         cursor: pointer;
       }
 
+      #bid-monitor-submit-btn {
+        color: #065f46;
+      }
+
+      #bid-monitor-skip-btn,
+      #bid-monitor-stop-btn {
+        color: #7f1d1d;
+      }
+
+      #bid-monitor-panel.paused #bid-monitor-skip-btn,
       #bid-monitor-panel.paused #bid-monitor-stop-btn {
         color: #92400e;
       }
 
+      #bid-monitor-submit-btn:disabled,
+      #bid-monitor-skip-btn:disabled,
       #bid-monitor-stop-btn:disabled {
         opacity: 0.6;
         cursor: wait;
@@ -431,7 +450,6 @@
     const isStarting = recorderStatusCache === 'starting';
     const isError = recorderStatusCache === 'error';
     const isPaused = recorderStatusCache === 'paused';
-    const stopLabel = isApplyFlow ? 'Stop & Finish Apply' : 'Stop Recording';
     const headerLabel = isReady
       ? 'Ready to apply'
       : isError
@@ -484,15 +502,29 @@
         ? '<button id="bid-monitor-start-btn" type="button">Start Recording</button>'
         : isError
           ? '<button id="bid-monitor-retry-btn" type="button">Try Start Recording Again</button>'
-          : `<button id="bid-monitor-stop-btn" type="button" ${isStarting ? 'disabled' : ''}>${stopLabel}</button>`}
+          : isApplyFlow
+            ? `<div id="bid-monitor-finish-actions">
+                <button id="bid-monitor-submit-btn" type="button" ${isStarting ? 'disabled' : ''}>Submit</button>
+                <button id="bid-monitor-skip-btn" type="button" ${isStarting ? 'disabled' : ''}>Skip this Job</button>
+              </div>`
+            : `<button id="bid-monitor-stop-btn" type="button" ${isStarting ? 'disabled' : ''}>Stop Recording</button>`}
     `;
 
     if (isReady) {
       floatingBar.querySelector('#bid-monitor-start-btn').addEventListener('click', handleStartClick);
     } else if (isError) {
       floatingBar.querySelector('#bid-monitor-retry-btn').addEventListener('click', handleStartClick);
+    } else if (isApplyFlow) {
+      floatingBar
+        .querySelector('#bid-monitor-submit-btn')
+        ?.addEventListener('click', () => handleStopClick('submit'));
+      floatingBar
+        .querySelector('#bid-monitor-skip-btn')
+        ?.addEventListener('click', () => handleStopClick('skip'));
     } else {
-      floatingBar.querySelector('#bid-monitor-stop-btn').addEventListener('click', handleStopClick);
+      floatingBar
+        .querySelector('#bid-monitor-stop-btn')
+        ?.addEventListener('click', () => handleStopClick('submit'));
     }
   }
 
@@ -509,19 +541,37 @@
     await handleStartClick();
   }
 
-  async function handleStopClick() {
-    const btn = floatingBar.querySelector('#bid-monitor-stop-btn');
-    btn.disabled = true;
-    btn.textContent = 'Stopping…';
+  async function handleStopClick(finishAction = 'submit') {
+    const action = finishAction === 'skip' ? 'skip' : 'submit';
+    const submitBtn = floatingBar.querySelector('#bid-monitor-submit-btn');
+    const skipBtn = floatingBar.querySelector('#bid-monitor-skip-btn');
+    const stopBtn = floatingBar.querySelector('#bid-monitor-stop-btn');
+    const activeBtn = action === 'skip' ? skipBtn || stopBtn : submitBtn || stopBtn;
 
-    const response = await sendRuntimeMessage({ type: 'STOP_CAPTURE' });
+    if (submitBtn) submitBtn.disabled = true;
+    if (skipBtn) skipBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = true;
+    if (activeBtn) {
+      activeBtn.textContent = action === 'skip' ? 'Skipping…' : 'Submitting…';
+    }
 
-    btn.disabled = false;
+    const response = await sendRuntimeMessage({
+      type: 'STOP_CAPTURE',
+      finishAction: action,
+      closeApplyTab: Boolean(applyJobCache),
+    });
+
     renderPanelContent();
 
     if (response?.ok) {
-      if (response.jobMarkedApplied) {
-        showToast('Application completed and job marked Applied');
+      if (response.jobOutcome === 'skipped') {
+        showToast('Skipped — ticket moved to Skipped');
+      } else if (response.jobOutcome === 'submitted' || response.jobMarkedApplied) {
+        showToast(
+          response.uploaded
+            ? 'Submitted — recording uploaded'
+            : 'Submitted — ticket moved to Submitted',
+        );
       } else if (response.downloaded) {
         showToast('Session saved to Downloads');
       } else {

@@ -28,6 +28,7 @@ import agentRoutes from "./src/routes/agentRoutes.js";
 import scrapedJobIngestRoutes from "./src/routes/scrapedJobIngestRoutes.js";
 import aiUsageRoutes from "./src/routes/aiUsageRoutes.js";
 import firebaseRoutes from "./src/routes/firebaseRoutes.js";
+import bidResultsRoutes from "./src/routes/bidResultsRoutes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
 import {
 	getAutoBidProfile,
@@ -41,7 +42,7 @@ const app = express();
 const port = Number.parseInt(String(process.env.PORT || "8979"), 10) || 8979;
 const host = process.env.HOST !== undefined && process.env.HOST !== "" ? process.env.HOST : "0.0.0.0";
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '120mb' }));
 app.use(cors({ origin: '*' }));
 app.use(requestLogger('api'));
 
@@ -73,6 +74,7 @@ app.use('/api/agents', agentRoutes);
 app.use('/api', scrapedJobIngestRoutes);
 app.use('/api', aiUsageRoutes);
 app.use('/api', firebaseRoutes);
+app.use('/api', bidResultsRoutes);
 
 app.get("/personal/auto-bid-profile", getAutoBidProfile);
 app.put("/personal/auto-bid-profile", upsertAutoBidProfile);

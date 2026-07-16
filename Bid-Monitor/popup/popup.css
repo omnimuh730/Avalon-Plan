@@ -22,7 +22,8 @@ header h1 {
   color: #6b7280;
 }
 
-.view.hidden {
+.view.hidden,
+.hidden {
   display: none;
 }
 

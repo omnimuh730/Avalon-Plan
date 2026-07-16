@@ -22,7 +22,7 @@ import { AgentResumePdfPreview } from "../../agents/components/AgentResumePdfPre
 import { useApplier } from "@/context/applier-context";
 import type { BidResult, BidResultStatus, FlagLight } from "../types";
 import { EDITABLE_STATUSES, isEditableStatus } from "../types";
-import { STATUS_LABELS, formatDuration, formatWhen } from "../mockData";
+import { STATUS_LABELS, formatDuration, formatWhen } from "../lib";
 import { useBidPreview } from "../hooks/useBidPreview";
 
 function FlagDot({ label, value }: { label: string; value: FlagLight }) {

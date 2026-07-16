@@ -185,6 +185,13 @@ export interface VendorTaskSessionMatch {
   completed: boolean;
 }
 
+export interface VendorTaskRecording {
+  storagePath: string;
+  contentType: string | null;
+  sizeBytes: number;
+  sessionId: string | null;
+}
+
 export interface VendorTask {
   id: string;
   applierName: string | null;
@@ -206,6 +213,11 @@ export interface VendorTask {
   bidReadyDate?: string | null;
   updatedAt: string | null;
   completedAt: string | null;
+  recording?: VendorTaskRecording | null;
+  reviewStatus?: "submitted" | "reviewed" | "rejected" | null;
+  bidderName?: string | null;
+  bidderInProcess?: boolean;
+  recordingDurationSec?: number | null;
 }
 
 export interface VendorTaskTotals {

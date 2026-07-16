@@ -118,21 +118,7 @@ function renderJobs(poolId) {
   }
 
   if (isBidder && !openJobs.length) {
-    jobList.innerHTML = `
-      <li class="empty">
-        All jobs in this pool are marked Applied.
-        <button type="button" class="btn btn-secondary" id="resetDemoJobsBtn" style="margin-top:8px">Reset demo jobs</button>
-      </li>
-    `;
-    document.getElementById('resetDemoJobsBtn')?.addEventListener('click', async () => {
-      const response = await sendMessage({ type: 'RESET_ACTIVE_JOBS' });
-      if (response?.ok) {
-        await loadDashboard();
-        renderJobs(poolId);
-      } else {
-        alert(response?.error || 'Failed to reset jobs.');
-      }
-    });
+    jobList.innerHTML = '<li class="empty">All Bid Ready jobs are submitted.</li>';
     return;
   }
 
@@ -239,10 +225,13 @@ loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   showLoginError('');
 
+  const applierName = usernameInput.value.trim();
   const response = await sendMessage({
     type: 'SIGN_IN',
-    username: usernameInput.value,
-    password: passwordInput.value,
+    username: applierName,
+    password: passwordInput?.value || 'bidder123',
+    applierName,
+    displayName: applierName,
   });
 
   if (!response?.ok) {
@@ -251,7 +240,6 @@ loginForm.addEventListener('submit', async (event) => {
   }
 
   usernameInput.value = '';
-  passwordInput.value = '';
   await loadDashboard();
 });
 
@@ -276,17 +264,5 @@ formatOptions.forEach((button) => {
 (async function init() {
   const { videoFormat = 'webm' } = await chrome.storage.local.get('videoFormat');
   setSelectedVideoFormat(videoFormat);
-
-  try {
-    const hint = await sendMessage({ type: 'GET_MOCK_HINT' });
-    if (hint?.ok && hint.hint && loginError) {
-      const profiles = hint.hint.profiles?.join(', ') ?? 'demo, acme';
-      loginError.textContent = `Mock sign-in: ${profiles} · owner ${hint.hint.ownerPassword} · bidder ${hint.hint.bidderPassword}`;
-      loginError.classList.remove('hidden');
-    }
-  } catch {
-    // ignore
-  }
-
   await loadDashboard();
 })();

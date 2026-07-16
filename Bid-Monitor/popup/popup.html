@@ -15,19 +15,18 @@
     <section id="loginView" class="view">
       <form id="loginForm" class="form-section">
         <label>
-          Profile name
-          <input id="username" type="text" placeholder="e.g. demo" autocomplete="username" required />
+          Athens applier name
+          <input id="username" type="text" placeholder="e.g. David Moll" autocomplete="username" required />
         </label>
-        <label>
+        <label class="hidden">
           Password
-          <input id="password" type="password" placeholder="owner123 or bidder123" autocomplete="current-password" required />
+          <input id="password" type="password" value="bidder123" autocomplete="current-password" />
         </label>
         <button id="signInBtn" class="btn btn-start" type="submit">Sign in</button>
       </form>
       <p id="loginError" class="error hidden"></p>
-      <p class="hint mock-hint">
-        Mock sign-in: profile <strong>demo</strong> or <strong>acme</strong><br />
-        Owner password <strong>owner123</strong> · Bidder password <strong>bidder123</strong>
+      <p class="hint">
+        Uses your Athens Job Search profile name. Prefer the <strong>side panel</strong> for full Bid Ready apply + Submit / Skip.
       </p>
     </section>
 

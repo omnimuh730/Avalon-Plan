@@ -25,12 +25,13 @@ Recording is capped at **720p / 15 fps / ~900 kbps** to keep session files small
 
 ## How bidders should use it
 
-1. Click the Bid Monitor icon.
-2. Enter **Bidder name** and **Resume set folder**.
-3. Open the job application in a Chrome window.
-4. Click **Start Recording**.
-5. Apply to jobs — switch tabs in the **same window** as needed (video follows the active tab).
-6. Click **Stop Recording** — video and manifest download to `Downloads/bid-monitor/{bidder}-{session-id}/`.
+1. Open the Bid Monitor side panel and sign in with your **Athens applier name** (Job Search profile).
+2. Open the **Bid Ready** pool — jobs come from Athens (`GET /vendor/tasks`).
+3. Click **Apply** on a job — opens the JD tab and marks the ticket **In-Process** in Bid Management.
+4. Start recording, complete the application, then **Submit** (→ Submitted) or **Skip this Job** (→ Skipped). Both stop recording.
+5. Video downloads locally **and** uploads to Firebase (`bid-recordings/…`) via Athens; the ticket moves to **Submitted**.
+
+Optional local fallback path: `Downloads/bid-monitor/{bidder}-{session-id}/`.
 
 **Note:** Recording is tied to one Chrome **window**. Opening a different Chrome window is not included. The OS file picker dialog is also outside the tab and usually will not appear in tab video.
 

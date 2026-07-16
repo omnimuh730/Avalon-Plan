@@ -20,7 +20,11 @@
       <p id="applySessionStatus" class="apply-status">Ready to record</p>
       <p id="applySessionError" class="error hidden"></p>
       <button id="startRecordingBtn" class="btn btn-start" type="button">Start Recording</button>
-      <button id="stopRecordingBtn" class="btn btn-stop hidden" type="button">Stop &amp; Finish Apply</button>
+      <div id="finishActions" class="finish-actions hidden">
+        <button id="submitRecordingBtn" class="btn btn-start" type="button">Submit</button>
+        <button id="skipRecordingBtn" class="btn btn-stop" type="button">Skip this Job</button>
+      </div>
+      <p class="hint finish-hint hidden" id="finishHint">Both options stop recording. Submit → Submitted · Skip → Skipped.</p>
     </section>
 
     <section id="recordingsView" class="recordings hidden">
@@ -31,19 +35,27 @@
     <section id="loginView" class="view">
       <form id="loginForm" class="form-section">
         <label>
-          Profile name
-          <input id="username" type="text" placeholder="e.g. demo" autocomplete="username" required />
+          Athens applier name
+          <input id="applierName" type="text" placeholder="e.g. David Moll" autocomplete="username" required />
         </label>
         <label>
-          Password
-          <input id="password" type="password" placeholder="owner123 or bidder123" autocomplete="current-password" required />
+          Athens API URL
+          <input id="apiUrl" type="url" placeholder="http://127.0.0.1:8979/api" value="http://127.0.0.1:8979/api" />
+        </label>
+        <label>
+          Bidder display name
+          <input id="username" type="text" placeholder="Same as applier, or demo" autocomplete="nickname" />
+        </label>
+        <label>
+          Password <span class="hint-inline">(bidder123)</span>
+          <input id="password" type="password" placeholder="bidder123" autocomplete="current-password" value="bidder123" />
         </label>
         <button id="signInBtn" class="btn btn-start" type="submit">Sign in</button>
       </form>
       <p id="loginError" class="error hidden"></p>
       <p class="hint mock-hint">
-        Mock sign-in: profile <strong>demo</strong> or <strong>acme</strong><br />
-        Owner password <strong>owner123</strong> · Bidder password <strong>bidder123</strong>
+        Loads live <strong>Bid Ready</strong> jobs from Athens.<br />
+        Use your Job Search profile name. Password <strong>bidder123</strong> for bidder role.
       </p>
     </section>
 

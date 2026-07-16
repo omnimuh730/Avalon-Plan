@@ -375,6 +375,10 @@
   background: rgba(220, 38, 38, 0.12);
   color: #b91c1c;
 }
+.bm-status.skipped {
+  background: rgba(100, 116, 139, 0.14);
+  color: #475569;
+}
 
 .bm-detail {
   display: flex;
@@ -1149,6 +1153,7 @@
 .bm-pip.submitted { background: #0f766e; }
 .bm-pip.reviewed { background: #e85d04; }
 .bm-pip.rejected { background: #dc2626; }
+.bm-pip.skipped { background: #64748b; }
 
 /* Day workspace */
 .bm-day-pane {
@@ -1251,7 +1256,7 @@
 .bm-kanban {
   height: 100%;
   display: grid;
-  grid-template-columns: repeat(5, minmax(160px, 1fr));
+  grid-template-columns: repeat(6, minmax(140px, 1fr));
   gap: 8px;
   padding: 10px;
   overflow: auto;
@@ -1558,6 +1563,6 @@
   }
 
   .bm-kanban {
-    grid-template-columns: repeat(5, minmax(180px, 1fr));
+    grid-template-columns: repeat(6, minmax(160px, 1fr));
   }
 }

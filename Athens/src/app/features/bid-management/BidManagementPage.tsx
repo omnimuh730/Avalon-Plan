@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type DragEvent } from "react";
+import { useMemo, useState, type DragEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Search,
@@ -12,11 +12,11 @@ import {
   GripVertical,
   Film,
   Clapperboard,
+  Loader2,
 } from "lucide-react";
 import { Link } from "react-router";
 import { PageShell } from "../../components/layout/PageShell";
 import { PATHS } from "../../config/routes";
-import { useVendorTaskPool } from "../vendor-monitor/hooks/useVendorTaskPool";
 import type { BidResult, BidResultStatus, FlagLight, PeriodPreset, ViewMode } from "./types";
 import { BID_STATUSES, EDITABLE_STATUSES, isEditableStatus } from "./types";
 import {
@@ -25,14 +25,14 @@ import {
   computeKpis,
   formatDuration,
   formatFolderShort,
-  loadMockBidResults,
   filterByPeriod,
   buildDateFolders,
-  vendorTaskToBidResult,
   dayKeyFromIso,
-} from "./mockData";
+} from "./lib";
 import { MediaPlayerModal } from "./components/MediaPlayerModal";
 import { BidDetailPane } from "./components/BidDetailPane";
+import { useBidResults } from "./hooks/useBidResults";
+import { useRecordingUrl } from "./hooks/useRecordingUrl";
 import "./bid-management.css";
 
 const DND_TYPE = "application/x-bid-result-id";
@@ -201,10 +201,17 @@ function KanbanBoard({
             {status === "pending" && (
               <div className="bm-col-hint">Bid ready jobs</div>
             )}
+            {status === "skipped" && (
+              <div className="bm-col-hint">Expired / skipped by bidder</div>
+            )}
             <div className="bm-kanban-cards">
               {col.length === 0 ? (
                 <div className="bm-kanban-empty">
-                  {status === "pending" ? "No Bid ready jobs" : "Empty"}
+                  {status === "pending"
+                    ? "No Bid ready jobs"
+                    : status === "skipped"
+                      ? "No skipped jobs"
+                      : "Empty"}
                 </div>
               ) : (
                 col.map((r) => (
@@ -292,48 +299,27 @@ function ListBoard({
 }
 
 export function BidManagementPage() {
-  const mockResults = useMemo(() => loadMockBidResults(), []);
-  const { tasks, loading: tasksLoading, error: tasksError } = useVendorTaskPool();
+  const {
+    results: allResults,
+    loading: resultsLoading,
+    error: resultsError,
+    setStatus,
+  } = useBidResults();
   const [period, setPeriod] = useState<PeriodPreset>("14d");
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [statusOverrides, setStatusOverrides] = useState<Record<string, BidResultStatus>>({});
-
-  const bidReadyResults = useMemo(() => {
-    return tasks
-      .filter((t) => t.status !== "done" && t.status !== "skipped")
-      .map(vendorTaskToBidResult);
-  }, [tasks]);
-
-  const allResults = useMemo(() => {
-    return [...mockResults, ...bidReadyResults].map((r) => {
-      const override = statusOverrides[r.id];
-      if (override && isEditableStatus(r.status) && isEditableStatus(override)) {
-        return { ...r, status: override };
-      }
-      return r;
-    });
-  }, [mockResults, bidReadyResults, statusOverrides]);
-
-  const setStatus = useCallback((id: string, next: BidResultStatus) => {
-    if (!isEditableStatus(next)) return;
-    setStatusOverrides((prev) => {
-      const current =
-        prev[id] ??
-        mockResults.find((r) => r.id === id)?.status ??
-        bidReadyResults.find((r) => r.id === id)?.status;
-      if (!current || !isEditableStatus(current)) return prev;
-      return { ...prev, [id]: next };
-    });
-  }, [mockResults, bidReadyResults]);
 
   const periodResults = useMemo(() => filterByPeriod(allResults, period), [allResults, period]);
   const folders = useMemo(() => buildDateFolders(periodResults), [periodResults]);
   const periodKpis = useMemo(() => computeKpis(periodResults), [periodResults]);
   const todayKey = useMemo(() => dayKeyFromIso(new Date().toISOString()), []);
+  const pendingCount = useMemo(
+    () => allResults.filter((r) => r.status === "pending").length,
+    [allResults],
+  );
 
   const dayResults = useMemo(() => {
     if (!selectedDay) return [];
@@ -355,6 +341,13 @@ export function BidManagementPage() {
   const selected = dayResults.find((r) => r.id === selectedId) ?? dayResults[0] ?? null;
   const playingResult = playing ? selected : null;
   const activeFolder = folders.find((f) => f.dayKey === selectedDay) ?? null;
+  const {
+    url: playingUrl,
+    loading: playingUrlLoading,
+    error: playingUrlError,
+  } = useRecordingUrl(
+    playing ? playingResult?.recording?.storagePath || null : null,
+  );
 
   const openDay = (dayKey: string) => {
     setSelectedDay(dayKey);
@@ -382,10 +375,10 @@ export function BidManagementPage() {
             <div className="bm-brand-row">
               <Clapperboard className="w-5 h-5 bm-brand-icon" />
               <span className="bm-brand">Bid Management</span>
-              <span className="bm-mock-tag">Pending = Bid ready</span>
+              <span className="bm-mock-tag">Live</span>
             </div>
             <p className="bm-hero-sub">
-              Pool → record → review · drag Submitted / Reviewed / Rejected freely
+              Bid Ready → In-Process → Submitted (Firebase recording) · drag Reviewed / Rejected
             </p>
           </div>
 
@@ -416,13 +409,21 @@ export function BidManagementPage() {
           </div>
         </motion.header>
 
-        {tasksError ? <div className="bm-error-banner">{tasksError}</div> : null}
-        {tasksLoading ? (
-          <div className="bm-info-banner">Loading Bid ready jobs…</div>
-        ) : bidReadyResults.length === 0 ? (
+        {resultsError ? <div className="bm-error-banner">{resultsError}</div> : null}
+        {resultsLoading ? (
+          <div className="bm-info-banner">
+            <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" />
+            Loading live bid results…
+          </div>
+        ) : pendingCount === 0 && allResults.length === 0 ? (
           <div className="bm-info-banner">
             No Bid ready jobs for this profile. Mark jobs as Bid ready in{" "}
-            <Link to={PATHS.jobs}>Job Search</Link> to fill the Pending column.
+            <Link to={PATHS.jobs}>Job Search</Link>, then Apply from Bid-Monitor.
+          </div>
+        ) : pendingCount === 0 ? (
+          <div className="bm-info-banner">
+            No Pending (Bid ready) jobs right now. Mark more in{" "}
+            <Link to={PATHS.jobs}>Job Search</Link> or finish In-Process tickets in Bid-Monitor.
           </div>
         ) : null}
 
@@ -530,12 +531,14 @@ export function BidManagementPage() {
       </div>
 
       <MediaPlayerModal
-        open={Boolean(playingResult?.recording)}
+        open={Boolean(playing && playingResult?.recording?.storagePath)}
         title={playingResult?.job.title ?? "Recording"}
         subtitle={
           playingResult ? `${playingResult.bidder.name} · ${playingResult.job.company}` : undefined
         }
-        src={playingResult?.recording?.previewUrl ?? null}
+        src={playingUrl}
+        loading={playingUrlLoading}
+        error={playingUrlError}
         pathHint={playingResult?.recording?.storagePath}
         onClose={() => setPlaying(false)}
       />
