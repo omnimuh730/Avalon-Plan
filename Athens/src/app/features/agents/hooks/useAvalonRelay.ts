@@ -39,6 +39,10 @@ import { isBetaTier } from "../../../lib/beta";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { clampJobBudgetUsd, loadJobBudgetUsd, saveJobBudgetUsd } from "../lib/agentBudget";
 import { withOtpMutex } from "../lib/agentJobConcurrency";
+import {
+  loadAllowWindowFocus,
+  saveAllowWindowFocus,
+} from "../lib/agentWindowFocus";
 import { mapPool } from "../lib/mapPool";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
 import { verifyApplyOutcome, type ApplyVerifyResult } from "../avalon/ai/verify-apply";
@@ -241,6 +245,8 @@ const EMPTY_PIPELINE: JobPipelineState = {
  */
 export interface AvalonRelayOptions {
   sessionId?: string;
+  /** Human-readable name advertised to the relay (extension session picker). */
+  sessionLabel?: string;
   persist?: boolean;
   /**
    * When set, the queue + apply progress (jobQueue, activeJobIndex, appliedJobIds,
@@ -337,12 +343,15 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   // "idle" | "running" | "paused" — drives the Pause/Resume/Stop controls.
   const [autoRunState, setAutoRunState] = useState<"idle" | "running" | "paused">("idle");
   const [jobBudgetLimitUsd, setJobBudgetLimitUsdState] = useState(() => loadJobBudgetUsd());
+  const [allowWindowFocus, setAllowWindowFocusState] = useState(() => loadAllowWindowFocus());
   const [budgetSkippedJobIds, setBudgetSkippedJobIds] = useState<Set<string>>(() => new Set());
 
   const socketRef = useRef<Socket | null>(null);
   const jobRunCostRef = useRef(0);
   const jobBudgetLimitRef = useRef(jobBudgetLimitUsd);
   jobBudgetLimitRef.current = jobBudgetLimitUsd;
+  const allowWindowFocusRef = useRef(allowWindowFocus);
+  allowWindowFocusRef.current = allowWindowFocus;
   const applyingRef = useRef(false);
   const autoRunningRef = useRef(false);
   // Interrupt controls for the auto-run/queue loops (checked between steps).
@@ -364,11 +373,15 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const runEventsRef = useRef<ApplyLogEvent[]>([]);
   const runFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef(sessionId);
+  const sessionLabelRef = useRef(options?.sessionLabel?.trim() || "");
+  /** Last label we successfully advertised to the relay (avoids redundant re-REGISTER). */
+  const advertisedLabelRef = useRef("");
   const profileIdRef = useRef(options?.profileId ?? "");
   const selectedTabIdRef = useRef(selectedTabId);
   const jobQueueRef = useRef(jobQueue);
   const activeJobIndexRef = useRef(activeJobIndex);
   sessionIdRef.current = sessionId;
+  sessionLabelRef.current = options?.sessionLabel?.trim() || "";
   profileIdRef.current = options?.profileId ?? "";
   selectedTabIdRef.current = selectedTabId;
   jobQueueRef.current = jobQueue;
@@ -454,6 +467,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     const clamped = clampJobBudgetUsd(value);
     setJobBudgetLimitUsdState(clamped);
     saveJobBudgetUsd(clamped);
+  }, []);
+
+  const setAllowWindowFocus = useCallback((value: boolean) => {
+    setAllowWindowFocusState(value);
+    saveAllowWindowFocus(value);
+    allowWindowFocusRef.current = value;
   }, []);
 
   const resetJobRunCost = useCallback(() => {
@@ -631,11 +650,17 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       pushLog("Connected to relay server");
       next.emit(
         SOCKET_EVENTS.REGISTER,
-        { role: "controller", sessionId: sessionIdRef.current || undefined, profileId: profileIdRef.current || undefined },
+        {
+          role: "controller",
+          sessionId: sessionIdRef.current || undefined,
+          profileId: profileIdRef.current || undefined,
+          label: sessionLabelRef.current || undefined,
+        },
         (response: RegisteredPayload) => {
           setRegistered(response);
           setSessionId((prev) => prev || response.sessionId);
           setPeers(response.peers);
+          advertisedLabelRef.current = sessionLabelRef.current;
           pushLog(`Registered session ${response.sessionId}`);
         },
       );
@@ -770,20 +795,28 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     persistAvalonSessionId(sessionId);
   }, [persistSession, sessionId]);
 
-  // If the user edits the session ID while connected, re-register onto the new
-  // session automatically (debounced) — otherwise commands keep routing through
-  // the previously registered session until they remember to hit Reconnect.
+  // If the session ID or display label changes while connected, re-register
+  // (debounced) so the extension picker sees fresh Athens session names.
+  const sessionLabel = options?.sessionLabel?.trim() || "";
   useEffect(() => {
     if (!connected || !registered) return;
     const desired = sessionId.trim() || DEFAULT_SESSION_ID;
-    if (desired === registered.sessionId) return;
+    const needId = desired !== registered.sessionId;
+    const needLabel = sessionLabel !== advertisedLabelRef.current;
+    if (!needId && !needLabel) return;
     const timer = setTimeout(() => {
       const sock = socketRef.current;
       if (!sock?.connected) return;
       sock.emit(
         SOCKET_EVENTS.REGISTER,
-        { role: "controller", sessionId: desired, profileId: profileIdRef.current || undefined },
+        {
+          role: "controller",
+          sessionId: desired,
+          profileId: profileIdRef.current || undefined,
+          label: sessionLabel || undefined,
+        },
         (response: RegisteredPayload) => {
+          advertisedLabelRef.current = sessionLabel;
           setRegistered(response);
           setPeers(response.peers);
           pushLog(`Registered session ${response.sessionId}`);
@@ -791,7 +824,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       );
     }, 800);
     return () => clearTimeout(timer);
-  }, [connected, registered, sessionId, pushLog]);
+  }, [connected, registered, sessionId, sessionLabel, pushLog]);
 
   /** Aggregated token + cost usage for the current job (total + per-request list). */
   const jobUsage = useMemo(() => {
@@ -1286,15 +1319,20 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           reject(new Error("Not connected to relay"));
           return;
         }
+        // Non-Beta always grants focus. Beta uses the user toggle (default on).
+        const stamped: RemoteAction = {
+          ...action,
+          allowWindowFocus: accountIsBeta ? allowWindowFocusRef.current : true,
+        };
         const timer = setTimeout(() => {
-          pendingActionsRef.current.delete(action.id);
-          reject(new Error(`Action "${action.action}" timed out`));
+          pendingActionsRef.current.delete(stamped.id);
+          reject(new Error(`Action "${stamped.action}" timed out`));
         }, timeoutMs);
-        pendingActionsRef.current.set(action.id, { resolve, reject, timer });
-        socketRef.current.emit(SOCKET_EVENTS.EXECUTE_ACTION, action);
-        pushLog(`Sent ${action.action} (${action.id})`);
+        pendingActionsRef.current.set(stamped.id, { resolve, reject, timer });
+        socketRef.current.emit(SOCKET_EVENTS.EXECUTE_ACTION, stamped);
+        pushLog(`Sent ${stamped.action} (${stamped.id})`);
       }),
-    [pushLog],
+    [accountIsBeta, pushLog],
   );
 
   const runApplyWithPlan = useCallback(
@@ -3172,6 +3210,9 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     jobUsage,
     jobBudgetLimitUsd,
     setJobBudgetLimitUsd,
+    allowWindowFocus,
+    setAllowWindowFocus,
+    accountIsBeta,
     budgetSkippedJobIds,
     markActiveJobApplied,
     socketRef,

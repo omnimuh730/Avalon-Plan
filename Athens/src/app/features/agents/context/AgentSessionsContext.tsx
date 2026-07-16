@@ -398,6 +398,7 @@ function AgentSessionEngine({
 }) {
   const relay = useAvalonRelay(applicantContext, applierName, {
     sessionId: meta.sessionId,
+    sessionLabel: meta.name,
     persist: false,
     persistKey: meta.id,
     accountTier,

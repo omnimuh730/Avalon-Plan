@@ -12,7 +12,6 @@ export function useDeployForm(
   const asNewSession = Boolean(opts?.asNewSession);
 
   const [name, setName] = useState("");
-  const [avalonSessionId, setAvalonSessionId] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -145,7 +144,7 @@ export function useDeployForm(
           url: j.url,
           source: j.source,
         })),
-        ...(asNewSession ? { createNewSession: true, avalonSessionId: avalonSessionId.trim() } : {}),
+        ...(asNewSession ? { createNewSession: true } : {}),
       });
     } catch (e: unknown) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -157,8 +156,6 @@ export function useDeployForm(
     name,
     setName,
     asNewSession,
-    avalonSessionId,
-    setAvalonSessionId,
     loading,
     err,
     profileName: applier?.name || "",

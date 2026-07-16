@@ -167,6 +167,12 @@ export interface RemoteAction {
   target?: TargetSelector;
   action: ActionType;
   payload?: Record<string, unknown>;
+  /**
+   * When false, the extension must not bring the Chrome window/tab to the front
+   * (Beta "grant window focus" off). Omitted / true keeps legacy focus behavior.
+   * Screenshots may still force focus.
+   */
+  allowWindowFocus?: boolean;
 }
 
 export interface ActionResult {
@@ -233,6 +239,16 @@ export interface RegisterPayload {
    */
   profileId?: string;
   sessionId?: string;
+  /** Optional display name from Athens (shown in the extension session picker). */
+  label?: string;
+}
+
+/** One live relay room — returned by GET /health and GET /sessions. */
+export interface RelaySessionInfo {
+  profileId: string;
+  sessionId: string;
+  label?: string;
+  peers: { extension: boolean; controller: boolean };
 }
 
 export interface RegisteredPayload {

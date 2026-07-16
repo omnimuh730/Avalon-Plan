@@ -70,7 +70,8 @@ label {
   color: var(--muted-foreground);
 }
 
-input {
+input,
+select {
   width: 100%;
   padding: 10px 12px;
   border-radius: var(--radius);
@@ -79,7 +80,8 @@ input {
   color: inherit;
 }
 
-input:focus {
+input:focus,
+select:focus {
   outline: none;
   border-color: color-mix(in srgb, var(--primary) 50%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);

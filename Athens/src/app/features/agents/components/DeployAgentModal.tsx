@@ -206,8 +206,8 @@ export function DeployAgentModal({
             </div>
           </div>
 
-          {/* Optional session name (+ Avalon session id when creating a new tabbed session) */}
-          <div className="grid sm:grid-cols-2 gap-3">
+          {/* Optional session name — Avalon session ID is assigned automatically */}
+          <div className="grid gap-3">
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-muted-foreground">Session name <span className="font-normal">(optional)</span></span>
               <input
@@ -217,21 +217,10 @@ export function DeployAgentModal({
                 className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </label>
-            {asNewSession && (
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-semibold text-muted-foreground">Avalon session ID</span>
-                <input
-                  value={form.avalonSessionId}
-                  onChange={(e) => form.setAvalonSessionId(e.target.value)}
-                  placeholder="Must match the extension on this lane"
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </label>
-            )}
           </div>
           {asNewSession && (
             <p className="text-[11px] text-muted-foreground -mt-2">
-              Pair a separate Chrome extension instance to this ID so it runs concurrently with your other sessions. Leave blank to share the default session.
+              A unique Avalon session ID is assigned automatically. Open the Avalon extension, sign in, and pick this session from the list — no typing needed.
             </p>
           )}
 
