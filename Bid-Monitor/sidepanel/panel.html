@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bid Monitor</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Bid Monitor</h1>
+      <p class="subtitle">Job pool application monitor</p>
+    </header>
+
+    <section id="applySessionView" class="apply-session hidden">
+      <h2>Current tab</h2>
+      <div id="applyJobCompany" class="apply-job-title">—</div>
+      <div id="applyJobTitle" class="apply-job-meta">—</div>
+      <div id="applyResumeFolder" class="apply-job-meta">—</div>
+      <p id="applySessionStatus" class="apply-status">Ready to record</p>
+      <p id="applySessionError" class="error hidden"></p>
+      <button id="startRecordingBtn" class="btn btn-start" type="button">Start Recording</button>
+      <button id="stopRecordingBtn" class="btn btn-stop hidden" type="button">Stop &amp; Finish Apply</button>
+    </section>
+
+    <section id="recordingsView" class="recordings hidden">
+      <h2>Recording now</h2>
+      <ul id="recordingsList" class="item-list"></ul>
+    </section>
+
+    <section id="loginView" class="view">
+      <form id="loginForm" class="form-section">
+        <label>
+          Profile name
+          <input id="username" type="text" placeholder="e.g. demo" autocomplete="username" required />
+        </label>
+        <label>
+          Password
+          <input id="password" type="password" placeholder="owner123 or bidder123" autocomplete="current-password" required />
+        </label>
+        <button id="signInBtn" class="btn btn-start" type="submit">Sign in</button>
+      </form>
+      <p id="loginError" class="error hidden"></p>
+      <p class="hint mock-hint">
+        Mock sign-in: profile <strong>demo</strong> or <strong>acme</strong><br />
+        Owner password <strong>owner123</strong> · Bidder password <strong>bidder123</strong>
+      </p>
+    </section>
+
+    <section id="poolsView" class="view hidden">
+      <div class="profile-bar">
+        <div>
+          <div class="profile-label">Signed in as</div>
+          <div id="profileName" class="profile-name">—</div>
+          <div id="roleBadge" class="role-badge">Bidder</div>
+        </div>
+        <button id="signOutBtn" class="btn-link" type="button">Sign out</button>
+      </div>
+
+      <div class="format-toggle compact-format">
+        <span class="format-toggle-label">Video format</span>
+        <div class="format-switch" role="group" aria-label="Video format">
+          <button type="button" class="format-option active" data-format="webm">WebM</button>
+          <button type="button" class="format-option" data-format="mp4">MP4</button>
+        </div>
+      </div>
+
+      <div class="section-header">
+        <h2>Job pools</h2>
+      </div>
+      <ul id="poolList" class="item-list"></ul>
+    </section>
+
+    <section id="jobsView" class="view hidden">
+      <button id="backToPoolsBtn" class="btn-link back-btn" type="button">← Back to pools</button>
+      <div class="section-header">
+        <h2 id="jobsPoolTitle">Pool jobs</h2>
+        <span id="jobsPoolStatus" class="status-badge">active</span>
+      </div>
+      <ul id="jobList" class="item-list"></ul>
+    </section>
+
+    <script src="panel.js"></script>
+  </body>
+</html>

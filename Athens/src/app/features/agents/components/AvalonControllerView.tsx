@@ -357,7 +357,7 @@ export function AvalonControllerView({
             {isBeta && (
               <label
                 className="flex items-start gap-2 shrink-0 max-w-[220px] cursor-pointer select-none rounded-xl border border-border bg-background px-3 py-2"
-                title="When off, Avalon will not bring Chrome to the front while applying — you can work in another window."
+                title="When on, Chrome is focused only when a job tab opens. When off, Avalon never steals focus."
               >
                 <input
                   type="checkbox"
@@ -369,7 +369,7 @@ export function AvalonControllerView({
                   <span className="font-semibold text-foreground">Grant window focus</span>
                   <span className="block text-muted-foreground">
                     {relay.allowWindowFocus
-                      ? "Extension may steal focus (current default)"
+                      ? "Focus Chrome only when opening a job tab"
                       : "Won’t steal focus — safer for multitasking"}
                   </span>
                 </span>

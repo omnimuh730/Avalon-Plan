@@ -1,4 +1,4 @@
-/** Beta: whether Avalon may bring the Chrome window/tab to the front during apply. */
+/** Beta: whether Avalon may focus Chrome when opening a job tab (not on every action). */
 export const DEFAULT_ALLOW_WINDOW_FOCUS = true;
 export const ALLOW_WINDOW_FOCUS_STORAGE_KEY = "athens-agent-allow-window-focus";
 
