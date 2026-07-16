@@ -12,7 +12,7 @@
 		"test:external-jobs": "node --test src/services/externalScrapedJobsListQuery.test.mjs",
 		"test:ai-usage": "node --test src/services/aiUsageQuery.test.mjs",
 		"test:resume-templates": "node --test src/services/resumeTemplate.test.mjs",
-		"test:resume-gen": "node --test src/controllers/resumeGenController.test.mjs src/services/resumeCareerTitlePolicy.test.mjs src/lib/betaTier.test.mjs src/services/agentResumeReuse.test.mjs",
+		"test:resume-gen": "node --test src/controllers/resumeGenController.test.mjs src/services/resumeCareerTitlePolicy.test.mjs src/lib/betaTier.test.mjs src/services/agentResumeReuse.test.mjs src/services/refreshGeneratedResumesIdentity.test.mjs",
 		"test:concurrency": "node --test src/utils/concurrency.test.mjs",
 		"migrate": "node src/db/migration.js",
 		"migrate-passwords": "node src/db/migratePasswords.js",

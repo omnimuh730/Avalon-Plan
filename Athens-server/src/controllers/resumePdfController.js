@@ -18,6 +18,9 @@ import { pdfRenderLimiter } from "../utils/concurrency.js";
  * Uses Puppeteer's bundled Chrome for Testing (installed via postinstall /
  * `npm run install:chrome`). Do not depend on a host Chrome install — servers
  * and containers often have none. Optional override: PUPPETEER_EXECUTABLE_PATH.
+ *
+ * Browser pool: PUPPETEER_BROWSER_POOL (default 3) launches multiple Chromium
+ * processes so bulk PDF refresh can saturate CPU.
  */
 
 // Prefer a project-local cache so deploys don't rely on ~/.cache or system Chrome.
@@ -28,25 +31,46 @@ if (!process.env.PUPPETEER_CACHE_DIR) {
 	);
 }
 
-let browserPromise = null;
+function envInt(name, fallback) {
+	const n = Number.parseInt(String(process.env[name] ?? ""), 10);
+	return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
-// Reuse a single Chromium instance across requests; relaunch if it died.
-async function getBrowser() {
-	if (browserPromise) {
-		const b = await browserPromise.catch(() => null);
-		if (b && b.connected) return b;
-		browserPromise = null;
-	}
-	const launchOpts = {
+const BROWSER_POOL_SIZE = envInt("PUPPETEER_BROWSER_POOL", 3);
+
+/** @type {(Promise<import('puppeteer').Browser> | null)[]} */
+const browserSlotPromises = Array.from({ length: BROWSER_POOL_SIZE }, () => null);
+let rr = 0;
+
+function launchOpts() {
+	const opts = {
 		headless: "new",
-		args: ["--no-sandbox", "--disable-setuid-sandbox", "--font-render-hinting=none"],
+		args: [
+			"--no-sandbox",
+			"--disable-setuid-sandbox",
+			"--font-render-hinting=none",
+			"--disable-dev-shm-usage",
+			"--disable-gpu",
+		],
 	};
-	// Explicit override only — default is Puppeteer's downloaded Chrome for Testing.
 	if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-		launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+		opts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
 	}
-	browserPromise = puppeteer.launch(launchOpts);
-	return browserPromise;
+	return opts;
+}
+
+/** Round-robin browser from the pool; relaunch a slot if Chromium died. */
+async function getBrowser() {
+	const slot = rr % BROWSER_POOL_SIZE;
+	rr += 1;
+	const existing = browserSlotPromises[slot];
+	if (existing) {
+		const b = await existing.catch(() => null);
+		if (b && b.connected) return b;
+		browserSlotPromises[slot] = null;
+	}
+	browserSlotPromises[slot] = puppeteer.launch(launchOpts());
+	return browserSlotPromises[slot];
 }
 
 function escapeAttr(value) {
@@ -101,13 +125,24 @@ ${links}
 export async function htmlToPdf({ html, paper = "letter", marginInches, font, baseSizePt, fontLinks } = {}) {
 	const body = typeof html === "string" ? html : "";
 	if (!body.trim()) throw new Error("html is required");
-	const doc = buildHtmlDocument({ html: body, paper: paper === "a4" ? "a4" : "letter", marginInches, font, baseSizePt, fontLinks });
+	const doc = buildHtmlDocument({
+		html: body,
+		paper: paper === "a4" ? "a4" : "letter",
+		marginInches,
+		font,
+		baseSizePt,
+		fontLinks,
+	});
 	return pdfRenderLimiter.run(async () => {
 		const browser = await getBrowser();
 		const page = await browser.newPage();
 		try {
-			await page.setContent(doc, { waitUntil: "networkidle0", timeout: 30000 });
-			await page.evaluate(async () => { if (document.fonts && document.fonts.ready) await document.fonts.ready; });
+			// domcontentloaded is much faster than networkidle0 for bulk refresh;
+			// fonts.ready still waits for webfonts when linked.
+			await page.setContent(doc, { waitUntil: "domcontentloaded", timeout: 30000 });
+			await page.evaluate(async () => {
+				if (document.fonts && document.fonts.ready) await document.fonts.ready;
+			});
 			return await page.pdf({ printBackground: true, preferCSSPageSize: true });
 		} finally {
 			await page.close().catch(() => {});

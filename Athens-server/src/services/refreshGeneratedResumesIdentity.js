@@ -3,7 +3,14 @@
  * per-job draft PDFs from the current Profile Settings contact/header fields
  * (LinkedIn, email, phone, name, education). Does not re-run the LLM.
  *
- * Processes generations concurrently and reports progress via `onProgress`.
+ * Incremental sync:
+ * - Profile `updatedAt` is the identity version watermark after each profile save.
+ * - Profile `resumeUpdatedAt` is set when every generation is synced to that version.
+ * - Each generation stores `identitySyncedAt` (= profile.updatedAt it was synced to).
+ * - Bulk refresh only processes generations where identitySyncedAt < profile.updatedAt
+ *   (or missing), so re-runs skip already-updated résumés.
+ *
+ * PDF speed: high parallel Chromium pool + no nested limiter; skips review copies.
  */
 import { ObjectId } from "mongodb";
 import {
@@ -13,7 +20,11 @@ import {
 } from "../db/mongo.js";
 import { isBetaTier } from "../lib/betaTier.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
-import { loadDecryptedAutoBidProfile } from "./autoBidProfileSecrets.js";
+import {
+  decryptProfileApiKeys,
+  encryptProfileApiKeys,
+  loadDecryptedAutoBidProfile,
+} from "./autoBidProfileSecrets.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import { loadGeneratorConfig, buildGenerationRequestFromSavedConfig } from "./resumeGenerationService.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
@@ -26,16 +37,30 @@ import {
   sourceCareers,
   TITLE_POLICY_VERSION,
 } from "./resumeCareerTitlePolicy.js";
-import { createLimiter, pdfRenderLimiter } from "../utils/concurrency.js";
+import { createLimiter } from "../utils/concurrency.js";
 
 const cleanString = (v) => String(v ?? "").trim();
 
-/** How many generations to update in parallel (Mongo + library + queued PDF). */
-const DEFAULT_REFRESH_CONCURRENCY = 8;
+/** How many generations to update in parallel (Mongo + library + PDF). */
+const DEFAULT_REFRESH_CONCURRENCY = 16;
 
 function refreshConcurrency() {
   const n = Number.parseInt(String(process.env.RESUME_IDENTITY_REFRESH_CONCURRENCY ?? ""), 10);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_REFRESH_CONCURRENCY;
+}
+
+function toMs(isoOrDate) {
+  if (!isoOrDate) return 0;
+  const t = new Date(isoOrDate).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+/** True when this generation still needs identity sync for the current profile version. */
+export function needsIdentitySync(generation, profileUpdatedAt) {
+  const profileMs = toMs(profileUpdatedAt);
+  if (!profileMs) return true;
+  const syncedMs = toMs(generation?.identitySyncedAt);
+  return syncedMs < profileMs;
 }
 
 async function resolveIsBeta(applierName) {
@@ -53,7 +78,30 @@ async function resolveIsBeta(applierName) {
   return isBetaTier(acc?.tier);
 }
 
-async function updateLibraryResumeText({ generationId, ownerName, extractedText }) {
+async function findAccountDoc(applierName) {
+  if (!accountInfoCollection) return null;
+  const name = cleanString(applierName);
+  if (!name) return null;
+  let acc = await accountInfoCollection.findOne({ name });
+  if (!acc) {
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } });
+  }
+  return acc;
+}
+
+async function setProfileResumeUpdatedAt(applierName, resumeUpdatedAt) {
+  const acc = await findAccountDoc(applierName);
+  if (!acc?._id || !accountInfoCollection) return;
+  const existing = decryptProfileApiKeys(acc.autoBidProfile || {});
+  const next = encryptProfileApiKeys({
+    ...existing,
+    resumeUpdatedAt,
+  });
+  await accountInfoCollection.updateOne({ _id: acc._id }, { $set: { autoBidProfile: next } });
+}
+
+async function updateLibraryResumeText({ generationId, ownerName, extractedText, identitySyncedAt }) {
   if (!userResumesCollection || !generationId) return false;
   const now = new Date().toISOString();
   const buffer = Buffer.from(extractedText || "Generated resume", "utf8");
@@ -62,6 +110,8 @@ async function updateLibraryResumeText({ generationId, ownerName, extractedText 
     contentBase64: buffer.toString("base64"),
     sizeBytes: buffer.length,
     updatedAt: now,
+    identitySyncedAt,
+    identityRefreshedAt: now,
   };
   const byGen = await userResumesCollection.updateOne(
     { ownerName, generationId: String(generationId), source: "generated" },
@@ -80,18 +130,22 @@ function emitProgress(onProgress, state) {
     updated: state.updated,
     pdfs: state.pdfs,
     skipped: state.skipped,
+    alreadyCurrent: state.alreadyCurrent ?? 0,
     active: state.active ?? 0,
     failed: state.failed ?? 0,
+    profileUpdatedAt: state.profileUpdatedAt ?? null,
+    resumeUpdatedAt: state.resumeUpdatedAt ?? null,
   });
 }
 
 /**
  * @param {string} applierNameRaw
- * @param {{ onProgress?: (evt: object) => void }} [opts]
- * @returns {Promise<{ updated: number, pdfs: number, skipped: number, failed: number, total: number }>}
+ * @param {{ onProgress?: (evt: object) => void, forceAll?: boolean }} [opts]
+ * @returns {Promise<object>}
  */
 export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {}) {
   const onProgress = opts.onProgress;
+  const forceAll = Boolean(opts.forceAll);
   const name = cleanString(applierNameRaw);
   if (!name) {
     const err = new Error("applierName is required");
@@ -116,6 +170,8 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
     err.status = 404;
     throw err;
   }
+
+  const profileUpdatedAt = cleanString(profile.updatedAt) || new Date().toISOString();
   const identity = identityFromProfile(profile);
   const identityFingerprint = identityContactFingerprint(identity);
   const savedConfig = await loadGeneratorConfig(name);
@@ -129,7 +185,12 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
     })
     .toArray();
 
-  const total = generations.length;
+  const stale = forceAll
+    ? generations
+    : generations.filter((g) => needsIdentitySync(g, profileUpdatedAt));
+  const alreadyCurrent = generations.length - stale.length;
+
+  const total = stale.length;
   const counters = {
     phase: "start",
     done: 0,
@@ -137,21 +198,37 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
     updated: 0,
     pdfs: 0,
     skipped: 0,
+    alreadyCurrent,
     failed: 0,
     active: 0,
+    profileUpdatedAt,
+    resumeUpdatedAt: profile.resumeUpdatedAt || null,
   };
   emitProgress(onProgress, counters);
 
   if (total === 0) {
+    // All generations already match this profile version — stamp the watermark.
+    await setProfileResumeUpdatedAt(name, profileUpdatedAt);
     counters.phase = "done";
+    counters.resumeUpdatedAt = profileUpdatedAt;
     emitProgress(onProgress, counters);
-    return { updated: 0, pdfs: 0, skipped: 0, failed: 0, total: 0 };
+    return {
+      updated: 0,
+      pdfs: 0,
+      skipped: 0,
+      alreadyCurrent,
+      failed: 0,
+      total: 0,
+      catalogTotal: generations.length,
+      profileUpdatedAt,
+      resumeUpdatedAt: profileUpdatedAt,
+    };
   }
 
   const limiter = createLimiter({ concurrency: Math.min(refreshConcurrency(), total) });
 
   await Promise.all(
-    generations.map((gen) =>
+    stale.map((gen) =>
       limiter.run(async () => {
         counters.active += 1;
         emitProgress(onProgress, { ...counters, phase: "progress" });
@@ -178,6 +255,7 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
             careers: sourceCareers(identity),
             config: body,
           });
+          const now = new Date();
 
           await resumeGenerationsCollection.updateOne(
             { _id: gen._id },
@@ -187,7 +265,9 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
                 titlePolicyFingerprint,
                 titlePolicyVersion: TITLE_POLICY_VERSION,
                 isBeta: true,
-                identityRefreshedAt: new Date(),
+                identityRefreshedAt: now,
+                // Watermark: this résumé matches profile.updatedAt
+                identitySyncedAt: profileUpdatedAt,
               },
             },
           );
@@ -197,6 +277,7 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
             generationId,
             ownerName: name,
             extractedText,
+            identitySyncedAt: profileUpdatedAt,
           });
 
           if (gen.libraryResumeId && userResumesCollection) {
@@ -209,7 +290,9 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
                     extractedText,
                     contentBase64: buffer.toString("base64"),
                     sizeBytes: buffer.length,
-                    updatedAt: new Date().toISOString(),
+                    updatedAt: now.toISOString(),
+                    identitySyncedAt: profileUpdatedAt,
+                    identityRefreshedAt: now.toISOString(),
                   },
                 },
               );
@@ -220,16 +303,16 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
 
           if (jobId) {
             await deleteAgentDraftPdf(name, jobId);
-            await pdfRenderLimiter.run(async () => {
-              await renderAgentResumePdf({
-                sections: gen.sections,
-                identity,
-                applierName: name,
-                jobId,
-                config: savedConfig,
-                titlePolicyFingerprint,
-                identityFingerprint,
-              });
+            // htmlToPdf already uses pdfRenderLimiter — do not nest another acquire.
+            await renderAgentResumePdf({
+              sections: gen.sections,
+              identity,
+              applierName: name,
+              jobId,
+              config: savedConfig,
+              titlePolicyFingerprint,
+              identityFingerprint,
+              skipReviewCopy: true,
             });
             counters.pdfs += 1;
           }
@@ -250,15 +333,27 @@ export async function refreshGeneratedResumesIdentity(applierNameRaw, opts = {})
     ),
   );
 
+  // Only advance profile.resumeUpdatedAt when every stale résumé succeeded.
+  let resumeUpdatedAt = profile.resumeUpdatedAt || null;
+  if (counters.failed === 0) {
+    await setProfileResumeUpdatedAt(name, profileUpdatedAt);
+    resumeUpdatedAt = profileUpdatedAt;
+  }
+
   counters.phase = "done";
   counters.active = 0;
+  counters.resumeUpdatedAt = resumeUpdatedAt;
   emitProgress(onProgress, counters);
 
   return {
     updated: counters.updated,
     pdfs: counters.pdfs,
     skipped: counters.skipped,
+    alreadyCurrent,
     failed: counters.failed,
     total,
+    catalogTotal: generations.length,
+    profileUpdatedAt,
+    resumeUpdatedAt,
   };
 }

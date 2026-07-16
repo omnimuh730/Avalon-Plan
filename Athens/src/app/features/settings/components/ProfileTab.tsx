@@ -124,11 +124,18 @@ export function ProfileTab() {
         return;
       }
       const failed = res.failed ?? 0;
-      toast.success(
-        `Updated ${res.updated ?? 0} of ${res.total ?? 0} generated résumé${(res.total ?? 0) === 1 ? "" : "s"}` +
-          (res.pdfs ? ` · ${res.pdfs} PDF${res.pdfs === 1 ? "" : "s"} re-rendered` : "") +
-          (failed ? ` · ${failed} failed` : ""),
-      );
+      const already = res.alreadyCurrent ?? 0;
+      if ((res.total ?? 0) === 0 && already > 0) {
+        toast.success(`All ${already} generated résumé${already === 1 ? "" : "s"} already match your profile`);
+      } else {
+        toast.success(
+          `Updated ${res.updated ?? 0} of ${res.total ?? 0} outdated résumé${(res.total ?? 0) === 1 ? "" : "s"}` +
+            (already ? ` · ${already} already current` : "") +
+            (res.pdfs ? ` · ${res.pdfs} PDF${res.pdfs === 1 ? "" : "s"}` : "") +
+            (failed ? ` · ${failed} failed` : ""),
+        );
+      }
+      await load();
     } catch {
       toast.error("Could not refresh résumés");
     } finally {
@@ -212,7 +219,7 @@ export function ProfileTab() {
         <div className="mb-4 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
           <div className="flex items-center justify-between gap-3 mb-2">
             <p className="text-sm font-bold text-foreground">
-              Updating generated résumés
+              Updating outdated résumés
               {refreshProgress.total > 0
                 ? ` · ${refreshProgress.done} of ${refreshProgress.total}`
                 : "…"}
@@ -238,6 +245,7 @@ export function ProfileTab() {
             <p className="mt-2 text-xs text-muted-foreground">
               {refreshProgress.updated} updated
               {refreshProgress.pdfs ? ` · ${refreshProgress.pdfs} PDFs` : ""}
+              {refreshProgress.alreadyCurrent ? ` · ${refreshProgress.alreadyCurrent} already current` : ""}
               {refreshProgress.failed ? ` · ${refreshProgress.failed} failed` : ""}
             </p>
           )}
@@ -247,8 +255,13 @@ export function ProfileTab() {
       {isBeta && !loading && !refreshingResumes && (
         <p className="mb-4 text-xs text-muted-foreground">
           After changing LinkedIn or other contact details, use{" "}
-          <span className="font-semibold text-foreground">Update generated résumés</span> to refresh every
-          saved Job Search / Agent PDF header without regenerating content.
+          <span className="font-semibold text-foreground">Update generated résumés</span> to refresh outdated
+          Job Search / Agent PDF headers (skips ones already synced).
+          {profile.updatedAt && profile.resumeUpdatedAt && profile.resumeUpdatedAt >= profile.updatedAt
+            ? " All résumés are currently in sync."
+            : profile.updatedAt
+              ? " Some résumés may be out of date."
+              : ""}
         </p>
       )}
 

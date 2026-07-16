@@ -346,6 +346,7 @@ export async function renderAgentResumePdf({
   config,
   titlePolicyFingerprint,
   identityFingerprint,
+  skipReviewCopy = false,
 }) {
   const theme = (config && config.theme) || {};
   const html = sectionsToHtml(sections, identity, config);
@@ -366,6 +367,7 @@ export async function renderAgentResumePdf({
     config,
     titlePolicyFingerprint: titlePolicyFingerprint ?? config?.titlePolicyFingerprint,
     identityFingerprint: identityFingerprint ?? config?.identityFingerprint,
+    skipReviewCopy,
   });
   return { buffer, savedPath: draftPath, reviewPath };
 }

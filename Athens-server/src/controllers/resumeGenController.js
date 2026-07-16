@@ -289,6 +289,14 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
     config: body,
   });
 
+  let identitySyncedAt = cleanString(body.identitySyncedAt) || new Date().toISOString();
+  try {
+    const profile = await loadDecryptedAutoBidProfile(body.applierName);
+    if (profile?.updatedAt) identitySyncedAt = cleanString(profile.updatedAt) || identitySyncedAt;
+  } catch {
+    /* keep fallback */
+  }
+
   const generationId = await saveGenerationRun({
     applierName: cleanString(body.applierName) || null,
     provider: prep.providerId,
@@ -308,6 +316,8 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
     isBeta,
     titlePolicyVersion: TITLE_POLICY_VERSION,
     titlePolicyFingerprint,
+    identitySyncedAt,
+    identityRefreshedAt: new Date(),
     startedAt,
     finishedAt: new Date(),
   });
@@ -326,6 +336,7 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
       titlePolicyFingerprint,
       titlePolicyVersion: TITLE_POLICY_VERSION,
       isBeta,
+      identitySyncedAt,
     });
   } catch (syncErr) {
     console.warn("[resume-generate] library sync failed:", syncErr.message);
@@ -773,8 +784,9 @@ export async function renderGenerationPdf(req, res) {
       config: run.config || {},
     });
     const safeName = String(identity?.fullName || run.applierName || "Resume").replace(/[^\w.\-()+ ]+/g, "_").trim() || "Resume";
+    const asAttachment = String(req.query?.download ?? "") === "1" || String(req.query?.download ?? "").toLowerCase() === "true";
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${safeName}.pdf"`);
+    res.setHeader("Content-Disposition", `${asAttachment ? "attachment" : "inline"}; filename="${safeName}.pdf"`);
     return res.end(buffer);
   } catch (err) {
     console.warn("GET /api/personal/resume-generations/:id/pdf error:", err.message);

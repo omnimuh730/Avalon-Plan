@@ -71,6 +71,9 @@ export type UserProfile = {
   sponsorship: YesNoDecline;
   immigrationStatus: ImmigrationStatus;
   resumeFolderUrl: string;
+  /** Server timestamps for identity ↔ résumé sync (optional on client). */
+  updatedAt?: string | null;
+  resumeUpdatedAt?: string | null;
 };
 
 export const emptyEducation = (): EducationEntry => ({
@@ -210,6 +213,8 @@ export function mapProfileFromApi(raw: Record<string, unknown> | undefined): Use
     sponsorship: pickEnum(raw.sponsorship, YES_NO_DECLINE_VALUES, "prefer_not_say"),
     immigrationStatus: pickEnum(raw.immigrationStatus, IMMIGRATION_STATUS_VALUES, "prefer_not_say"),
     resumeFolderUrl: String(raw.resumeFolderUrl ?? ""),
+    updatedAt: raw.updatedAt ? String(raw.updatedAt) : null,
+    resumeUpdatedAt: raw.resumeUpdatedAt ? String(raw.resumeUpdatedAt) : null,
   };
 }
 

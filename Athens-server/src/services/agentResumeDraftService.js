@@ -105,6 +105,7 @@ export async function writeAgentDraftPdf({
   config,
   titlePolicyFingerprint,
   identityFingerprint,
+  skipReviewCopy = false,
 }) {
   const draftPath = agentDraftPdfPath(applierName, jobId);
   const dir = path.dirname(draftPath);
@@ -134,16 +135,18 @@ export async function writeAgentDraftPdf({
   }
 
   let reviewPath = "";
-  try {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const reviewDir = path.join(REVIEW_ROOT, stamp);
-    await mkdir(reviewDir, { recursive: true });
-    const base = `${safe(applierName) || "resume"}-${safe(jobId) || "job"}`;
-    reviewPath = path.join(reviewDir, `${base}.pdf`);
-    await writeFile(reviewPath, buffer);
-    if (html) await writeFile(path.join(reviewDir, `${base}.html`), html, "utf8");
-  } catch {
-    /* review copy is best-effort */
+  if (!skipReviewCopy) {
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const reviewDir = path.join(REVIEW_ROOT, stamp);
+      await mkdir(reviewDir, { recursive: true });
+      const base = `${safe(applierName) || "resume"}-${safe(jobId) || "job"}`;
+      reviewPath = path.join(reviewDir, `${base}.pdf`);
+      await writeFile(reviewPath, buffer);
+      if (html) await writeFile(path.join(reviewDir, `${base}.html`), html, "utf8");
+    } catch {
+      /* review copy is best-effort */
+    }
   }
 
   return { draftPath, reviewPath };

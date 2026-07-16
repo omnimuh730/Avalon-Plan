@@ -5,7 +5,8 @@
 
 export const DEFAULT_RESUME_GEN_GLOBAL_CONCURRENCY = 4;
 export const DEFAULT_RESUME_GEN_PER_USER_CONCURRENCY = 2;
-export const DEFAULT_PDF_RENDER_CONCURRENCY = 2;
+/** High default for bulk identity refresh — press CPU for speed. Override via PDF_RENDER_CONCURRENCY. */
+export const DEFAULT_PDF_RENDER_CONCURRENCY = 12;
 
 function envInt(name, fallback) {
 	const n = Number.parseInt(String(process.env[name] ?? ''), 10);

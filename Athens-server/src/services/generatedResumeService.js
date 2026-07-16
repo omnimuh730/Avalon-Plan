@@ -43,6 +43,7 @@ export async function syncGeneratedResumeAfterRun({
   titlePolicyFingerprint,
   titlePolicyVersion,
   isBeta,
+  identitySyncedAt,
 }) {
   if (!userResumesCollection || !sections || !ownerName) return null;
 
@@ -64,6 +65,7 @@ export async function syncGeneratedResumeAfterRun({
   const parentJobId = cleanString(generateParentJobId) || null;
   const fingerprint = cleanString(titlePolicyFingerprint) || null;
   const policyVersion = titlePolicyVersion ?? null;
+  const syncedAt = cleanString(identitySyncedAt) || now;
   const doc = {
     ownerId,
     ownerName,
@@ -87,6 +89,8 @@ export async function syncGeneratedResumeAfterRun({
     titlePolicyFingerprint: fingerprint,
     titlePolicyVersion: policyVersion,
     isBeta: Boolean(isBeta),
+    identitySyncedAt: syncedAt,
+    identityRefreshedAt: now,
     uploadedAt: now,
     updatedAt: now,
   };
@@ -114,6 +118,8 @@ export async function syncGeneratedResumeAfterRun({
             titlePolicyFingerprint: fingerprint ?? existing.titlePolicyFingerprint ?? null,
             titlePolicyVersion: policyVersion ?? existing.titlePolicyVersion ?? null,
             isBeta: Boolean(isBeta),
+            identitySyncedAt: syncedAt,
+            identityRefreshedAt: now,
             updatedAt: now,
             contentBase64: doc.contentBase64,
             sizeBytes: doc.sizeBytes,
@@ -148,6 +154,8 @@ export async function syncGeneratedResumeAfterRun({
             titlePolicyFingerprint: fingerprint ?? prior.titlePolicyFingerprint ?? null,
             titlePolicyVersion: policyVersion ?? prior.titlePolicyVersion ?? null,
             isBeta: Boolean(isBeta),
+            identitySyncedAt: syncedAt,
+            identityRefreshedAt: now,
             updatedAt: now,
             contentBase64: doc.contentBase64,
             sizeBytes: doc.sizeBytes,

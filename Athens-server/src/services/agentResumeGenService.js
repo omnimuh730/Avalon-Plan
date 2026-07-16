@@ -611,6 +611,7 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
       let generationId = null;
       let sync = null;
       try {
+        const identitySyncedAt = cleanString(profile.updatedAt) || new Date().toISOString();
         generationId = await saveGenerationRun({
           applierName: name,
           provider: prep.providerId,
@@ -631,6 +632,8 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
           isBeta: Boolean(prep.isBeta),
           titlePolicyVersion: TITLE_POLICY_VERSION,
           titlePolicyFingerprint,
+          identitySyncedAt,
+          identityRefreshedAt: new Date(),
           startedAt,
           finishedAt: new Date(),
         });
@@ -649,6 +652,7 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
           titlePolicyFingerprint,
           titlePolicyVersion: TITLE_POLICY_VERSION,
           isBeta: prep.isBeta,
+          identitySyncedAt,
         });
       } catch (err) {
         console.warn("[agent-resume-gen] persistence/enrichment failed (non-fatal):", err.message);

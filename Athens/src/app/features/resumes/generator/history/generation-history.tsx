@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
-import { AlertTriangle, Briefcase, CheckCircle2, ChevronLeft, ChevronRight, Clock, Coins, Eye, FileText, Filter, Loader2, Search, SlidersHorizontal, Sparkles, Trash2, Wand2, X } from "lucide-react";
+import { AlertTriangle, Briefcase, CheckCircle2, ChevronLeft, ChevronRight, Clock, Coins, Download, Eye, FileText, Filter, Loader2, Search, SlidersHorizontal, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { useApi } from "@/api/useApi";
 import { API_BASE } from "@/lib/api-base";
-import { deleteGenerationRun } from "../../../../services/resumeApi";
+import { deleteGenerationRun, downloadGenerationPdf } from "../../../../services/resumeApi";
 import { templateById } from "../constants/templates";
 import { defaultConfig, defaultTheme } from "../constants/defaults";
 import { ResumePreview } from "../preview/resume-preview";
@@ -56,6 +56,7 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
   const [selected, setSelected] = useState<FullRun | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [detailTab, setDetailTab] = useState<"preview" | "jd" | "usage" | "analysis">("preview");
 
@@ -173,6 +174,24 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
       /* ignore */
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!selected?.sections || downloadingId) return;
+    const id = idStr(selected._id);
+    if (!id) return;
+    const fallback =
+      String(selected.identity?.fullName || applierName || "Resume")
+        .replace(/[^\w.\-()+ ]+/g, "_")
+        .trim() || "Resume";
+    setDownloadingId(id);
+    try {
+      await downloadGenerationPdf(id, `${fallback}.pdf`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "PDF download failed");
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -535,6 +554,20 @@ export function GenerationHistory({ applierName, onLoad }: { applierName: string
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void handleDownloadPdf()}
+                      disabled={!selected.sections || downloadingId === idStr(selected._id)}
+                      className="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg border border-neutral-200 dark:border-white/10 text-xs hover:bg-neutral-100 dark:hover:bg-white/5 disabled:opacity-50"
+                      title="Download as PDF"
+                    >
+                      {downloadingId === idStr(selected._id) ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Download className="w-3.5 h-3.5" />
+                      )}
+                      Download PDF
+                    </button>
                     <button
                       type="button"
                       onClick={() => void handleDelete(idStr(selected._id))}

@@ -123,7 +123,10 @@ export type RefreshResumesProgress = {
   skipped: number;
   failed: number;
   active: number;
+  alreadyCurrent?: number;
   phase: string;
+  profileUpdatedAt?: string | null;
+  resumeUpdatedAt?: string | null;
 };
 
 /**
@@ -141,6 +144,7 @@ export async function refreshGeneratedResumesIdentityStream(
   total?: number;
   skipped?: number;
   failed?: number;
+  alreadyCurrent?: number;
   error?: string;
   betaRequired?: boolean;
 }> {
@@ -163,7 +167,10 @@ export async function refreshGeneratedResumesIdentityStream(
           skipped: Number(data.skipped ?? 0),
           failed: Number(data.failed ?? 0),
           active: Number(data.active ?? 0),
+          alreadyCurrent: Number(data.alreadyCurrent ?? 0),
           phase: String(data.phase ?? "progress"),
+          profileUpdatedAt: data.profileUpdatedAt ? String(data.profileUpdatedAt) : null,
+          resumeUpdatedAt: data.resumeUpdatedAt ? String(data.resumeUpdatedAt) : null,
         });
         return;
       }
@@ -192,6 +199,7 @@ export async function refreshGeneratedResumesIdentityStream(
     total: Number(donePayload.total ?? 0),
     skipped: Number(donePayload.skipped ?? 0),
     failed: Number(donePayload.failed ?? 0),
+    alreadyCurrent: Number(donePayload.alreadyCurrent ?? 0),
   };
 }
 
