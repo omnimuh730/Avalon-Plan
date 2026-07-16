@@ -7,8 +7,32 @@ export type BidResultStatus =
 
 export type FlagLight = "green" | "red" | null;
 
+export type BidJobDetail = {
+  description: string | null;
+  postedAt: string | null;
+  postedLabel: string | null;
+  salary: string | null;
+  workMode: string | null;
+  seniority: string | null;
+  employmentType: string | null;
+  experience: string | null;
+  skills: string[];
+  applicantsText: string | null;
+};
+
+export type BidResumeInfo = {
+  name: string;
+  techStack: string | null;
+  source: string | null;
+  fileName: string | null;
+  usedAt: string | null;
+  scorePercent: number | null;
+};
+
 export type BidResult = {
   id: string;
+  /** Mongo job id when linked to Job Search / Bid ready. */
+  jobId: string | null;
   /** Calendar day key YYYY-MM-DD used for folder grouping (pooled date). */
   dayKey: string;
   job: {
@@ -31,12 +55,16 @@ export type BidResult = {
     remote: FlagLight;
     clearance: FlagLight;
   };
-  /** Future: join vendor_tasks + session + Storage under bid-recordings/… */
+  /** Snapshot job fields (mock or enriched). Live fetch overlays when jobId is set. */
+  jobDetail: BidJobDetail | null;
+  /** Recommended / generated résumé for this job (pending & in-process). */
+  recommendedResume: BidResumeInfo | null;
+  /** Résumé actually used on submission (submitted / reviewed / rejected). */
+  submissionResume: BidResumeInfo | null;
   recording: {
     storagePath: string;
     contentType: string;
     sizeBytes: number;
-    /** Mock playback URL (not live Firebase signed URL). */
     previewUrl: string;
   } | null;
   notes: string | null;
@@ -62,3 +90,10 @@ export const BID_STATUSES: BidResultStatus[] = [
   "reviewed",
   "rejected",
 ];
+
+/** Kanban drag + preview status edit allowed only among these. */
+export const EDITABLE_STATUSES: BidResultStatus[] = ["submitted", "reviewed", "rejected"];
+
+export function isEditableStatus(status: BidResultStatus): boolean {
+  return EDITABLE_STATUSES.includes(status);
+}

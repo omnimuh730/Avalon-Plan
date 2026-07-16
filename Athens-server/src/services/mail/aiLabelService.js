@@ -2,6 +2,7 @@
  * AI classification of inbox emails into a single custom Gmail label.
  */
 import { chatCompletion, resolveDefaultModel } from '../llm/llmService.js';
+import { getMailAiLabelConcurrency, mapPool } from '../../utils/concurrency.js';
 import { addLabelsToMessage, fetchFlagsForUids } from './imapClient.js';
 import { ensureMessagePlainText } from './mailSyncService.js';
 import { getMessage, updateMessageFlags } from './mailStore.js';
@@ -140,7 +141,98 @@ function mergeUsage(a, b) {
 }
 
 /**
- * Batch classify and apply labels to selected messages.
+ * Classify + apply a label for a single message.
+ * @returns {Promise<{ result: object, usage?: object }>}
+ */
+async function processOneMessage({
+	item,
+	applierName,
+	profile,
+	email,
+	password,
+	allowedLabels,
+	labelDefinitions,
+}) {
+	const uid = Number(item.uid);
+	if (!Number.isFinite(uid)) {
+		return { result: { uid: item.uid, label: null, applied: false, error: 'Invalid uid' } };
+	}
+
+	const inboxMailbox = folderToMailbox('inbox');
+	const hintMailbox = typeof item.mailbox === 'string' && item.mailbox.trim() ? item.mailbox.trim() : null;
+	let doc = null;
+	if (hintMailbox) doc = await getMessage(applierName, uid, hintMailbox);
+	if (!doc) doc = await getMessage(applierName, uid, inboxMailbox);
+	if (!doc) doc = await getMessage(applierName, uid);
+	if (!doc) {
+		return { result: { uid, label: null, applied: false, error: 'Message not found' } };
+	}
+
+	const textResult = await ensureMessagePlainText(
+		applierName,
+		uid,
+		doc.mailbox || hintMailbox || inboxMailbox,
+	);
+	if (!textResult.ok) {
+		return {
+			result: { uid, label: null, applied: false, error: textResult.error || 'Failed to load body text' },
+		};
+	}
+	doc = textResult.message || doc;
+
+	const fromDisplay = doc.from?.name
+		? doc.from.email
+			? `${doc.from.name} <${doc.from.email}>`
+			: doc.from.name
+		: doc.from?.email || '';
+
+	const { label, usage, error } = await classifyMailLabel(
+		{
+			from: fromDisplay,
+			subject: doc.subject || '',
+			bodyText: textResult.bodyText || doc.bodyText || '',
+		},
+		allowedLabels,
+		labelDefinitions,
+		profile,
+		{ applierName },
+	);
+
+	if (!label) {
+		return {
+			result: { uid, label: null, applied: false, error: error || 'No matching label' },
+			usage,
+		};
+	}
+
+	try {
+		const msgMailbox = doc.mailbox || inboxMailbox;
+		await addLabelsToMessage(email, password, uid, [label], msgMailbox);
+		const refreshed = await fetchFlagsForUids(email, password, [uid], applierName, msgMailbox);
+		if (refreshed[0]) {
+			await updateMessageFlags(applierName, uid, {
+				gmailLabels: refreshed[0].gmailLabels,
+				labels: refreshed[0].labels,
+				folder: refreshed[0].folder,
+				flags: refreshed[0].flags,
+			}, msgMailbox);
+		}
+		return { result: { uid, label, applied: true }, usage };
+	} catch (err) {
+		return {
+			result: {
+				uid,
+				label,
+				applied: false,
+				error: err?.message || String(err),
+			},
+			usage,
+		};
+	}
+}
+
+/**
+ * Batch classify and apply labels to selected messages (bounded parallel).
  * @param {object} opts
  * @param {string} opts.applierName
  * @param {object} opts.profile decrypted autoBidProfile
@@ -164,85 +256,25 @@ export async function runMailAiLabelBatch({
 		return { ok: false, error: 'No LLM API key on applier profile. Configure one in Settings → Profile.' };
 	}
 
-	const results = [];
-	let totalUsage;
-
-	for (const item of messages) {
-		const uid = Number(item.uid);
-		if (!Number.isFinite(uid)) {
-			results.push({ uid: item.uid, label: null, applied: false, error: 'Invalid uid' });
-			continue;
-		}
-
-		const inboxMailbox = folderToMailbox('inbox');
-		const hintMailbox = typeof item.mailbox === 'string' && item.mailbox.trim() ? item.mailbox.trim() : null;
-		// Prefer client mailbox, then INBOX, then any mailbox (unlabeled list is folder-scoped).
-		let doc = null;
-		if (hintMailbox) doc = await getMessage(applierName, uid, hintMailbox);
-		if (!doc) doc = await getMessage(applierName, uid, inboxMailbox);
-		if (!doc) doc = await getMessage(applierName, uid);
-		if (!doc) {
-			results.push({ uid, label: null, applied: false, error: 'Message not found' });
-			continue;
-		}
-
-		const textResult = await ensureMessagePlainText(
+	const list = Array.isArray(messages) ? messages : [];
+	const concurrency = getMailAiLabelConcurrency();
+	const settled = await mapPool(list, concurrency, (item) =>
+		processOneMessage({
+			item,
 			applierName,
-			uid,
-			doc.mailbox || hintMailbox || inboxMailbox,
-		);
-		if (!textResult.ok) {
-			results.push({ uid, label: null, applied: false, error: textResult.error || 'Failed to load body text' });
-			continue;
-		}
-		doc = textResult.message || doc;
-
-		const fromDisplay = doc.from?.name
-			? doc.from.email
-				? `${doc.from.name} <${doc.from.email}>`
-				: doc.from.name
-			: doc.from?.email || '';
-
-		const { label, usage, error } = await classifyMailLabel(
-			{
-				from: fromDisplay,
-				subject: doc.subject || '',
-				bodyText: textResult.bodyText || doc.bodyText || '',
-			},
+			profile,
+			email,
+			password,
 			allowedLabels,
 			labelDefinitions,
-			profile,
-			{ applierName },
-		);
+		}),
+	);
 
-		if (usage) totalUsage = mergeUsage(totalUsage, usage);
-
-		if (!label) {
-			results.push({ uid, label: null, applied: false, error: error || 'No matching label' });
-			continue;
-		}
-
-		try {
-			const msgMailbox = doc.mailbox || inboxMailbox;
-			await addLabelsToMessage(email, password, uid, [label], msgMailbox);
-			const refreshed = await fetchFlagsForUids(email, password, [uid], applierName, msgMailbox);
-			if (refreshed[0]) {
-				await updateMessageFlags(applierName, uid, {
-					gmailLabels: refreshed[0].gmailLabels,
-					labels: refreshed[0].labels,
-					folder: refreshed[0].folder,
-					flags: refreshed[0].flags,
-				}, msgMailbox);
-			}
-			results.push({ uid, label, applied: true });
-		} catch (err) {
-			results.push({
-				uid,
-				label,
-				applied: false,
-				error: err?.message || String(err),
-			});
-		}
+	let totalUsage;
+	const results = [];
+	for (const entry of settled) {
+		if (entry?.usage) totalUsage = mergeUsage(totalUsage, entry.usage);
+		if (entry?.result) results.push(entry.result);
 	}
 
 	return { ok: true, results, usage: totalUsage };

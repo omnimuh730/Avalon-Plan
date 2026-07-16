@@ -4,6 +4,7 @@ import {
 	createFairLimiter,
 	createLimiter,
 	createPdfRenderLimiter,
+	createPriorityLimiter,
 	createResumeGenFairLimiter,
 	DEFAULT_PDF_RENDER_CONCURRENCY,
 	DEFAULT_RESUME_GEN_GLOBAL_CONCURRENCY,
@@ -11,6 +12,9 @@ import {
 	getPdfRenderConcurrency,
 	getResumeGenGlobalConcurrency,
 	getResumeGenPerUserConcurrency,
+	LLM_PRIORITY,
+	llmPriorityFromFeature,
+	mapPool,
 } from './concurrency.js';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -104,7 +108,49 @@ test('createFairLimiter enforces global and per-key caps', async () => {
 	assert.equal(limiter.globalActive, 0);
 });
 
-test('createFairLimiter preserves FIFO fairness across keys', async () => {
+test('createFairLimiter skips ahead when head is per-key saturated', async () => {
+	const limiter = createFairLimiter({ globalConcurrency: 2, perKeyConcurrency: 1 });
+	const releaseA = defer();
+	const releaseB = defer();
+	const order = [];
+
+	const holdA = limiter.run('alice', async () => {
+		order.push('alice-1-start');
+		await releaseA.promise;
+		order.push('alice-1-end');
+	});
+
+	await delay(10);
+
+	// Alice is at per-key max; alice-2 is blocked at head — bob must still start.
+	let bobStarted = false;
+	const waitAlice2 = limiter.run('alice', async () => {
+		order.push('alice-2');
+	});
+	const waitBob = limiter.run('bob', async () => {
+		bobStarted = true;
+		order.push('bob-start');
+		await releaseB.promise;
+		order.push('bob-end');
+	});
+
+	await delay(20);
+	assert.equal(bobStarted, true);
+	assert.equal(limiter.globalActive, 2);
+	assert.equal(limiter.keyActive('bob'), 1);
+
+	releaseA.resolve();
+	await holdA;
+	await delay(10);
+	assert.ok(order.includes('alice-2'));
+
+	releaseB.resolve();
+	await Promise.all([waitBob, waitAlice2]);
+
+	assert.ok(order.indexOf('alice-1-end') < order.indexOf('alice-2'));
+});
+
+test('createFairLimiter preserves per-key FIFO under skip-ahead', async () => {
 	const limiter = createFairLimiter({ globalConcurrency: 1, perKeyConcurrency: 1 });
 	const order = [];
 
@@ -130,6 +176,7 @@ test('createFairLimiter preserves FIFO fairness across keys', async () => {
 	releaseA.resolve();
 	await Promise.all([holdA, waitBob, waitAlice2]);
 
+	// With global=1, bob and alice-2 serialize after alice-1; bob was queued first.
 	assert.deepEqual(order, ['alice-1-start', 'alice-1-end', 'bob', 'alice-2']);
 });
 
@@ -219,6 +266,56 @@ test('createFairLimiter onQueued fires only when waiting', async () => {
 
 	await Promise.all([first, second]);
 	assert.equal(queued, 1);
+});
+
+test('mapPool preserves order and caps concurrency', async () => {
+	let peak = 0;
+	let active = 0;
+	const results = await mapPool([1, 2, 3, 4, 5, 6], 2, async (n) => {
+		active++;
+		peak = Math.max(peak, active);
+		await delay(15);
+		active--;
+		return n * 10;
+	});
+	assert.deepEqual(results, [10, 20, 30, 40, 50, 60]);
+	assert.equal(peak, 2);
+});
+
+test('createPriorityLimiter serves higher priority first', async () => {
+	const pool = createPriorityLimiter({ concurrency: 1 });
+	const order = [];
+	const releaseFirst = defer();
+
+	const lowHold = pool.run(LLM_PRIORITY.skill, async () => {
+		order.push('skill-start');
+		await releaseFirst.promise;
+		order.push('skill-end');
+	});
+
+	await delay(10);
+
+	const agentJob = pool.run(LLM_PRIORITY.agent, async () => {
+		order.push('agent');
+	});
+	const mailJob = pool.run(LLM_PRIORITY.mail, async () => {
+		order.push('mail');
+	});
+
+	await delay(10);
+	assert.equal(pool.pending, 2);
+
+	releaseFirst.resolve();
+	await Promise.all([lowHold, agentJob, mailJob]);
+	assert.deepEqual(order, ['skill-start', 'skill-end', 'agent', 'mail']);
+});
+
+test('llmPriorityFromFeature maps feature strings', () => {
+	assert.equal(llmPriorityFromFeature('agent-otp'), 'agent');
+	assert.equal(llmPriorityFromFeature('resume-generate:summary'), 'resume');
+	assert.equal(llmPriorityFromFeature('mail-ai-label'), 'mail');
+	assert.equal(llmPriorityFromFeature('job-skill-extract'), 'skill');
+	assert.equal(llmPriorityFromFeature('unknown-thing'), 'other');
 });
 
 function defer() {

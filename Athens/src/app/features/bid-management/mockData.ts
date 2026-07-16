@@ -1,11 +1,13 @@
 import type {
+  BidJobDetail,
   BidResult,
   BidResultKpis,
   BidResultStatus,
+  BidResumeInfo,
   DateFolder,
   PeriodPreset,
 } from "./types";
-import { BID_STATUSES } from "./types";
+import { BID_STATUSES, isEditableStatus } from "./types";
 
 /**
  * Mock bid outcomes for the Bid Management UI.
@@ -36,7 +38,60 @@ function later(baseIso: string, hours: number): string {
   return new Date(new Date(baseIso).getTime() + hours * 60 * 60 * 1000).toISOString();
 }
 
-export const MOCK_BID_RESULTS: BidResult[] = [
+function sampleDetail(
+  title: string,
+  company: string,
+  postedAt: string,
+  extras?: Partial<BidJobDetail>,
+): BidJobDetail {
+  return {
+    description: [
+      `${company} is hiring a ${title}.`,
+      "",
+      "Responsibilities",
+      "• Own end-to-end delivery across product and engineering",
+      "• Collaborate with stakeholders on requirements and trade-offs",
+      "• Improve reliability, performance, and developer experience",
+      "",
+      "Requirements",
+      "• 4+ years of relevant professional experience",
+      "• Strong communication and ownership mindset",
+      "• Comfortable shipping in a fast-paced environment",
+    ].join("\n"),
+    postedAt,
+    postedLabel: null,
+    salary: extras?.salary ?? "$140k–$190k",
+    workMode: extras?.workMode ?? "Remote",
+    seniority: extras?.seniority ?? "Senior",
+    employmentType: extras?.employmentType ?? "Full-time",
+    experience: extras?.experience ?? "4+ years",
+    skills: extras?.skills ?? ["TypeScript", "React", "Node.js", "PostgreSQL"],
+    applicantsText: extras?.applicantsText ?? null,
+  };
+}
+
+function resume(
+  name: string,
+  techStack: string,
+  opts?: Partial<BidResumeInfo>,
+): BidResumeInfo {
+  return {
+    name,
+    techStack,
+    source: opts?.source ?? "generated",
+    fileName: opts?.fileName ?? `${name.replace(/\s+/g, "_")}.pdf`,
+    usedAt: opts?.usedAt ?? null,
+    scorePercent: opts?.scorePercent ?? null,
+  };
+}
+
+type MockSeed = Omit<
+  BidResult,
+  "jobId" | "jobDetail" | "recommendedResume" | "submissionResume"
+> &
+  Partial<Pick<BidResult, "jobId" | "jobDetail" | "recommendedResume" | "submissionResume">>;
+
+const MOCK_SEEDS: MockSeed[] = [
   {
     id: "br-1001",
     dayKey: atDay(0).dayKey,
@@ -82,26 +137,6 @@ export const MOCK_BID_RESULTS: BidResult[] = [
     flags: { remote: "green", clearance: "green" },
     recording: null,
     notes: "Bidder currently on the application form.",
-  },
-  {
-    id: "br-1003",
-    dayKey: atDay(0).dayKey,
-    job: {
-      title: "DevOps Engineer",
-      company: "Orbit Mesh",
-      location: "Remote · US",
-      source: "LinkedIn",
-      applyUrl: "https://www.linkedin.com/jobs/view/mock-1005",
-    },
-    bidder: { name: "Morgan Patel", avatarInitials: "MP" },
-    status: "pending",
-    pooledAt: atDay(0, 14).iso,
-    submittedAt: null,
-    durationSec: null,
-    matchScore: 72,
-    flags: { remote: "green", clearance: null },
-    recording: null,
-    notes: "Waiting for next available bidder slot.",
   },
   {
     id: "br-1004",
@@ -153,26 +188,6 @@ export const MOCK_BID_RESULTS: BidResult[] = [
       sizeBytes: 1_890_220,
       previewUrl: SAMPLE_WEBM,
     },
-    notes: null,
-  },
-  {
-    id: "br-1006",
-    dayKey: atDay(1).dayKey,
-    job: {
-      title: "iOS Engineer",
-      company: "Brightline Apps",
-      location: "Seattle, WA",
-      source: "Indeed",
-      applyUrl: "https://www.indeed.com/viewjob?jk=mock-1009",
-    },
-    bidder: { name: "Alex Chen", avatarInitials: "AC" },
-    status: "pending",
-    pooledAt: atDay(1, 16).iso,
-    submittedAt: null,
-    durationSec: null,
-    matchScore: 69,
-    flags: { remote: null, clearance: "green" },
-    recording: null,
     notes: null,
   },
   {
@@ -327,9 +342,100 @@ export const MOCK_BID_RESULTS: BidResult[] = [
   },
 ];
 
-/** Swap this for a real API client later. */
+export const MOCK_BID_RESULTS: BidResult[] = MOCK_SEEDS.map((seed) => {
+  const recommended =
+    seed.recommendedResume ??
+    resume(`${seed.bidder.name.split(" ")[0]} · ${seed.job.title.split(" ")[0]}`, "TS + React", {
+      scorePercent: seed.matchScore,
+    });
+  const submission = isEditableStatus(seed.status)
+    ? seed.submissionResume ??
+      resume(recommended.name, recommended.techStack || "TS + React", {
+        source: "uploaded",
+        usedAt: seed.submittedAt,
+        scorePercent: seed.matchScore,
+        fileName: `${seed.bidder.name.replace(/\s+/g, "_")}_tailored.pdf`,
+      })
+    : null;
+
+  return {
+    ...seed,
+    jobId: seed.jobId ?? null,
+    jobDetail:
+      seed.jobDetail ??
+      sampleDetail(seed.job.title, seed.job.company, seed.pooledAt, {
+        workMode: seed.flags.remote === "green" ? "Remote" : seed.flags.remote === "red" ? "Hybrid / Onsite" : null,
+      }),
+    recommendedResume: recommended,
+    submissionResume: submission,
+  };
+});
+
+/** Swap this for a real API client later (non-pending statuses). Pending comes from Bid Ready. */
 export function loadMockBidResults(): BidResult[] {
-  return MOCK_BID_RESULTS;
+  // Pending is sourced from live Bid Ready jobs — exclude mock pending rows.
+  return MOCK_BID_RESULTS.filter((r) => r.status !== "pending");
+}
+
+export function dayKeyFromIso(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return dayKeyFromDate(new Date());
+  return dayKeyFromDate(d);
+}
+
+function initials(name: string | null | undefined): string {
+  const parts = String(name || "?").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
+/** Map a Vendor Monitor Bid-ready task into a Pending (or In-Process) BidResult. */
+export function vendorTaskToBidResult(task: {
+  id: string;
+  jobId?: string | null;
+  applierName: string | null;
+  title: string;
+  company: string;
+  applyUrl: string | null;
+  source: string;
+  location: string;
+  matchScore: number | null;
+  progress: string;
+  addedAt: string | null;
+  bidReadyDate?: string | null;
+}): BidResult {
+  const pooledAt = task.bidReadyDate || task.addedAt || new Date().toISOString();
+  const isActive = task.progress === "active";
+  return {
+    id: `bidready-${task.id}`,
+    jobId: task.jobId || null,
+    dayKey: dayKeyFromIso(pooledAt),
+    job: {
+      title: task.title,
+      company: task.company,
+      location: task.location || "—",
+      source: task.source || "—",
+      applyUrl: task.applyUrl || "#",
+    },
+    bidder: {
+      name: task.applierName || "Unassigned",
+      avatarInitials: initials(task.applierName),
+    },
+    status: isActive ? "in_process" : "pending",
+    pooledAt,
+    submittedAt: null,
+    durationSec: null,
+    matchScore: task.matchScore,
+    flags: { remote: null, clearance: null },
+    jobDetail: null,
+    recommendedResume: null,
+    submissionResume: null,
+    recording: null,
+    notes: isActive
+      ? "Bid ready · bidder in progress"
+      : "Bid ready — waiting for bidder",
+  };
 }
 
 export const STATUS_LABELS: Record<BidResultStatus, string> = {

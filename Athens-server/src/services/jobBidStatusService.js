@@ -68,7 +68,9 @@ export async function upsertJobBidStatus(
 
 	const entry = findStatusEntry(existing, applierId);
 	const $set = {};
-	if (bidReady && !entry?.bidReadyDate) $set['status.$[elem].bidReadyDate'] = now;
+	// Always stamp bidReadyDate when marking Bid Ready so Bid Management
+	// can place the job in today's Pending folder.
+	if (bidReady) $set['status.$[elem].bidReadyDate'] = now;
 	if (bidCompleted && !entry?.bidCompletedDate) $set['status.$[elem].bidCompletedDate'] = now;
 	if (!Object.keys($set).length) return true;
 

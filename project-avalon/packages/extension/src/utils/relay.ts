@@ -164,19 +164,25 @@ function waitForTabComplete(tabId: number, timeoutMs = 45000): Promise<void> {
 }
 
 async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
+  // Sleep in the extension service worker so Athens-tab background throttling
+  // does not stall OTP / verify waits (orchestration awaits this socket reply).
+  if (action.action === 'wait') {
+    const ms = Math.min(Math.max(0, Number(action.payload?.ms ?? 500)), 120_000);
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return { actionId: action.id, success: true, data: { waitedMs: ms } };
+  }
+
   // open_tab creates its own tab, so it runs before the existing-tab guard.
   if (action.action === 'open_tab') {
     const url = String(action.payload?.url ?? '');
     if (!url) return { actionId: action.id, success: false, error: 'open_tab requires payload.url' };
-    const tab = await browser.tabs.create({ url, active: true });
+    const active = action.payload?.active !== false;
+    const tab = await browser.tabs.create({ url, active });
     if (typeof tab.id !== 'number') {
       return { actionId: action.id, success: false, error: 'Failed to create tab' };
     }
     emitApplyProgress({ phase: 'navigating', message: `Opening ${url}…` });
     await waitForTabComplete(tab.id);
-    // `complete` is only the browser load event — an SPA job page (Ashby, etc.)
-    // is still fetching data behind a spinner at this point. Gate "opened" on the
-    // network going quiet AND real content having rendered.
     emitApplyProgress({ phase: 'navigating', message: 'Waiting for the page to finish loading…' });
     await waitForPageReady(tab.id);
     const page = await readPageContext(tab.id);
@@ -455,7 +461,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
 
   if (action.action === 'fetch_actionable_tree') {
     await focusTab(tabId);
-    const result = await runActionInTab(tabId, action);
+    const result = await runActionInTab(tabId);
     if (!result.success) return result;
 
     const page = await readPageContext(tabId);
@@ -502,7 +508,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   }
 
   await focusTab(tabId);
-  return runActionInTab(tabId, action);
+  return runActionInTab(tabId);
 }
 
 export async function connectRelay(

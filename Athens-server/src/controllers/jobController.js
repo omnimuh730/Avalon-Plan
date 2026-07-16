@@ -610,28 +610,48 @@ export async function updateJobBidStatus(req, res) {
 			await upsertJobBidStatus(applierName, id, { bidReady: true });
 			const tasks = getVendorTasksCollection();
 			if (tasks) {
+				const now = new Date();
+				const company =
+					job.company && typeof job.company === 'object'
+						? String(job.company.name || '')
+						: String(job.companyName || '');
+				const payload = {
+					applierName,
+					jobId: id,
+					title: String(job.title || 'Untitled role'),
+					company,
+					applyUrl: String(job.applyLink || job.jobLink || '') || null,
+					source: String(job.source || ''),
+					location: String(job.details?.position || ''),
+					workMode: String(job.details?.remote || ''),
+					matchScore: null,
+					status: 'pending',
+					addedAt: now,
+					updatedAt: now,
+					completedAt: null,
+				};
 				const existing = await tasks.findOne({ applierName, jobId: id }, { projection: { _id: 1 } });
 				if (!existing) {
-					const now = new Date();
-					const company =
-						job.company && typeof job.company === 'object'
-							? String(job.company.name || '')
-							: String(job.companyName || '');
-					await tasks.insertOne({
-						applierName,
-						jobId: id,
-						title: String(job.title || 'Untitled role'),
-						company,
-						applyUrl: String(job.applyLink || job.jobLink || '') || null,
-						source: String(job.source || ''),
-						location: String(job.details?.position || ''),
-						workMode: String(job.details?.remote || ''),
-						matchScore: null,
-						status: 'pending',
-						addedAt: now,
-						updatedAt: now,
-						completedAt: null,
-					});
+					await tasks.insertOne(payload);
+				} else {
+					// Refresh addedAt so Bid Management groups this under today.
+					await tasks.updateOne(
+						{ _id: existing._id },
+						{
+							$set: {
+								title: payload.title,
+								company: payload.company,
+								applyUrl: payload.applyUrl,
+								source: payload.source,
+								location: payload.location,
+								workMode: payload.workMode,
+								status: 'pending',
+								addedAt: now,
+								updatedAt: now,
+								completedAt: null,
+							},
+						},
+					);
 				}
 			}
 		} else {

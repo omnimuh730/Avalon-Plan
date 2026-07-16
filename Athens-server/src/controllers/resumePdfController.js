@@ -19,8 +19,8 @@ import { pdfRenderLimiter } from "../utils/concurrency.js";
  * `npm run install:chrome`). Do not depend on a host Chrome install — servers
  * and containers often have none. Optional override: PUPPETEER_EXECUTABLE_PATH.
  *
- * Browser pool: PUPPETEER_BROWSER_POOL (default 3) launches multiple Chromium
- * processes so bulk PDF refresh can saturate CPU.
+ * Browser pool: PUPPETEER_BROWSER_POOL (default 6) launches multiple Chromium
+ * processes so bulk PDF refresh can saturate CPU alongside PDF_RENDER_CONCURRENCY.
  */
 
 // Prefer a project-local cache so deploys don't rely on ~/.cache or system Chrome.
@@ -36,7 +36,7 @@ function envInt(name, fallback) {
 	return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-const BROWSER_POOL_SIZE = envInt("PUPPETEER_BROWSER_POOL", 3);
+const BROWSER_POOL_SIZE = envInt("PUPPETEER_BROWSER_POOL", 6);
 
 /** @type {(Promise<import('puppeteer').Browser> | null)[]} */
 const browserSlotPromises = Array.from({ length: BROWSER_POOL_SIZE }, () => null);

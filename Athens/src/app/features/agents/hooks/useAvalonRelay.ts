@@ -38,6 +38,8 @@ import {
 import { isBetaTier } from "../../../lib/beta";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { clampJobBudgetUsd, loadJobBudgetUsd, saveJobBudgetUsd } from "../lib/agentBudget";
+import { withOtpMutex } from "../lib/agentJobConcurrency";
+import { mapPool } from "../lib/mapPool";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
 import { verifyApplyOutcome, type ApplyVerifyResult } from "../avalon/ai/verify-apply";
 import { validateJobPage, type PageValidityResult } from "../avalon/ai/validate-page";
@@ -168,7 +170,7 @@ export function parseRetryPipelineStep(detail?: string, reason?: string): number
 const PIPELINE_AUTO_MAX_CYCLES = 4;
 /** Grace period after submit / OTP fill / inbox poll (Greenhouse OTP flow). */
 const VERIFY_RESULT_WAIT_MS = 10_000;
-const OTP_STEP_WAIT_MS = 10_000;
+const OTP_STEP_WAIT_MS = 6_000;
 /** How many times to poll Gmail before giving up on a Greenhouse OTP. */
 const OTP_FETCH_MAX_ATTEMPTS = 5;
 
@@ -1070,9 +1072,9 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       // Prefetch PDFs for the active job and the next few in queue (not all 200).
       const start = Math.max(0, activeJobIndex);
       const prefetch = jobs.slice(start, start + 5).filter((j) => existing.has(j.id));
-      for (const job of prefetch) {
+      await mapPool(prefetch, 4, async (job) => {
         if (cancelled) return;
-        if (resumesByJobIdRef.current[job.id]?.file?.base64) continue;
+        if (resumesByJobIdRef.current[job.id]?.file?.base64) return;
         try {
           const draft = await fetchAgentJobResumePdf(applierName, job.id);
           if (cancelled) return;
@@ -1100,7 +1102,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         } catch {
           /* draft PDF not on disk yet — ensureJobResume will still reuse Mongo content */
         }
-      }
+      });
     })();
     return () => {
       cancelled = true;
@@ -1606,42 +1608,71 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   );
 
   /**
-   * setTimeout-based wait that bails out early (~250ms granularity) the moment the
-   * auto-run Stop is pressed (autoAbortRef). Returns false if aborted, true if it
-   * slept the whole duration. `onSecond` drives the countdown UI.
+   * Wait that prefers the Avalon extension service worker (`wait` action) so the
+   * delay survives Athens-tab background throttling. Falls back to local timers
+   * when the extension is disconnected. Stop aborts via abortAllPending / autoAbortRef.
    */
   const waitUnlessAborted = useCallback(
-    async (ms: number, onSecond?: (secondsLeft: number) => void): Promise<boolean> => {
-      const stepMs = 250;
+    async (
+      ms: number,
+      onSecond?: (secondsLeft: number) => void,
+      tabId?: number,
+    ): Promise<boolean> => {
       let remaining = ms;
       let lastSecond = -1;
       while (remaining > 0) {
-        if (autoAbortRef.current) return false;
+        if (autoAbortRef.current || queueAbortRef.current) return false;
         const secondsLeft = Math.ceil(remaining / 1000);
         if (onSecond && secondsLeft !== lastSecond) {
           onSecond(secondsLeft);
           lastSecond = secondsLeft;
         }
-        const chunk = Math.min(stepMs, remaining);
-        await new Promise((resolve) => setTimeout(resolve, chunk));
+        // 1s chunks: enough for countdown UI, few enough that a backgrounded
+        // Athens tab is woken by each extension reply instead of N×250ms clamps.
+        const chunk = Math.min(1000, remaining);
+        if (canExecute) {
+          const res = await emitActionAsync(
+            {
+              id: createActionId(),
+              ...(typeof tabId === "number" ? { tabId } : {}),
+              action: "wait",
+              payload: { ms: chunk },
+            },
+            chunk + 15_000,
+          ).catch(() => null);
+          if (autoAbortRef.current || queueAbortRef.current) return false;
+          if (!res?.success) {
+            // Extension wait failed — finish this chunk locally so the pipeline
+            // still advances (Chrome may throttle this if Athens is hidden).
+            await new Promise((resolve) => setTimeout(resolve, chunk));
+          }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, chunk));
+        }
         remaining -= chunk;
       }
-      return true;
+      return !(autoAbortRef.current || queueAbortRef.current);
     },
-    [],
+    [canExecute, emitActionAsync],
   );
 
   /** Pause after submit so the result page can load before step 8 reads it. */
-  const waitBeforeVerify = useCallback(async (): Promise<void> => {
-    await waitUnlessAborted(VERIFY_RESULT_WAIT_MS, (secondsLeft) =>
-      setApplyPhase({
-        phase: "verify-wait",
-        message: `Waiting for result page (${secondsLeft}s)…`,
-        secondsLeft,
-        at: Date.now(),
-      }),
-    );
-  }, [waitUnlessAborted]);
+  const waitBeforeVerify = useCallback(
+    async (tabId?: number): Promise<void> => {
+      await waitUnlessAborted(
+        VERIFY_RESULT_WAIT_MS,
+        (secondsLeft) =>
+          setApplyPhase({
+            phase: "verify-wait",
+            message: `Waiting for result page (${secondsLeft}s)…`,
+            secondsLeft,
+            at: Date.now(),
+          }),
+        tabId,
+      );
+    },
+    [waitUnlessAborted],
+  );
 
   /** Mark a (non-manual) queued job Applied in the pipeline and badge it locally. */
   const markJobApplied = useCallback(
@@ -1718,13 +1749,16 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           pushLog("Greenhouse OTP: stopped", false);
           return { filled: false, clicked: false };
         }
-        const slept = await waitUnlessAborted(OTP_STEP_WAIT_MS, (secondsLeft) =>
-          setApplyPhase({
-            phase: "verify-wait",
-            message: `Waiting for verification email (${attempt}/${OTP_FETCH_MAX_ATTEMPTS}, ${secondsLeft}s)…`,
-            secondsLeft,
-            at: Date.now(),
-          }),
+        const slept = await waitUnlessAborted(
+          OTP_STEP_WAIT_MS,
+          (secondsLeft) =>
+            setApplyPhase({
+              phase: "verify-wait",
+              message: `Waiting for verification email (${attempt}/${OTP_FETCH_MAX_ATTEMPTS}, ${secondsLeft}s)…`,
+              secondsLeft,
+              at: Date.now(),
+            }),
+          tabId,
         );
         if (!slept) {
           pushLog("Greenhouse OTP: stopped while waiting for the verification email", false);
@@ -1732,10 +1766,12 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         }
 
         pushLog(`Greenhouse OTP: reading Gmail for "${applierName}" (attempt ${attempt}/${OTP_FETCH_MAX_ATTEMPTS})…`, true);
-        const inbox = await requestVerificationCode(
-          applierName,
-          { companyName: companyName || undefined, jobTitle: jobTitle || undefined },
-          runSignal(),
+        const inbox = await withOtpMutex(applierName, () =>
+          requestVerificationCode(
+            applierName,
+            { companyName: companyName || undefined, jobTitle: jobTitle || undefined },
+            runSignal(),
+          ),
         );
 
         // Surface EXACTLY what was read + how the AI decided, into the Activity feed.
@@ -1795,13 +1831,16 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           true,
         );
 
-        await waitUnlessAborted(OTP_STEP_WAIT_MS, (secondsLeft) =>
-          setApplyPhase({
-            phase: "verify-wait",
-            message: `Waiting for OTP submit (${secondsLeft}s)…`,
-            secondsLeft,
-            at: Date.now(),
-          }),
+        await waitUnlessAborted(
+          OTP_STEP_WAIT_MS,
+          (secondsLeft) =>
+            setApplyPhase({
+              phase: "verify-wait",
+              message: `Waiting for OTP submit (${secondsLeft}s)…`,
+              secondsLeft,
+              at: Date.now(),
+            }),
+          tabId,
         );
         return { filled: true, clicked: fillData?.clicked ?? false };
       }
@@ -2010,7 +2049,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     setVerifying(true);
     setVerifyResult(null);
     try {
-      await waitBeforeVerify();
+      await waitBeforeVerify(tabId);
       let result = await computeVerifyResult(tabId, job);
       setVerifyResult(result);
       pushLog(`Verify result: ${result.kind} — ${result.reason}`, result.kind === "success");
@@ -2029,7 +2068,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
             `Verify not success (verification code page) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-fetch OTP → step 8 (no re-scan)`,
             false,
           );
-          await waitBeforeVerify();
+          await waitBeforeVerify(tabId);
           result = await computeVerifyResult(tabId, job);
           setVerifyResult(result);
           pushLog(
@@ -2047,7 +2086,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           pushLog(`Retry ${attempt}/${MAX_VERIFY_RETRIES} could not complete Scan/Analyze/Apply — stopping retries`, false);
           break;
         }
-        await waitBeforeVerify();
+        await waitBeforeVerify(tabId);
         result = await computeVerifyResult(tabId, job);
         setVerifyResult(result);
         pushLog(
@@ -2141,12 +2180,9 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   }, [abortAllPending, pushLog]);
 
   /**
-   * Auto-run pipeline steps 2–7 in order (open → verify tab → résumé → scan →
-   * analyze → apply), then stop. Step 8 (Verify result) and Mark as Applied are
-   * deliberately manual: the human clicks Verify to check the outcome and, on
-   * failure, re-runs steps 5 · Scan → 6 · Analyze → 7 · Apply by hand. This keeps
-   * a person in the loop at the submit/verification boundary rather than looping
-   * automatically.
+   * Auto-run pipeline steps 2–8 in order (open → verify tab → résumé → scan →
+   * analyze → apply → verify). One job at a time — parallel Chrome tabs interrupt
+   * each other; speed comes from resume prefetch + extension-side waits.
    */
   const runPipelineAuto = useCallback(async (jobOverride?: QueuedJob) => {
     if (autoRunningRef.current || applyingRef.current) return;
@@ -2195,11 +2231,13 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     };
 
     // Between-step interrupt gate: blocks while paused, returns false if stopped.
+    // Pause polling uses extension `wait` when connected so a backgrounded Athens
+    // tab does not freeze the pause loop under Chrome timer throttling.
     const gate = async (): Promise<boolean> => {
-      while (autoPauseRef.current && !autoAbortRef.current) {
-        await new Promise((r) => setTimeout(r, 300));
+      while (autoPauseRef.current && !autoAbortRef.current && !queueAbortRef.current) {
+        await waitUnlessAborted(300, undefined, tabId);
       }
-      if (autoAbortRef.current) {
+      if (autoAbortRef.current || queueAbortRef.current) {
         pushLog("Auto-run stopped", false);
         return false;
       }
@@ -2232,7 +2270,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           const opened = await emitActionAsync({
             id: createActionId(),
             action: "open_tab",
-            payload: { url: job.url },
+            payload: { url: job.url, active: true },
           });
           if (!opened.success) {
             abort(opened.error || "Failed to open tab");
@@ -2428,7 +2466,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         setVerifying(true);
         setVerifyResult(null);
         try {
-          await waitBeforeVerify();
+          await waitBeforeVerify(tabId);
           throwIfAborted();
           let verify = await computeVerifyResult(tabId, job);
           if (await budgetAbort()) return;
@@ -2447,7 +2485,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
                 `Verify not success (verification code page) — retry ${attempt}/${MAX_VERIFY_RETRIES}: re-fetch OTP → step 8 (no re-scan)`,
                 false,
               );
-              await waitBeforeVerify();
+              await waitBeforeVerify(tabId);
               verify = await computeVerifyResult(tabId, job);
               if (await budgetAbort()) return;
               setVerifyResult(verify);
@@ -2476,7 +2514,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
               break;
             }
             if (!(await gate())) return;
-            await waitBeforeVerify();
+            await waitBeforeVerify(tabId);
             verify = await computeVerifyResult(tabId, job);
             if (await budgetAbort()) return;
             setVerifyResult(verify);
@@ -2561,6 +2599,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     throwIfAborted,
     validateOpenedTab,
     waitBeforeVerify,
+    waitUnlessAborted,
   ]);
 
   /**
@@ -2995,27 +3034,64 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   );
 
   /**
-   * "Apply all" — run each queued job's auto-submit pipeline one by one (the same
-   * full Auto-run as the per-job button), skipping ones already applied.
+   * "Apply all" — one job at a time (parallel tabs interrupt each other).
+   * Prefetches résumés for the next few queued jobs while the current apply runs
+   * so step 4 is often already warm.
    */
   const applyQueue = useCallback(async () => {
     if (!jobQueue.length) {
       pushLog("Queue is empty — add jobs first", false);
       return;
     }
+    if (!canExecute) {
+      pushLog(executeDisabledReason ?? "Cannot apply — extension not connected", false);
+      return;
+    }
+    if (autoRunningRef.current || applyingRef.current) {
+      pushLog("Apply all already running — stop first or wait", false);
+      return;
+    }
+
     queueAbortRef.current = false;
+    pushLog("Apply all · one job at a time (prefetching upcoming résumés)", true);
+
+    const prefetchAhead = (fromIndex: number) => {
+      const ahead = jobQueue
+        .slice(fromIndex + 1, fromIndex + 4)
+        .filter((j) => !appliedJobIds.has(j.id) && !budgetSkippedJobIds.has(j.id) && !isManualJob(j));
+      for (const next of ahead) {
+        if (resumesByJobIdRef.current[next.id]?.file?.base64) continue;
+        void startResumeForJob(next).catch(() => {
+          /* non-fatal — pipeline will generate when that job starts */
+        });
+      }
+    };
+
     for (let i = 0; i < jobQueue.length; i += 1) {
-      if (queueAbortRef.current) {
+      if (queueAbortRef.current || autoAbortRef.current) {
         pushLog("Apply all stopped", false);
         break;
       }
       const job = jobQueue[i];
-      if (appliedJobIds.has(job.id)) continue;
+      if (appliedJobIds.has(job.id) || budgetSkippedJobIds.has(job.id)) continue;
+      if (isManualJob(job)) continue;
       setActiveJobIndex(i);
+      prefetchAhead(i);
       await runPipelineAuto(job);
     }
-    pushLog(`Queue complete · ${jobQueue.length} job(s) processed`, true);
-  }, [appliedJobIds, jobQueue, pushLog, runPipelineAuto]);
+    if (!queueAbortRef.current && !autoAbortRef.current) {
+      pushLog(`Queue complete · ${jobQueue.length} job(s) processed`, true);
+    }
+  }, [
+    appliedJobIds,
+    budgetSkippedJobIds,
+    canExecute,
+    executeDisabledReason,
+    jobQueue,
+    pushLog,
+    runPipelineAuto,
+    startResumeForJob,
+  ]);
 
   const selectActiveJob = useCallback(
     (index: number) => {

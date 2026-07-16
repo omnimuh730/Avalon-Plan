@@ -202,6 +202,8 @@ export interface VendorTask {
   sessionMatch: VendorTaskSessionMatch | null;
   jobSource?: JobSource | null;
   addedAt: string | null;
+  /** When the job was marked Bid ready (preferred for Bid Management day folders). */
+  bidReadyDate?: string | null;
   updatedAt: string | null;
   completedAt: string | null;
 }

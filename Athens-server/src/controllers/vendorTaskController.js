@@ -154,27 +154,45 @@ export async function listVendorTasks(req, res) {
 		const tasks = queueJobs.map((job) => {
 			const doc = taskByJobId.get(job.jobId);
 			const sessionMatch = findSessionMatch(job.applyUrl, matchMap);
+			// Prefer bidReadyDate for folder day grouping in Bid Management.
+			const bidReadyAt = job.bidReadyDate || null;
 			const base = doc
-				? serializeTask(doc, sessionMatch)
-				: serializeTask(
-						{
-							_id: job.jobId,
-							applierName,
-							jobId: job.jobId,
-							title: job.title,
-							company: job.company,
-							applyUrl: job.applyUrl,
-							source: job.source,
-							location: "",
-							workMode: "",
-							matchScore: null,
-							status: job.completed ? "done" : "pending",
-							addedAt: job.bidReadyDate,
-							updatedAt: job.bidCompletedDate || job.bidReadyDate,
-							completedAt: job.bidCompletedDate,
-						},
-						sessionMatch,
-					);
+				? {
+						...serializeTask(doc, sessionMatch),
+						addedAt:
+							bidReadyAt instanceof Date
+								? bidReadyAt.toISOString()
+								: bidReadyAt ||
+									(doc.addedAt instanceof Date ? doc.addedAt.toISOString() : doc.addedAt ?? null),
+						bidReadyDate:
+							bidReadyAt instanceof Date
+								? bidReadyAt.toISOString()
+								: bidReadyAt ||
+									(doc.addedAt instanceof Date ? doc.addedAt.toISOString() : doc.addedAt ?? null),
+					}
+				: {
+						...serializeTask(
+							{
+								_id: job.jobId,
+								applierName,
+								jobId: job.jobId,
+								title: job.title,
+								company: job.company,
+								applyUrl: job.applyUrl,
+								source: job.source,
+								location: "",
+								workMode: "",
+								matchScore: null,
+								status: job.completed ? "done" : "pending",
+								addedAt: bidReadyAt,
+								updatedAt: job.bidCompletedDate || bidReadyAt,
+								completedAt: job.bidCompletedDate,
+							},
+							sessionMatch,
+						),
+						bidReadyDate:
+							bidReadyAt instanceof Date ? bidReadyAt.toISOString() : bidReadyAt,
+					};
 
 			if (job.completed && base.progress !== "completed") {
 				return { ...base, status: "done", progress: "completed" };
