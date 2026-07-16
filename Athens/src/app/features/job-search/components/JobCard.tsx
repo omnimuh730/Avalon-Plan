@@ -23,6 +23,8 @@ import type { JobResumeGenerationState } from "../hooks/useJobResumeGeneration";
 
 const STATUS_LABELS: Record<Job["status"], string> = {
   posted: "Posted",
+  "bid-ready": "Bid ready",
+  "bid-completed": "Bid completed",
   applied: "Applied",
   scheduled: "Scheduled",
   declined: "Declined",
@@ -30,6 +32,8 @@ const STATUS_LABELS: Record<Job["status"], string> = {
 
 const STATUS_VARIANTS: Record<Job["status"], BadgeVariant> = {
   posted: "blue",
+  "bid-ready": "blue",
+  "bid-completed": "violet",
   applied: "success",
   scheduled: "amber",
   declined: "err",
@@ -53,6 +57,7 @@ type JobCardProps = {
   onToggleBookmark?: () => void;
   statusPending?: boolean;
   onApply?: () => void;
+  onMarkBidReady?: () => void;
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
@@ -92,6 +97,17 @@ function MiniScore({ label, value, hint }: { label: string; value: number; hint?
   );
 }
 
+const MAX_SKILL_CHIPS = 8;
+
+function analyzedSkillLabels(job: Job): string[] {
+  if (job.aiSkills?.length) {
+    return [...job.aiSkills]
+      .sort((a, b) => b.requirement - a.requirement || a.name.localeCompare(b.name))
+      .map((s) => s.name);
+  }
+  return job.skills;
+}
+
 export function JobCard({
   job,
   className,
@@ -102,6 +118,7 @@ export function JobCard({
   onToggleBookmark,
   statusPending = false,
   onApply,
+  onMarkBidReady,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -113,6 +130,9 @@ export function JobCard({
   const [resumeOpen, setResumeOpen] = useState(false);
   const { applier } = useApplier();
   const resumeReady = resumeState?.status === "done";
+  const skillLabels = analyzedSkillLabels(job);
+  const visibleSkills = skillLabels.slice(0, MAX_SKILL_CHIPS);
+  const hiddenSkillCount = skillLabels.length - visibleSkills.length;
 
   const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     if (!onSelect) return;
@@ -168,7 +188,7 @@ export function JobCard({
                 </div>
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
-                <Score score={job.scores.overall} />
+                <Score score={job.scores.skill} />
                 <Badge v={STATUS_VARIANTS[job.status]}>{STATUS_LABELS[job.status]}</Badge>
               </div>
             </div>
@@ -186,19 +206,21 @@ export function JobCard({
                   : undefined
               }
             />
-            <MiniScore label="Salary" value={job.scores.salary} />
-            <MiniScore label="Bid" value={job.scores.bidEst} />
-            <MiniScore label="Fresh" value={job.scores.freshness} />
           </div>
         )}
 
-        <div className="flex flex-wrap gap-1.5">
-          {job.industries.map((industry) => (
-            <Badge key={industry} v="blue">
-              {industry}
-            </Badge>
-          ))}
-        </div>
+        {visibleSkills.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {visibleSkills.map((skill) => (
+              <Badge key={skill} v="blue">
+                {skill}
+              </Badge>
+            ))}
+            {hiddenSkillCount > 0 ? (
+              <Badge v="subtle">+{hiddenSkillCount} more</Badge>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="flex flex-wrap gap-1.5">
           <InfoChip>
@@ -290,6 +312,7 @@ export function JobCard({
               job={job}
               pending={statusPending}
               onApply={() => onApply?.()}
+              onMarkBidReady={onMarkBidReady ? () => onMarkBidReady() : undefined}
               onMarkScheduled={() => onMarkScheduled?.()}
               onMarkDeclined={() => onMarkDeclined?.()}
               onCancel={() => onCancel?.()}
@@ -305,6 +328,7 @@ export function JobCard({
         onOpenChange={setJdOpen}
         statusPending={statusPending}
         onApply={() => onApply?.()}
+        onMarkBidReady={onMarkBidReady ? () => onMarkBidReady() : undefined}
         onMarkScheduled={() => onMarkScheduled?.()}
         onMarkDeclined={() => onMarkDeclined?.()}
         onCancel={() => onCancel?.()}

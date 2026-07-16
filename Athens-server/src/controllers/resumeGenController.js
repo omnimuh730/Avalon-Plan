@@ -13,6 +13,15 @@ import {
   resolveDefaultModel,
 } from "../services/llm/llmService.js";
 import { loadDecryptedAutoBidProfile } from "../services/autoBidProfileSecrets.js";
+import { resumeGenLimiter } from "../utils/concurrency.js";
+import { isBetaTier } from "../lib/betaTier.js";
+import {
+  TITLE_POLICY_VERSION,
+  appendExperienceTitlePolicy,
+  applyTitlePolicyToSections,
+  computeTitlePolicyFingerprint,
+  sourceCareers,
+} from "../services/resumeCareerTitlePolicy.js";
 
 const cleanString = (v) => String(v ?? "").trim();
 
@@ -131,6 +140,21 @@ function buildContextBlock(identity) {
   )}`;
 }
 
+/** Resolve account_info.tier for an applier (exact, then case-insensitive). Never trust client. */
+async function resolveAccountTier(applierNameRaw) {
+  const name = cleanString(applierNameRaw);
+  if (!name || !accountInfoCollection) return null;
+  let acc = await accountInfoCollection.findOne({ name }, { projection: { tier: 1 } });
+  if (!acc) {
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    acc = await accountInfoCollection.findOne(
+      { name: { $regex: new RegExp(`^${esc}$`, "i") } },
+      { projection: { tier: 1 } },
+    );
+  }
+  return acc?.tier ?? null;
+}
+
 // Validate + resolve a generation request. Returns { ok, ... } or { ok:false, status, error }.
 // Exported so the auto-bid agent path (agentResumeGenService) runs the SAME core
 // as the Editor — one implementation, no drift.
@@ -157,7 +181,10 @@ export async function prepareGeneration(body) {
   const bad = Object.entries(finalsByPurpose).find(([, n]) => n !== 1);
   if (bad) return { ok: false, status: 400, error: `${bad[0]} must have exactly one final step (found ${bad[1]}).` };
 
-  return { ok: true, providerId, model, steps, apiKey };
+  // Beta entitlement from Mongo account_info.tier only — ignore any client-supplied flag.
+  const isBeta = isBetaTier(await resolveAccountTier(body.applierName));
+
+  return { ok: true, providerId, model, steps, apiKey, isBeta };
 }
 
 /**
@@ -166,7 +193,7 @@ export async function prepareGeneration(body) {
  * cacheKey), each step appends a turn, and final steps return JSON for a section.
  * `onStep` is invoked after every step for live progress streaming.
  */
-export async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, jobSkills, reasoningEffort }, onStep) {
+export async function runGeneration({ providerId, apiKey, model, steps, systemInstruction, identity, applierName, jobDescription, jobSkills, reasoningEffort, isBeta = false }, onStep) {
   // Substitute reference tokens in any prompt with real values:
   //   {job_description}                          → the JD text the user typed
   //   {job_skills}                               → skills pre-fetched for a structured job
@@ -178,6 +205,8 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
       const key = match.slice(1, -1).toLowerCase();
       return Object.prototype.hasOwnProperty.call(tokenMap, key) ? tokenMap[key] : match;
     });
+  const beta = Boolean(isBeta);
+  const careers = sourceCareers(identity);
 
   const messages = [
     { role: "system", content: applyTokens(systemInstruction || "You are an expert resume writer.") },
@@ -193,6 +222,14 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
     if (onStep) onStep({ phase: "step-start", index: i + 1, total: steps.length, name: step.name || `Step ${i + 1}`, purpose: step.purpose, kind: step.kind });
 
     let userContent = applyTokens(step.prompt || "");
+    // Central title policy — appended even when the user customized the Experience prompt.
+    if (isFinal && step.purpose === "experience") {
+      userContent = appendExperienceTitlePolicy(userContent, {
+        isBeta: beta,
+        jobDescription,
+        careers,
+      });
+    }
     if (isFinal && step.schema) {
       userContent += `\n\nReturn ONLY a JSON object that conforms to this JSON Schema:\n${JSON.stringify(step.schema)}`;
     }
@@ -216,8 +253,12 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
     if (isFinal) {
       try {
         output = parseJsonLoose(content);
+        if (step.purpose === "experience") {
+          output = applyTitlePolicyToSections({ experience: output }, identity, beta).experience;
+        }
         if (PURPOSES.has(step.purpose)) sections[step.purpose] = output;
-      } catch {
+      } catch (err) {
+        if (Number.isInteger(err?.status)) throw err;
         const e = new Error(`${step.purpose} final step returned invalid JSON.`);
         e.status = 502;
         throw e;
@@ -228,7 +269,9 @@ export async function runGeneration({ providerId, apiKey, model, steps, systemIn
     if (onStep) onStep({ phase: "step-done", ...entry, cumulative: usage });
   }
 
-  return { sections, perStep, usage };
+  // Safety net if Experience was produced outside the final-step branch shape.
+  const reconciled = applyTitlePolicyToSections(sections, identity, beta);
+  return { sections: reconciled, perStep, usage, isBeta: beta };
 }
 
 /** Persist the finished run and sync it into the résumé library. */
@@ -238,6 +281,21 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
   const skillProfile = [];
   const techStack = null;
   const skillAnalysisError = null;
+  const isBeta = Boolean(prep.isBeta ?? result.isBeta);
+  const titlePolicyFingerprint = computeTitlePolicyFingerprint({
+    isBeta,
+    jobDescription: body.jobDescription,
+    careers: sourceCareers(body.identity),
+    config: body,
+  });
+
+  let identitySyncedAt = cleanString(body.identitySyncedAt) || new Date().toISOString();
+  try {
+    const profile = await loadDecryptedAutoBidProfile(body.applierName);
+    if (profile?.updatedAt) identitySyncedAt = cleanString(profile.updatedAt) || identitySyncedAt;
+  } catch {
+    /* keep fallback */
+  }
 
   const generationId = await saveGenerationRun({
     applierName: cleanString(body.applierName) || null,
@@ -255,6 +313,11 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
     skillAnalysisError,
     analyzed: skillProfile.length > 0,
     analyzedAt: skillProfile.length > 0 ? new Date() : null,
+    isBeta,
+    titlePolicyVersion: TITLE_POLICY_VERSION,
+    titlePolicyFingerprint,
+    identitySyncedAt,
+    identityRefreshedAt: new Date(),
     startedAt,
     finishedAt: new Date(),
   });
@@ -270,12 +333,25 @@ async function finalizeGenerationRun({ prep, body, result, startedAt }) {
       skillProfile,
       techStack,
       skillAnalysisError,
+      titlePolicyFingerprint,
+      titlePolicyVersion: TITLE_POLICY_VERSION,
+      isBeta,
+      identitySyncedAt,
     });
   } catch (syncErr) {
     console.warn("[resume-generate] library sync failed:", syncErr.message);
   }
 
-  return { ...result, skillProfile, techStack, skillAnalysisError, generationId };
+  return {
+    ...result,
+    skillProfile,
+    techStack,
+    skillAnalysisError,
+    generationId,
+    isBeta,
+    titlePolicyFingerprint,
+    titlePolicyVersion: TITLE_POLICY_VERSION,
+  };
 }
 
 // Persist a finished (or failed) run to the local resume_generations history.
@@ -316,7 +392,9 @@ export async function generateResume(req, res) {
   if (!prep.ok) return res.status(prep.status).json({ success: false, error: prep.error });
   const startedAt = new Date();
   try {
-    const result = await runGeneration({ ...prep, systemInstruction: body.systemInstruction, identity: body.identity, applierName: body.applierName, jobDescription: body.jobDescription, reasoningEffort: body.reasoningEffort });
+    const result = await resumeGenLimiter.run(cleanString(body.applierName) || "anonymous", () =>
+      runGeneration({ ...prep, systemInstruction: body.systemInstruction, identity: body.identity, applierName: body.applierName, jobDescription: body.jobDescription, reasoningEffort: body.reasoningEffort }),
+    );
     const finalized = await finalizeGenerationRun({ prep, body, result, startedAt });
     return res.json({ success: true, provider: prep.providerId, model: prep.model, ...finalized });
   } catch (err) {
@@ -364,9 +442,18 @@ export async function generateResumeStream(req, res) {
 
   const startedAt = new Date();
   try {
-    const result = await runGeneration(
-      { ...prep, systemInstruction: body.systemInstruction, identity: body.identity, applierName: body.applierName, jobDescription: body.jobDescription, reasoningEffort: body.reasoningEffort },
-      (evt) => send("step", evt),
+    const result = await resumeGenLimiter.run(
+      cleanString(body.applierName) || "anonymous",
+      () =>
+        runGeneration(
+          { ...prep, systemInstruction: body.systemInstruction, identity: body.identity, applierName: body.applierName, jobDescription: body.jobDescription, reasoningEffort: body.reasoningEffort },
+          (evt) => send("step", evt),
+        ),
+      {
+        onQueued: async () => {
+          send("step", { phase: "queued", name: "Waiting for generation slot" });
+        },
+      },
     );
     const finalized = await finalizeGenerationRun({
       prep,
@@ -675,16 +762,31 @@ export async function renderGenerationPdf(req, res) {
     const run = await resumeGenerationsCollection.findOne({ _id });
     if (!run || !run.sections) return res.status(404).json({ success: false, error: "Generated résumé not found" });
 
+    // Prefer live profile contact/header so LinkedIn/email edits show without regenerating.
+    let identity = run.identity || {};
+    const applierName = cleanString(run.applierName);
+    if (applierName) {
+      try {
+        const { loadDecryptedAutoBidProfile } = await import("../services/autoBidProfileSecrets.js");
+        const { identityFromProfile } = await import("../utils/identityFromProfile.js");
+        const profile = await loadDecryptedAutoBidProfile(applierName);
+        if (profile) identity = identityFromProfile(profile);
+      } catch {
+        /* keep stored identity */
+      }
+    }
+
     const { buffer } = await renderAgentResumePdf({
       sections: run.sections,
-      identity: run.identity || {},
-      applierName: run.applierName || run.identity?.fullName || "Resume",
+      identity,
+      applierName: applierName || identity?.fullName || "Resume",
       jobId: run.generate_parent_job_id || String(run._id),
       config: run.config || {},
     });
-    const safeName = String(run.identity?.fullName || run.applierName || "Resume").replace(/[^\w.\-()+ ]+/g, "_").trim() || "Resume";
+    const safeName = String(identity?.fullName || run.applierName || "Resume").replace(/[^\w.\-()+ ]+/g, "_").trim() || "Resume";
+    const asAttachment = String(req.query?.download ?? "") === "1" || String(req.query?.download ?? "").toLowerCase() === "true";
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${safeName}.pdf"`);
+    res.setHeader("Content-Disposition", `${asAttachment ? "attachment" : "inline"}; filename="${safeName}.pdf"`);
     return res.end(buffer);
   } catch (err) {
     console.warn("GET /api/personal/resume-generations/:id/pdf error:", err.message);
@@ -724,9 +826,21 @@ export async function getAgentJobResumePdf(req, res) {
       return res.status(404).json({ success: false, error: "No draft PDF for this job yet — generate résumé first" });
     }
 
-    const safeName = applierName.replace(/[^\w.\-()+ ]+/g, "_").trim() || "resume";
+    // Prefer profile full name (what employers should see), fall back to applier name.
+    // Never append job id — that leaked into Greenhouse uploads as "David Moll-6a5656e3.pdf".
+    let displayName = applierName;
+    try {
+      const { loadDecryptedAutoBidProfile } = await import("../services/autoBidProfileSecrets.js");
+      const { identityFromProfile } = await import("../utils/identityFromProfile.js");
+      const profile = await loadDecryptedAutoBidProfile(applierName);
+      const fullName = profile ? identityFromProfile(profile)?.fullName : "";
+      if (fullName) displayName = fullName;
+    } catch {
+      /* keep applierName */
+    }
+    const safeName = String(displayName).replace(/[^\w.\-()+ ]+/g, "_").trim() || "resume";
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${safeName}-${jobId.slice(0, 8)}.pdf"`);
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}.pdf"`);
     return res.end(draft.buffer);
   } catch (err) {
     console.warn("GET /api/personal/agent-job-resume/:jobId/pdf error:", err.message);
@@ -829,4 +943,69 @@ export async function generateResumeForAgentJob(req, res) {
       error: err.message,
     });
   }
+}
+
+/**
+ * POST /personal/resume-generations/refresh-identity
+ * Body: { applierName }. Beta-only — updates stored identity on all completed
+ * generations and re-renders per-job draft PDFs (no LLM).
+ */
+export async function refreshGeneratedResumesIdentityHandler(req, res) {
+  try {
+    const applierName = cleanString(req.body?.applierName);
+    if (!applierName) return res.status(400).json({ success: false, error: "applierName is required" });
+    const { refreshGeneratedResumesIdentity } = await import("../services/refreshGeneratedResumesIdentity.js");
+    const result = await refreshGeneratedResumesIdentity(applierName);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    const status = Number.isInteger(err?.status) ? err.status : 500;
+    console.warn(`POST /api/personal/resume-generations/refresh-identity failed (${status}): ${err.message}`);
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      success: false,
+      error: err.message,
+      ...(err.betaRequired ? { betaRequired: true } : {}),
+    });
+  }
+}
+
+/**
+ * POST /personal/resume-generations/refresh-identity/stream — SSE progress
+ * (done / left / active) while bulk-updating generated résumés.
+ */
+export async function refreshGeneratedResumesIdentityStreamHandler(req, res) {
+  const applierName = cleanString(req.body?.applierName);
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  if (!applierName) {
+    send("error", { error: "applierName is required", status: 400 });
+    return res.end();
+  }
+
+  try {
+    const { refreshGeneratedResumesIdentity } = await import("../services/refreshGeneratedResumesIdentity.js");
+    const result = await refreshGeneratedResumesIdentity(applierName, {
+      onProgress: (evt) => send("progress", evt),
+    });
+    send("done", { success: true, ...result });
+  } catch (err) {
+    const status = Number.isInteger(err?.status) ? err.status : 500;
+    console.warn(
+      `POST /api/personal/resume-generations/refresh-identity/stream failed (${status}): ${err.message}`,
+    );
+    send("error", {
+      error: err.message,
+      status,
+      ...(err.betaRequired ? { betaRequired: true } : {}),
+    });
+  }
+  res.end();
 }

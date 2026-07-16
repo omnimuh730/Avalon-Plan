@@ -34,6 +34,7 @@ export type ResumesTab = "library" | "editor" | "history" | "analysis";
 export type CalendarTab = "month" | "week" | "pipeline";
 export type ReportsTab = "overview" | "sources" | "funnel" | "velocity" | "insights";
 export type SettingsTab = "profile" | "skills" | "notifications" | "integrations" | "security";
+export type VendorMonitorTab = "sessions" | "tasks" | "analytics";
 
 const VIEW_TO_BASE: Record<View, string> = {
   dashboard: PATHS.dashboard,
@@ -74,6 +75,9 @@ export function pathForView(view: View, options?: NavigateOptions): string {
   }
   if (view === "settings" && options?.tab) {
     return `${PATHS.settings}/${options.tab}`;
+  }
+  if (view === "vendor-monitor" && options?.tab) {
+    return `${PATHS.vendorMonitor}/${options.tab}`;
   }
   return base;
 }

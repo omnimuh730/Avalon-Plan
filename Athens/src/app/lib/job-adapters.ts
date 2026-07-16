@@ -18,10 +18,18 @@ export function normalizeId(value: unknown): string {
   return String(value);
 }
 
+type ResolvedApplierStatus =
+  | "applied"
+  | "scheduled"
+  | "declined"
+  | "bid-ready"
+  | "bid-completed"
+  | "none";
+
 function resolveStatusForApplier(
   statusArr: unknown[] | undefined,
   applierId: string | null,
-): "applied" | "scheduled" | "declined" | "none" {
+): ResolvedApplierStatus {
   if (!Array.isArray(statusArr) || !applierId) return "none";
   for (const s of statusArr) {
     if (!s || typeof s !== "object") continue;
@@ -30,14 +38,18 @@ function resolveStatusForApplier(
     if (row.declinedDate) return "declined";
     if (row.scheduledDate) return "scheduled";
     if (row.appliedDate) return "applied";
+    if (row.bidCompletedDate) return "bid-completed";
+    if (row.bidReadyDate) return "bid-ready";
   }
   return "none";
 }
 
-function mapApiStatusToJob(st: "applied" | "scheduled" | "declined" | "none"): JobStatus {
+function mapApiStatusToJob(st: ResolvedApplierStatus): JobStatus {
   if (st === "declined") return "declined";
   if (st === "scheduled") return "scheduled";
   if (st === "applied") return "applied";
+  if (st === "bid-completed") return "bid-completed";
+  if (st === "bid-ready") return "bid-ready";
   return "posted";
 }
 

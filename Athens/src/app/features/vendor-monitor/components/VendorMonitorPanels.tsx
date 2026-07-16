@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Briefcase, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Badge } from "@/app/components/ui";
 import { Button } from "@/app/components/ui/button";
@@ -8,12 +9,13 @@ import type { AnalysisInfo, AnalysisTrace, BidRecord, UsageInfo } from "../types
 import { formatCost } from "../utils";
 import { JobSourceChip } from "./JobSourceChip";
 
-const ZOOM_MIN = 1;
+const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 6;
 const ZOOM_STEP = 0.25;
+const ZOOM_PRESETS = [0.25, 0.5, 1] as const;
 
 function clampZoom(z: number) {
-  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z / ZOOM_STEP) * ZOOM_STEP));
 }
 
 export function ImageModal({ src, onClose }: { src: string; onClose: () => void }) {
@@ -26,15 +28,26 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
     setOffset({ x: 0, y: 0 });
   }, []);
 
-  const zoomBy = useCallback((delta: number) => {
-    setScale((s) => {
-      const next = clampZoom(s + delta);
-      if (next === 1) setOffset({ x: 0, y: 0 });
-      return next;
-    });
+  const setZoom = useCallback((next: number) => {
+    const clamped = clampZoom(next);
+    setScale(clamped);
+    if (clamped === 1) setOffset({ x: 0, y: 0 });
   }, []);
 
+  const zoomBy = useCallback(
+    (delta: number) => {
+      setScale((s) => {
+        const next = clampZoom(s + delta);
+        if (next === 1) setOffset({ x: 0, y: 0 });
+        return next;
+      });
+    },
+    [],
+  );
+
   useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       else if (e.key === "+" || e.key === "=") zoomBy(ZOOM_STEP);
@@ -42,16 +55,22 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
       else if (e.key === "0") reset();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
   }, [onClose, zoomBy, reset]);
 
   const onWheel = (e: React.WheelEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     zoomBy(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
   };
 
+  const canPan = scale !== 1;
+
   const onPointerDown = (e: React.PointerEvent) => {
-    if (scale <= 1) return;
+    if (!canPan) return;
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     dragRef.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
@@ -67,15 +86,18 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
     dragRef.current = null;
   };
 
-  const zoomed = scale > 1;
-
-  return (
+  const modal = (
     <div
-      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 overflow-hidden"
+      className="fixed inset-0 z-[9999] bg-black/92"
+      style={{ width: "100vw", height: "100vh" }}
       onClick={onClose}
+      onWheel={onWheel}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Screenshot preview"
     >
       <div
-        className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 rounded-full bg-black/60 backdrop-blur px-1.5 py-1 text-white shadow-lg"
+        className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 rounded-full bg-black/70 backdrop-blur px-1.5 py-1 text-white shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <Button
@@ -89,7 +111,9 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
         >
           <ZoomOut className="w-5 h-5" />
         </Button>
-        <span className="text-xs tabular-nums w-12 text-center select-none">{Math.round(scale * 100)}%</span>
+        <span className="text-xs tabular-nums w-12 text-center select-none">
+          {Math.round(scale * 100)}%
+        </span>
         <Button
           type="button"
           variant="ghost"
@@ -101,12 +125,28 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
         >
           <ZoomIn className="w-5 h-5" />
         </Button>
+        <div className="mx-0.5 h-4 w-px bg-white/25" />
+        {ZOOM_PRESETS.map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            onClick={() => setZoom(preset)}
+            className={`h-7 px-1.5 rounded-full text-[10px] tabular-nums transition ${
+              Math.abs(scale - preset) < 0.001
+                ? "bg-white/25 text-white font-semibold"
+                : "text-white/70 hover:bg-white/15 hover:text-white"
+            }`}
+            title={`Zoom ${Math.round(preset * 100)}%`}
+          >
+            {Math.round(preset * 100)}%
+          </button>
+        ))}
         <Button
           type="button"
           variant="ghost"
           size="icon"
           onClick={reset}
-          disabled={!zoomed}
+          disabled={scale === 1 && offset.x === 0 && offset.y === 0}
           className="text-white hover:bg-white/20 disabled:opacity-40 rounded-full"
           title="Reset (0)"
         >
@@ -118,30 +158,40 @@ export function ImageModal({ src, onClose }: { src: string; onClose: () => void 
         variant="ghost"
         size="icon"
         onClick={onClose}
-        className="absolute top-4 right-4 z-10 text-white bg-black/60 hover:bg-white/20 rounded-full"
+        className="absolute top-4 right-4 z-10 text-white bg-black/70 hover:bg-white/20 rounded-full"
         title="Close (Esc)"
       >
         <X className="w-5 h-5" />
       </Button>
-      <img
-        src={src}
-        alt="Bid screenshot"
-        draggable={false}
-        onClick={(e) => e.stopPropagation()}
-        onWheel={onWheel}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onDoubleClick={() => (zoomed ? reset() : zoomBy(ZOOM_STEP * 4))}
-        style={{
-          transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-          cursor: zoomed ? (dragRef.current ? "grabbing" : "grab") : "zoom-in",
-          touchAction: "none",
-        }}
-        className="max-h-[90vh] max-w-[90vw] rounded-lg shadow-2xl object-contain transition-transform duration-75 select-none"
-      />
+      <div className="absolute inset-0 overflow-auto overscroll-contain" onClick={onClose}>
+        <div className="flex min-h-full min-w-full items-center justify-center p-4 pt-16 pb-8">
+          <img
+            src={src}
+            alt="Bid screenshot"
+            draggable={false}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onDoubleClick={() => (scale !== 1 ? reset() : zoomBy(ZOOM_STEP * 4))}
+            style={{
+              transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+              transformOrigin: "center center",
+              cursor: canPan ? (dragRef.current ? "grabbing" : "grab") : "zoom-in",
+              touchAction: canPan ? "none" : "pan-y",
+              width: "min(100vw - 2rem, 1100px)",
+              maxWidth: "100%",
+              height: "auto",
+            }}
+            className="rounded-lg shadow-2xl transition-transform duration-75 select-none"
+          />
+        </div>
+      </div>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(modal, document.body);
 }
 
 export function Thumb({

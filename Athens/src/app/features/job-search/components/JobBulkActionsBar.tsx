@@ -1,5 +1,5 @@
 import React from "react";
-import { Download, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { ClipboardList, Download, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { Progress } from "../../../components/ui/progress";
@@ -14,6 +14,8 @@ type JobBulkActionsBarProps = {
   onToggleSelectAll: () => void;
   onExport: () => void;
   onRemove: () => void;
+  onMarkBidReady?: () => void;
+  bidReadyPending?: boolean;
   onGenerateResumes?: () => void;
   onStopGenerateResumes?: () => void;
   resumeGenerating?: boolean;
@@ -30,6 +32,8 @@ export function JobBulkActionsBar({
   onToggleSelectAll,
   onExport,
   onRemove,
+  onMarkBidReady,
+  bidReadyPending = false,
   onGenerateResumes,
   onStopGenerateResumes,
   resumeGenerating = false,
@@ -90,6 +94,23 @@ export function JobBulkActionsBar({
         ) : null}
 
         <div className="flex items-center gap-1.5 ml-auto">
+          {onMarkBidReady ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={onMarkBidReady}
+              disabled={totalSelected === 0 || bidReadyPending}
+              title="Mark selected New jobs as Bid ready for Vendor Monitor"
+            >
+              {bidReadyPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              ) : (
+                <ClipboardList className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">Bid ready</span>
+            </Button>
+          ) : null}
           {onGenerateResumes ? (
             resumeGenerating ? (
               <Button

@@ -13,6 +13,8 @@ export type ResumeUploadEvent = {
   ts: number;
   /** Profile file base used at rename time (e.g. TracyNguyen), if any. */
   profileFileBase: string | null;
+  /** Recommended resume stack from Analyze when this upload was logged. */
+  recommendedResumeName?: string | null;
   fileSize?: number;
   lastModified?: number;
 };
@@ -26,6 +28,7 @@ export type LogUploadMessage = {
   pageUrl: string;
   ts: number;
   profileFileBase: string | null;
+  recommendedResumeName?: string | null;
   fileSize?: number;
   lastModified?: number;
 };

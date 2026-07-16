@@ -38,7 +38,7 @@ import { aiExtractVerification } from '../services/mail/aiVerificationExtract.js
 import { runMailAiLabelBatch } from '../services/mail/aiLabelService.js';
 import { runMailAiWrite } from '../services/mail/aiWriteService.js';
 import { decryptProfileApiKeys } from '../services/autoBidProfileSecrets.js';
-import { isProTier } from '../lib/proTier.js';
+import { isBetaTier } from '../lib/betaTier.js';
 
 const OTP_EMAIL_LIMIT = 10;
 
@@ -72,11 +72,11 @@ export async function getMailThreads(req, res) {
 		const unlabeled = req.query.unlabeled === 'true' || req.query.unlabeled === '1';
 		if (unlabeled) {
 			const acc = await findAccountByApplierName(applierName);
-			if (!isProTier(acc?.tier)) {
+			if (!isBetaTier(acc?.tier)) {
 				return res.status(403).json({
 					success: false,
-					error: 'Pro workspace required.',
-					proRequired: true,
+					error: 'Beta workspace required.',
+					betaRequired: true,
 				});
 			}
 		}
@@ -155,15 +155,15 @@ async function requireApplier(req, res) {
 	return applierName;
 }
 
-async function requireProApplier(req, res) {
+async function requireBetaApplier(req, res) {
 	const applierName = await requireApplier(req, res);
 	if (!applierName) return null;
 	const acc = await findAccountByApplierName(applierName);
-	if (!isProTier(acc?.tier)) {
+	if (!isBetaTier(acc?.tier)) {
 		res.status(403).json({
 			success: false,
-			error: 'Pro workspace required.',
-			proRequired: true,
+			error: 'Beta workspace required.',
+			betaRequired: true,
 		});
 		return null;
 	}
@@ -631,7 +631,7 @@ export async function checkMailCredentials(req, res) {
 
 export async function getMailLabelDefinitions(req, res) {
 	try {
-		const applierName = await requireProApplier(req, res);
+		const applierName = await requireBetaApplier(req, res);
 		if (!applierName) return;
 
 		if (!mailUserLabelsCollection) {
@@ -656,7 +656,7 @@ export async function getMailLabelDefinitions(req, res) {
 
 export async function putMailLabelDefinitions(req, res) {
 	try {
-		const applierName = await requireProApplier(req, res);
+		const applierName = await requireBetaApplier(req, res);
 		if (!applierName) return;
 
 		if (!mailUserLabelsCollection) {
@@ -682,7 +682,7 @@ export async function postMailAiLabel(req, res) {
 			return res.status(503).json({ success: false, error: 'Database not ready' });
 		}
 
-		const applierName = await requireProApplier(req, res);
+		const applierName = await requireBetaApplier(req, res);
 		if (!applierName) return;
 
 		const creds = await resolveMailCredentials(applierName);
@@ -748,7 +748,7 @@ export async function postMailAiLabel(req, res) {
 
 export async function postMailAiWrite(req, res) {
 	try {
-		const applierName = await requireProApplier(req, res);
+		const applierName = await requireBetaApplier(req, res);
 		if (!applierName) return;
 
 		const acc = await findAccountByApplierName(applierName);

@@ -11,19 +11,40 @@ import { syncGeneratedResumeAfterRun } from "./generatedResumeService.js";
 import { identityFromProfile } from "../utils/identityFromProfile.js";
 import { sectionsToText } from "./generatedResumeText.js";
 import { renderAgentResumePdf } from "./agentResumePdf.js";
-import { readAgentDraftPdf, deleteAgentDraftPdf } from "./agentResumeDraftService.js";
+import { readAgentDraftPdf, deleteAgentDraftPdf, identityContactFingerprint } from "./agentResumeDraftService.js";
 import { prepareGeneration, runGeneration } from "../controllers/resumeGenController.js";
+import { resumeGenLimiter } from "../utils/concurrency.js";
 import {
   buildGenerationRequestFromSavedConfig,
   loadGeneratorConfig,
 } from "./resumeGenerationService.js";
 import { decryptAccountDoc, loadDecryptedAutoBidProfile } from "./autoBidProfileSecrets.js";
+import {
+  TITLE_POLICY_VERSION,
+  computeTitlePolicyFingerprint,
+  sourceCareers,
+} from "./resumeCareerTitlePolicy.js";
+import { isBetaTier } from "../lib/betaTier.js";
 
 /** Render sections to PDF or read a still-valid on-disk draft (Node fs). */
-async function pdfPayloadForAgent(sections, identity, savedConfig, applierName, jobId) {
-  // Pass config so drafts rendered before templateId support (or after the user
-  // changes Template/Theme/Layout) are treated as stale and re-rendered.
-  const onDisk = readAgentDraftPdf(applierName, jobId, savedConfig);
+async function pdfPayloadForAgent(
+  sections,
+  identity,
+  savedConfig,
+  applierName,
+  jobId,
+  titlePolicyFingerprint,
+) {
+  const identityFingerprint = identityContactFingerprint(identity);
+  // Pass config + fingerprints so drafts rendered before templateId support
+  // (or after the user changes Template/Theme/Layout / title policy / contact) are stale.
+  const onDisk = await readAgentDraftPdf(
+    applierName,
+    jobId,
+    savedConfig,
+    titlePolicyFingerprint,
+    identityFingerprint,
+  );
   if (onDisk) {
     // Buffer.from() guards against a non-Buffer (e.g. Uint8Array), whose
     // .toString("base64") ignores the encoding and yields comma-joined bytes.
@@ -36,6 +57,8 @@ async function pdfPayloadForAgent(sections, identity, savedConfig, applierName, 
     applierName,
     jobId,
     config: savedConfig,
+    titlePolicyFingerprint,
+    identityFingerprint,
   });
   if (!buffer?.length) throw new Error("PDF render returned empty buffer");
   // page.pdf() returns a Uint8Array in modern puppeteer — wrap so toString("base64")
@@ -53,13 +76,27 @@ async function findProfile(applierNameRaw) {
 async function findAccountForKit(applierNameRaw) {
   const name = cleanString(applierNameRaw);
   if (!name || !accountInfoCollection) return null;
-  const projection = { autoBidProfile: 1, resumeCatalog: 1, resumeAnalysisCatalog: 1 };
+  const projection = { autoBidProfile: 1, resumeCatalog: 1, resumeAnalysisCatalog: 1, tier: 1 };
   let acc = await accountInfoCollection.findOne({ name }, { projection });
   if (!acc) {
     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     acc = await accountInfoCollection.findOne({ name: { $regex: new RegExp(`^${esc}$`, "i") } }, { projection });
   }
   return acc ? decryptAccountDoc(acc) : null;
+}
+
+async function resolveIsBeta(applierNameRaw) {
+  const name = cleanString(applierNameRaw);
+  if (!name || !accountInfoCollection) return false;
+  let acc = await accountInfoCollection.findOne({ name }, { projection: { tier: 1 } });
+  if (!acc) {
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    acc = await accountInfoCollection.findOne(
+      { name: { $regex: new RegExp(`^${esc}$`, "i") } },
+      { projection: { tier: 1 } },
+    );
+  }
+  return isBetaTier(acc?.tier);
 }
 
 async function loadRawGeneratorConfig(applierName) {
@@ -249,11 +286,20 @@ function usageToAgentShape(usage, model) {
   };
 }
 
+/** True when a stored generation/resume still matches the current title-policy fingerprint. */
+export function matchesTitlePolicyFingerprint(doc, expectedFingerprint) {
+  if (!expectedFingerprint) return true;
+  const stored = cleanString(doc?.titlePolicyFingerprint);
+  // Missing fingerprint ⇒ pre-policy record — always regenerate.
+  return Boolean(stored) && stored === expectedFingerprint;
+}
+
 /** Find a completed generation or library resume linked to this job id. */
-export async function findExistingAgentJobResume(applierName, jobId) {
+export async function findExistingAgentJobResume(applierName, jobId, expectedTitlePolicyFingerprint) {
   const name = cleanString(applierName);
   const parentId = cleanString(jobId);
   if (!name || !parentId) return null;
+  const expectedFp = cleanString(expectedTitlePolicyFingerprint) || null;
 
   if (userResumesCollection) {
     const resume = await userResumesCollection.findOne({
@@ -274,6 +320,10 @@ export async function findExistingAgentJobResume(applierName, jobId) {
           /* invalid id */
         }
       }
+      const fingerprintDoc = generation || resume;
+      if (!matchesTitlePolicyFingerprint(fingerprintDoc, expectedFp)) {
+        return null;
+      }
       return { resume, generation, reused: true };
     }
   }
@@ -284,6 +334,9 @@ export async function findExistingAgentJobResume(applierName, jobId) {
       { sort: { startedAt: -1 } },
     );
     if (!generation) return null;
+    if (!matchesTitlePolicyFingerprint(generation, expectedFp)) {
+      return null;
+    }
     let resume = null;
     if (generation.libraryResumeId && userResumesCollection) {
       try {
@@ -295,7 +348,23 @@ export async function findExistingAgentJobResume(applierName, jobId) {
     if (!resume && userResumesCollection) {
       resume = await userResumesCollection.findOne({ ownerName: name, generationId: String(generation._id) });
     }
-    if (resume) return { resume, generation, reused: true };
+    // Reuse completed generation sections even when library sync was skipped —
+    // otherwise Agent re-runs the LLM for a Job Search draft that already exists.
+    if (generation.sections) {
+      return {
+        resume: resume || {
+          ownerName: name,
+          generateParentJobId: parentId,
+          source: "generated",
+          generationId: String(generation._id),
+          extractedText: "",
+          techStack: "Generated",
+          titlePolicyFingerprint: generation.titlePolicyFingerprint ?? null,
+        },
+        generation,
+        reused: true,
+      };
+    }
   }
 
   return null;
@@ -322,46 +391,22 @@ export async function findAgentJobResumeStatuses(applierName, jobIds) {
     for (const r of resumes) found.add(String(r.generateParentJobId));
   }
 
-  // Same fallback as findExistingAgentJobResume: a completed generation counts
-  // only when a library resume is still linked to it.
+  // Same fallback as findExistingAgentJobResume: a completed generation with
+  // sections counts even when library sync was skipped.
   const remaining = ids.filter((id) => !found.has(id));
-  if (remaining.length && resumeGenerationsCollection && userResumesCollection) {
+  if (remaining.length && resumeGenerationsCollection) {
     const generations = await resumeGenerationsCollection
       .find(
-        { applierName: name, generate_parent_job_id: { $in: remaining }, status: "completed" },
-        { projection: { generate_parent_job_id: 1, libraryResumeId: 1 } },
+        {
+          applierName: name,
+          generate_parent_job_id: { $in: remaining },
+          status: "completed",
+          sections: { $exists: true, $ne: null },
+        },
+        { projection: { generate_parent_job_id: 1 } },
       )
       .toArray();
-    if (generations.length) {
-      const genIds = generations.map((g) => String(g._id));
-      const libIds = generations
-        .map((g) => {
-          try {
-            return g.libraryResumeId ? new ObjectId(String(g.libraryResumeId)) : null;
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      const resumes = await userResumesCollection
-        .find(
-          {
-            $or: [
-              { ownerName: name, generationId: { $in: genIds } },
-              ...(libIds.length ? [{ _id: { $in: libIds } }] : []),
-            ],
-          },
-          { projection: { generationId: 1 } },
-        )
-        .toArray();
-      const linkedGenIds = new Set(resumes.map((r) => String(r.generationId || "")));
-      const linkedLibIds = new Set(resumes.map((r) => String(r._id)));
-      for (const g of generations) {
-        if (linkedGenIds.has(String(g._id)) || (g.libraryResumeId && linkedLibIds.has(String(g.libraryResumeId)))) {
-          found.add(String(g.generate_parent_job_id));
-        }
-      }
-    }
+    for (const g of generations) found.add(String(g.generate_parent_job_id));
   }
 
   return [...found];
@@ -375,21 +420,51 @@ export async function resolveAgentJobDraftPdf({ applierName, jobId }) {
 
   // Always load current Editor config first — preview must match My Resumes template.
   const savedConfig = await loadGeneratorConfig(name);
-  const onDisk = readAgentDraftPdf(name, parentId, savedConfig);
-  if (onDisk) return { buffer: onDisk.buffer, draftPath: onDisk.draftPath };
-
-  const existing = await findExistingAgentJobResume(name, parentId);
-  if (!existing?.generation?.sections) return null;
-
   const profile = await findProfile(name);
   if (!profile) return null;
   const identity = identityFromProfile(profile);
+
+  // Preview reuses stored sections regardless of title-policy fingerprint.
+  // Fingerprint only gates LLM reuse in ensureAgentJobResume — otherwise View
+  // résumé 404s for pre-policy / drifted generations that still have sections.
+  const stored = await findExistingAgentJobResume(name, parentId);
+  if (!stored?.generation?.sections) return null;
+
+  const jd = cleanString(stored.generation.jobDescription);
+  const body = buildGenerationRequestFromSavedConfig({
+    applierName: name,
+    jobDescription: jd,
+    savedConfig,
+    identity,
+    generateParentJobId: parentId,
+    structuredJob: true,
+  });
+  const isBeta = await resolveIsBeta(name);
+  const titlePolicyFingerprint = computeTitlePolicyFingerprint({
+    isBeta,
+    jobDescription: jd,
+    careers: sourceCareers(identity),
+    config: body,
+  });
+  const identityFingerprint = identityContactFingerprint(identity);
+
+  const onDisk = await readAgentDraftPdf(
+    name,
+    parentId,
+    savedConfig,
+    titlePolicyFingerprint,
+    identityFingerprint,
+  );
+  if (onDisk) return { buffer: onDisk.buffer, draftPath: onDisk.draftPath };
+
   const { buffer, savedPath } = await renderAgentResumePdf({
-    sections: existing.generation.sections,
+    sections: stored.generation.sections,
     identity,
     applierName: name,
     jobId: parentId,
     config: savedConfig,
+    titlePolicyFingerprint,
+    identityFingerprint,
   });
   if (!buffer?.length) return null;
   return { buffer, draftPath: savedPath };
@@ -418,7 +493,7 @@ export async function resolveSubmissionKitPdf({ applierName }) {
   });
   if (!buffer?.length) throw new Error("Submission Kit PDF render returned empty buffer");
 
-  // Free-tier uploads use this PDF; employers should see {profileName}.pdf, not a "kit" suffix.
+  // Non-Beta tiers upload this PDF; employers should see {profileName}.pdf, not a "kit" suffix.
   const fileName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_") || "resume"}.pdf`;
   return {
     buffer,
@@ -445,36 +520,6 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
   const identity = identityFromProfile(profile);
   const savedConfig = await loadGeneratorConfig(name);
 
-  if (forceRegenerate) {
-    deleteAgentDraftPdf(name, parentId);
-  }
-
-  const existing = forceRegenerate ? null : await findExistingAgentJobResume(name, parentId);
-  if (existing?.resume) {
-    if (onStep) onStep({ phase: "reused", name: "Existing draft" });
-    const usage = usageToAgentShape(existing.generation?.usage, existing.generation?.model);
-    const pdf = await pdfPayloadForAgent(
-      existing.generation?.sections,
-      identity,
-      savedConfig,
-      name,
-      parentId,
-    );
-    const fileName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
-    return {
-      reused: true,
-      resumeId: String(existing.resume._id),
-      fileName,
-      techStack: existing.resume.techStack || "Generated",
-      extractedText: existing.resume.extractedText || "",
-      generationId: existing.generation ? String(existing.generation._id) : existing.resume.generationId,
-      usage,
-      model: usage.model,
-      provider: existing.generation?.provider ?? savedConfig.provider ?? null,
-      ...pdf,
-    };
-  }
-
   // Skills already stored on the job let us skip the AI "fetch skills" step for
   // structured jobs (steps flagged skipForStructuredJobs are dropped below).
   const jobSkills = await findJobSkills(parentId);
@@ -488,10 +533,7 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
     structuredJob: true,
   });
 
-  console.info(
-    `[agent-resume-gen] ${name} job ${parentId.slice(0, 8)}… — provider=${body.provider} model=${body.model}`,
-  );
-
+  // Resolve Beta + fingerprint before reuse so stale title-policy caches regenerate.
   const prep = await prepareGeneration(body);
   if (!prep.ok) {
     const err = new Error(prep.error);
@@ -499,80 +541,153 @@ export async function ensureAgentJobResume({ applierName, jobId, jobDescription,
     throw err;
   }
 
-  const startedAt = new Date();
-  const result = await runGeneration(
-    {
-      ...prep,
-      systemInstruction: body.systemInstruction,
-      identity,
-      applierName: name,
-      jobDescription: jd,
-      jobSkills,
-      reasoningEffort: body.reasoningEffort,
-    },
-    onStep,
-  );
+  const titlePolicyFingerprint = computeTitlePolicyFingerprint({
+    isBeta: prep.isBeta,
+    jobDescription: jd,
+    careers: sourceCareers(identity),
+    config: body,
+  });
 
-  // Skill proficiency comes from the scoring logic downstream — no LLM analysis pass.
-  const skillProfile = [];
-  const techStack = null;
-  const skillAnalysisError = null;
-
-  let generationId = null;
-  let sync = null;
-  try {
-    generationId = await saveGenerationRun({
-      applierName: name,
-      provider: prep.providerId,
-      model: prep.model,
-      status: "completed",
-      config: configSnapshot(body),
-      identity,
-      jobDescription: jd,
-      sections: result.sections,
-      perStep: result.perStep,
-      usage: result.usage,
-      skillProfile,
-      techStack,
-      skillAnalysisError,
-      analyzed: skillProfile.length > 0,
-      analyzedAt: skillProfile.length > 0 ? new Date() : null,
-      generate_parent_job_id: parentId,
-      startedAt,
-      finishedAt: new Date(),
-    });
-
-    sync = await syncGeneratedResumeAfterRun({
-      generationId,
-      ownerName: name,
-      sections: result.sections,
-      identity,
-      jobDescription: jd,
-      templateId: body.templateId,
-      skillProfile,
-      techStack,
-      skillAnalysisError,
-      generateParentJobId: parentId,
-    });
-  } catch (err) {
-    console.warn("[agent-resume-gen] persistence/enrichment failed (non-fatal):", err.message);
+  if (forceRegenerate) {
+    await deleteAgentDraftPdf(name, parentId);
   }
 
-  const usage = usageToAgentShape(result.usage, prep.model);
-  if (onStep) onStep({ phase: "rendering-pdf", name: "Rendering PDF" });
-  const pdf = await pdfPayloadForAgent(result.sections, identity, savedConfig, name, parentId);
-  const finalName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
+  const existing = forceRegenerate
+    ? null
+    : await findExistingAgentJobResume(name, parentId, titlePolicyFingerprint);
+  if (existing?.resume) {
+    if (onStep) onStep({ phase: "reused", name: "Existing draft" });
+    const usage = usageToAgentShape(existing.generation?.usage, existing.generation?.model);
+    const pdf = await pdfPayloadForAgent(
+      existing.generation?.sections,
+      identity,
+      savedConfig,
+      name,
+      parentId,
+      titlePolicyFingerprint,
+    );
+    const fileName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
+    return {
+      reused: true,
+      resumeId: String(existing.resume._id),
+      fileName,
+      techStack: existing.resume.techStack || "Generated",
+      extractedText: existing.resume.extractedText || "",
+      generationId: existing.generation ? String(existing.generation._id) : existing.resume.generationId,
+      usage,
+      model: usage.model,
+      provider: existing.generation?.provider ?? savedConfig.provider ?? null,
+      titlePolicyFingerprint,
+      ...pdf,
+    };
+  }
 
-  return {
-    reused: false,
-    resumeId: sync?.resumeId || null,
-    fileName: finalName,
-    techStack: sync?.techStack || techStack || "Generated",
-    extractedText: sectionsToText(result.sections, identity),
-    generationId: generationId ? String(generationId) : null,
-    usage,
-    model: prep.model,
-    provider: prep.providerId,
-    ...pdf,
-  };
+  console.info(
+    `[agent-resume-gen] ${name} job ${parentId.slice(0, 8)}… — provider=${body.provider} model=${body.model} beta=${prep.isBeta}`,
+  );
+
+  const startedAt = new Date();
+  return resumeGenLimiter.run(
+    name,
+    async () => {
+      const result = await runGeneration(
+        {
+          ...prep,
+          systemInstruction: body.systemInstruction,
+          identity,
+          applierName: name,
+          jobDescription: jd,
+          jobSkills,
+          reasoningEffort: body.reasoningEffort,
+        },
+        onStep,
+      );
+
+      // Skill proficiency comes from the scoring logic downstream — no LLM analysis pass.
+      const skillProfile = [];
+      const techStack = null;
+      const skillAnalysisError = null;
+
+      let generationId = null;
+      let sync = null;
+      try {
+        const identitySyncedAt = cleanString(profile.updatedAt) || new Date().toISOString();
+        generationId = await saveGenerationRun({
+          applierName: name,
+          provider: prep.providerId,
+          model: prep.model,
+          status: "completed",
+          config: configSnapshot(body),
+          identity,
+          jobDescription: jd,
+          sections: result.sections,
+          perStep: result.perStep,
+          usage: result.usage,
+          skillProfile,
+          techStack,
+          skillAnalysisError,
+          analyzed: skillProfile.length > 0,
+          analyzedAt: skillProfile.length > 0 ? new Date() : null,
+          generate_parent_job_id: parentId,
+          isBeta: Boolean(prep.isBeta),
+          titlePolicyVersion: TITLE_POLICY_VERSION,
+          titlePolicyFingerprint,
+          identitySyncedAt,
+          identityRefreshedAt: new Date(),
+          startedAt,
+          finishedAt: new Date(),
+        });
+
+        sync = await syncGeneratedResumeAfterRun({
+          generationId,
+          ownerName: name,
+          sections: result.sections,
+          identity,
+          jobDescription: jd,
+          templateId: body.templateId,
+          skillProfile,
+          techStack,
+          skillAnalysisError,
+          generateParentJobId: parentId,
+          titlePolicyFingerprint,
+          titlePolicyVersion: TITLE_POLICY_VERSION,
+          isBeta: prep.isBeta,
+          identitySyncedAt,
+        });
+      } catch (err) {
+        console.warn("[agent-resume-gen] persistence/enrichment failed (non-fatal):", err.message);
+      }
+
+      const usage = usageToAgentShape(result.usage, prep.model);
+      if (onStep) onStep({ phase: "rendering-pdf", name: "Rendering PDF" });
+      const pdf = await pdfPayloadForAgent(
+        result.sections,
+        identity,
+        savedConfig,
+        name,
+        parentId,
+        titlePolicyFingerprint,
+      );
+      const finalName = `${(identity.fullName || name).replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
+
+      return {
+        reused: false,
+        resumeId: sync?.resumeId || null,
+        fileName: finalName,
+        techStack: sync?.techStack || techStack || "Generated",
+        extractedText: sectionsToText(result.sections, identity),
+        generationId: generationId ? String(generationId) : null,
+        usage,
+        model: prep.model,
+        provider: prep.providerId,
+        titlePolicyFingerprint,
+        ...pdf,
+      };
+    },
+    {
+      onQueued: async () => {
+        if (onStep) onStep({ phase: "queued", name: "Waiting for generation slot" });
+      },
+    },
+  );
 }

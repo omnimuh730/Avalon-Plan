@@ -4,7 +4,7 @@ import { AppLogo } from "../shared/AppLogo";
 import { useAuth } from "@/context/auth-context";
 import { useApplier } from "@/context/applier-context";
 import { cn, display } from "../../lib/utils";
-import { formatTierLabel, isProTier } from "../../lib/pro";
+import { formatTierLabel, isBetaTier } from "../../lib/beta";
 import { pathForView, PATHS } from "../../config/routes";
 import { NAV_GROUPS, NAV_ITEMS } from "../../config/navigation";
 
@@ -22,7 +22,7 @@ export function Sidebar() {
   const { applier } = useApplier();
   const navigate = useNavigate();
   const account = applier ?? user;
-  const pro = isProTier(account?.tier);
+  const beta = isBetaTier(account?.tier);
 
   const handleSignOut = () => {
     signout();
@@ -31,7 +31,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className="w-60 flex-shrink-0 flex flex-col h-full min-h-0 border-r border-border shadow-sm"
+      className="relative z-40 w-60 flex-shrink-0 flex flex-col h-full min-h-0 border-r border-border shadow-sm"
       style={{ background: "var(--sidebar)" }}
     >
       <div className="px-5 py-4 border-b border-border">
@@ -55,7 +55,7 @@ export function Sidebar() {
               </p>
             )}
             <div className="space-y-1">
-              {NAV_ITEMS.filter((n) => g.ids.includes(n.id) && (pro || !n.pro)).map((item) => (
+              {NAV_ITEMS.filter((n) => g.ids.includes(n.id) && (beta || !n.beta)).map((item) => (
                 <NavLink
                   key={item.id}
                   to={pathForView(item.id)}
@@ -71,10 +71,10 @@ export function Sidebar() {
                 >
                   <item.icon className="w-5 h-5 flex-shrink-0" />
                   <span className="flex-1 text-left">{item.label}</span>
-                  {item.pro && (
+                  {item.beta && (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold leading-none whitespace-nowrap">
                       <Crown className="w-3 h-3" />
-                      Pro
+                      Beta
                     </span>
                   )}
                   {item.comingSoon && (
@@ -96,10 +96,10 @@ export function Sidebar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-foreground truncate">{user?.name ?? "Signed out"}</p>
-            {pro ? (
+            {beta ? (
               <p className="mt-0.5 inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
                 <Crown className="w-3 h-3" />
-                Pro
+                Beta
               </p>
             ) : (
               <p className="text-xs text-muted-foreground truncate">{formatTierLabel(account?.tier)}</p>

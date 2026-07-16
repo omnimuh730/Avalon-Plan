@@ -5,7 +5,8 @@ import {
 	personalInfoCollection,
 	companyCategoryCollection,
 	accountInfoCollection,
-	rulesCollection
+	rulesCollection,
+	getVendorTasksCollection,
 } from "../db/mongo.js";
 import { isJobBlocked, buildMongoQueryForRule, isMatchNoneQuery } from '../utils/ruleMatcher.js';
 import { attachStaticScoreFields } from '../services/jobListPipeline.js';
@@ -23,6 +24,11 @@ import { listMergedJobs, countExternalForStatusTabs } from '../services/mergedJo
 import { normalizeJobSkills, jobSkillTokens, indexJobInRedis } from '../services/matching/skillIndex.js';
 import { deleteScoresForJobs } from '../services/matching/matchScoreStore.js';
 import { buildJobSkillRadar } from '../services/jobSkillRadarService.js';
+import {
+	clearJobBidStatus,
+	markBidCompletedByUrl,
+	upsertJobBidStatus,
+} from '../services/jobBidStatusService.js';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const LOOKBACK_WINDOW_MS = DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -422,25 +428,32 @@ export async function applyToJob(req, res) {
 			return res.status(404).json({ success: false, error: `User ${applierName} not found` });
 		}
 
-		const existingApplication = await jobsCollection.findOne({ _id: objectId, "status.applier": applier._id });
+		const existingJob = await jobsCollection.findOne({ _id: objectId, "status.applier": applier._id });
+		const now = new Date().toISOString();
 
-		if (existingApplication) {
-			return res.json({ success: true, data: existingApplication, message: "User has already applied" });
+		if (existingJob) {
+			const entry = (Array.isArray(existingJob.status) ? existingJob.status : []).find(
+				(s) => s && String(s.applier) === String(applier._id),
+			);
+			if (entry?.appliedDate) {
+				return res.json({ success: true, data: existingJob, message: "User has already applied" });
+			}
+
+			await jobsCollection.updateOne(
+				{ _id: objectId },
+				{ $set: { "status.$[elem].appliedDate": now } },
+				{ arrayFilters: [{ "elem.applier": applier._id }] },
+			);
+			const updatedJob = await jobsCollection.findOne({ _id: objectId });
+			return res.json({ success: true, data: updatedJob });
 		}
 
-		const now = new Date().toISOString();
 		const newApplication = {
 			applier: applier._id,
-			appliedDate: now
+			appliedDate: now,
 		};
 
-		const update = {
-			$push: {
-				status: newApplication
-			}
-		};
-
-		await jobsCollection.updateOne({ _id: objectId }, update);
+		await jobsCollection.updateOne({ _id: objectId }, { $push: { status: newApplication } });
 		const updatedJob = await jobsCollection.findOne({ _id: objectId });
 
 		return res.json({ success: true, data: updatedJob });
@@ -557,6 +570,112 @@ export async function unapplyFromJob(req, res) {
 		return res.json({ success: true, data: updatedJob });
 	} catch (err) {
 		console.error('POST /api/jobs/:id/unapply error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+/**
+ * POST /jobs/:id/bid-status
+ * body: { applierName, status: 'BidReady' | 'BidCompleted' | 'clear' }
+ */
+export async function updateJobBidStatus(req, res) {
+	try {
+		if (!jobsCollection) return res.status(503).json({ success: false, error: 'Database not ready' });
+		const { id } = req.params;
+		const applierName = String(req.body?.applierName ?? '').trim();
+		const status = String(req.body?.status ?? '').trim();
+
+		if (!applierName) {
+			return res.status(400).json({ success: false, error: 'applierName is required' });
+		}
+		if (!['BidReady', 'BidCompleted', 'clear'].includes(status)) {
+			return res.status(400).json({ success: false, error: 'status must be BidReady, BidCompleted, or clear' });
+		}
+
+		let objectId;
+		try {
+			objectId = new ObjectId(id);
+		} catch {
+			return res.status(400).json({ success: false, error: 'Invalid id' });
+		}
+
+		const job = await jobsCollection.findOne({ _id: objectId });
+		if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
+
+		if (status === 'clear') {
+			await clearJobBidStatus(applierName, id);
+			const tasks = getVendorTasksCollection();
+			if (tasks) await tasks.deleteMany({ applierName, jobId: id });
+		} else if (status === 'BidReady') {
+			await upsertJobBidStatus(applierName, id, { bidReady: true });
+			const tasks = getVendorTasksCollection();
+			if (tasks) {
+				const existing = await tasks.findOne({ applierName, jobId: id }, { projection: { _id: 1 } });
+				if (!existing) {
+					const now = new Date();
+					const company =
+						job.company && typeof job.company === 'object'
+							? String(job.company.name || '')
+							: String(job.companyName || '');
+					await tasks.insertOne({
+						applierName,
+						jobId: id,
+						title: String(job.title || 'Untitled role'),
+						company,
+						applyUrl: String(job.applyLink || job.jobLink || '') || null,
+						source: String(job.source || ''),
+						location: String(job.details?.position || ''),
+						workMode: String(job.details?.remote || ''),
+						matchScore: null,
+						status: 'pending',
+						addedAt: now,
+						updatedAt: now,
+						completedAt: null,
+					});
+				}
+			}
+		} else {
+			await upsertJobBidStatus(applierName, id, { bidReady: true, bidCompleted: true });
+		}
+
+		const updatedJob = await jobsCollection.findOne({ _id: objectId });
+		return res.json({ success: true, data: updatedJob });
+	} catch (err) {
+		console.error('POST /api/jobs/:id/bid-status error', err);
+		return res.status(500).json({ success: false, error: err.message });
+	}
+}
+
+/**
+ * POST /jobs/bid-complete-by-url
+ * body: { applierName, url }
+ * Used by bid-assistant / vender-server when a bid session is marked completed.
+ */
+export async function markJobBidCompletedByUrl(req, res) {
+	try {
+		const applierName = String(req.body?.applierName ?? '').trim();
+		const url = String(req.body?.url ?? '').trim();
+		if (!applierName) {
+			return res.status(400).json({ success: false, error: 'applierName is required' });
+		}
+		if (!url) {
+			return res.status(400).json({ success: false, error: 'url is required' });
+		}
+
+		const result = await markBidCompletedByUrl(applierName, url);
+		if (result.jobId) {
+			const tasks = getVendorTasksCollection();
+			if (tasks) {
+				await tasks.updateMany(
+					{ applierName, jobId: result.jobId },
+					{ $set: { status: 'done', completedAt: new Date(), updatedAt: new Date() } },
+				);
+			}
+		}
+
+		return res.json({ success: true, ...result });
+	} catch (err) {
+		console.error('POST /api/jobs/bid-complete-by-url error', err);
 		return res.status(500).json({ success: false, error: err.message });
 	}
 }

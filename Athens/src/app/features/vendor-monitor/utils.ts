@@ -34,6 +34,36 @@ export function durationLabel(start: string, end: string | null): string {
   return `${Math.floor(sec / 60)}m${sec % 60}s`;
 }
 
+/** Strip .pdf / .docx so "C# + Java.docx" matches recommended "C# + Java". */
+export function stripResumeExtension(name: string): string {
+  return String(name ?? "")
+    .replace(/\.(pdf|docx)$/i, "")
+    .trim();
+}
+
+export function normalizeResumeLabel(name: string): string {
+  return stripResumeExtension(name)
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export type ResumeRecommendMatch = "match" | "mismatch" | "unknown";
+
+export function matchUploadToRecommended(
+  originalName: string | null | undefined,
+  recommendedName: string | null | undefined,
+): ResumeRecommendMatch {
+  if (!originalName?.trim() || !recommendedName?.trim()) return "unknown";
+  const upload = normalizeResumeLabel(originalName);
+  const recommended = normalizeResumeLabel(recommendedName);
+  if (!upload || !recommended) return "unknown";
+  if (upload === recommended) return "match";
+  if (upload.includes(recommended) || recommended.includes(upload)) return "match";
+  return "mismatch";
+}
+
 export const RECORD_META: Record<
   BidRecord["type"],
   { label: string; icon: LucideIcon; color: string }

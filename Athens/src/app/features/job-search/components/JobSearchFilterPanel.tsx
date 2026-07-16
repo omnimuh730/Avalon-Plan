@@ -30,6 +30,8 @@ const STATUS_TABS: {
 }[] = [
   { id: "all", label: "All", dot: "bg-foreground" },
   { id: "posted", label: "New", dot: "bg-emerald-500" },
+  { id: "bid-ready", label: "Bid ready", dot: "bg-sky-500" },
+  { id: "bid-completed", label: "Bid completed", dot: "bg-violet-500" },
   { id: "applied", label: "Applied", dot: "bg-blue-500" },
   { id: "scheduled", label: "Scheduled", dot: "bg-amber-500" },
   { id: "declined", label: "Declined", dot: "bg-rose-500" },
@@ -49,6 +51,10 @@ type JobSearchFilterPanelProps = {
   onShowScoresOnCardsChange: (v: boolean) => void;
   matchScoreHint?: string | null;
   matchScoreHintVariant?: "info" | "warning";
+  /** Hide All/New/Applied status tabs (e.g. task pool always uses New/posted). */
+  showStatusTabs?: boolean;
+  /** Hide My Skills / Skill Extraction tools used only on Job Search. */
+  showSkillsTools?: boolean;
 };
 
 function ToolbarDivider() {
@@ -104,6 +110,8 @@ export function JobSearchFilterPanel({
   onShowScoresOnCardsChange,
   matchScoreHint,
   matchScoreHintVariant = "info",
+  showStatusTabs = true,
+  showSkillsTools = true,
 }: JobSearchFilterPanelProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [chipsOpen, setChipsOpen] = useState(true);
@@ -118,35 +126,37 @@ export function JobSearchFilterPanel({
     <div className="-mx-1 px-1 mb-2 overflow-y-visible">
       <div className="rounded-xl border border-border bg-card/95 backdrop-blur-xl shadow-sm overflow-x-clip">
         {/* Layer 1: status tabs */}
-        <div className="flex items-end gap-0.5 px-3 pt-1 scroll-x-only border-b border-border/60">
-          {STATUS_TABS.map((tab) => {
-            const active = filters.statusTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => patch({ statusTab: tab.id })}
-                className={cn(
-                  "inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors shrink-0 border-b-2",
-                  active
-                    ? "text-foreground border-primary"
-                    : "text-muted-foreground border-transparent hover:text-foreground hover:border-border",
-                )}
-              >
-                <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", tab.dot)} />
-                {tab.label}
-                <span
+        {showStatusTabs ? (
+          <div className="flex items-end gap-0.5 px-3 pt-1 scroll-x-only border-b border-border/60">
+            {STATUS_TABS.map((tab) => {
+              const active = filters.statusTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => patch({ statusTab: tab.id })}
                   className={cn(
-                    "px-1.5 py-0.5 rounded-md text-[11px] tabular-nums font-medium",
-                    active ? "bg-muted text-foreground" : "bg-muted/60 text-muted-foreground",
+                    "inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors shrink-0 border-b-2",
+                    active
+                      ? "text-foreground border-primary"
+                      : "text-muted-foreground border-transparent hover:text-foreground hover:border-border",
                   )}
                 >
-                  {statusCounts[tab.id]}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                  <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", tab.dot)} />
+                  {tab.label}
+                  <span
+                    className={cn(
+                      "px-1.5 py-0.5 rounded-md text-[11px] tabular-nums font-medium",
+                      active ? "bg-muted text-foreground" : "bg-muted/60 text-muted-foreground",
+                    )}
+                  >
+                    {statusCounts[tab.id]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
 
         {/* Layer 2: primary controls */}
         <div className="flex items-center gap-2 px-3 py-2.5 flex-wrap overflow-y-hidden">
@@ -231,12 +241,15 @@ export function JobSearchFilterPanel({
             />
           </div>
 
-          <ToolbarDivider />
-
-          <div className="flex items-center gap-1.5 sm:ml-auto shrink-0">
-            <MySkillsPopover />
-            <SkillExtractionButton />
-          </div>
+          {showSkillsTools ? (
+            <>
+              <ToolbarDivider />
+              <div className="flex items-center gap-1.5 sm:ml-auto shrink-0">
+                <MySkillsPopover />
+                <SkillExtractionButton />
+              </div>
+            </>
+          ) : null}
         </div>
 
         {/* Layer 3: active filter chips (collapsible) */}

@@ -28,12 +28,14 @@ import {
 } from "../../../services/agentApi";
 import {
   applyToJob,
+  fetchAgentJobResumePdf,
   fetchJobDescription,
+  fetchJobsWithGeneratedResumes,
   fetchSubmissionKitResume,
   generateJobResumeStream,
   type ResumeSectionPurpose,
 } from "../../../api/jobs";
-import { isProTier } from "../../../lib/pro";
+import { isBetaTier } from "../../../lib/beta";
 import { classifyApplyOutcome, type ApplyPageState } from "../lib/applyOutcome";
 import { clampJobBudgetUsd, loadJobBudgetUsd, saveJobBudgetUsd } from "../lib/agentBudget";
 import { generateRecoveryScript } from "../avalon/ai/recover-apply";
@@ -140,6 +142,15 @@ interface SubmissionKitCache {
 /** Manual/link-only jobs have no Mongo id or JD, so no tailored résumé is generated. */
 function isManualJob(job: QueuedJob): boolean {
   return job.source === "manual" || job.id.startsWith("manual:");
+}
+
+/** Strip legacy `-{8 hex job id}` from upload names (e.g. "David Moll-6a5656e3.pdf"). */
+function profileResumeFileName(name: string, fallback = "resume.pdf"): string {
+  const raw = (name || fallback).trim() || fallback;
+  const cleaned = raw.replace(/-[a-f0-9]{8}(?=\.(pdf|docx?)$)/i, "");
+  return cleaned.toLowerCase().endsWith(".pdf") || /\.docx?$/i.test(cleaned)
+    ? cleaned
+    : `${cleaned}.pdf`;
 }
 
   /** Read a suggested pipeline restart step from verify guidance (language/numbers only). */
@@ -273,7 +284,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
   const persistKey = options?.persistKey;
   const initialPersisted = useMemo(() => (persistKey ? loadPersistedQueue(persistKey) : null), [persistKey]);
   const persistSession = options?.persist !== false;
-  const accountIsPro = isProTier(options?.accountTier);
+  const accountIsBeta = isBetaTier(options?.accountTier);
   const [serverUrl, setServerUrl] = useState(() => avalonRelayUrl());
   const [sessionId, setSessionId] = useState(() => options?.sessionId ?? storedAvalonSessionId());
   const [connected, setConnected] = useState(false);
@@ -853,11 +864,40 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
       if (!options?.forceRegenerate) {
         const cached = resumesByJobId[job.id];
-        if (cached) {
+        if (cached?.file?.base64) {
           setResumeJobId(job.id);
           setResumeError(null);
           markPipeline(job.id, { resumeReady: true });
           return cached.file;
+        }
+        // Job Search (or a prior Agent run) may already have a draft on disk —
+        // load it before spending an LLM call.
+        if (applierName) {
+          try {
+            const draft = await fetchAgentJobResumePdf(applierName, job.id, runSignal());
+            const file: AttachedFile = {
+              name: profileResumeFileName(draft.fileName, `${applierName}.pdf`),
+              mimeType: draft.mimeType,
+              base64: draft.pdfBase64,
+            };
+            setResumesByJobId((prev) => ({
+              ...prev,
+              [job.id]: {
+                jobId: job.id,
+                file,
+                reused: true,
+                generationId: null,
+                resumePdfPath: null,
+              },
+            }));
+            setResumeJobId(job.id);
+            setResumeError(null);
+            markPipeline(job.id, { resumeReady: true });
+            pushLog(`Résumé reused for "${job.title}" (loaded existing draft)`, true);
+            return file;
+          } catch {
+            /* no draft yet — fall through to generate */
+          }
         }
       } else {
         resumeGenByJobIdRef.current.delete(job.id);
@@ -874,7 +914,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       pushLog(
         options?.forceRegenerate
           ? `Regenerating tailored résumé for "${job.title}" (Resume Generator + JD)…`
-          : `Generating tailored résumé for "${job.title}" (Resume Generator config)…`,
+          : `Loading or generating tailored résumé for "${job.title}"…`,
         true,
       );
       const gen = await generateJobResumeStream(
@@ -899,7 +939,11 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           provider: gen.provider,
         });
       }
-      const file: AttachedFile = { name: gen.fileName, mimeType: gen.mimeType, base64: gen.pdfBase64 };
+      const file: AttachedFile = {
+        name: profileResumeFileName(gen.fileName, `${applierName}.pdf`),
+        mimeType: gen.mimeType,
+        base64: gen.pdfBase64,
+      };
       setResumesByJobId((prev) => ({
         ...prev,
         [job.id]: {
@@ -933,7 +977,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
       const promise = (async () => {
         setGeneratingResume(true);
         setGeneratingResumeJobId(job.id);
-        setResumeGenerateStep("Starting generation…");
+        setResumeGenerateStep(options?.forceRegenerate ? "Starting regeneration…" : "Loading résumé…");
         setResumeGeneratedSections({});
         setResumeJobId(job.id);
         setResumeError(null);
@@ -973,13 +1017,18 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
         pushLog(`"${job.title}" is manual — résumé generation needs a MongoDB job with description`, false);
         return;
       }
+      // Only burn an LLM regenerate when we actually have an in-memory PDF to
+      // replace. Persisted pipeline.resumeReady alone must not force regenerate
+      // (common after reload, or when Job Search already generated the draft).
+      const hasCachedFile = Boolean(resumesByJobId[job.id]?.file?.base64);
+      const effectiveForce = Boolean(forceRegenerate && hasCachedFile);
       try {
-        await startResumeForJob(job, { forceRegenerate });
+        await startResumeForJob(job, { forceRegenerate: effectiveForce });
       } catch {
         /* logged in startResumeForJob */
       }
     },
-    [getActiveQueuedJob, pushLog, startResumeForJob],
+    [getActiveQueuedJob, pushLog, resumesByJobId, startResumeForJob],
   );
 
   const getResumeForJob = useCallback(
@@ -990,10 +1039,78 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
     [resumesByJobId],
   );
 
+  // When the queue (or applier) changes, discover Job Search drafts and hydrate
+  // the active job's PDF so Step 4 / auto-apply reuse instead of regenerating.
+  const resumesByJobIdRef = useRef(resumesByJobId);
+  resumesByJobIdRef.current = resumesByJobId;
+
+  useEffect(() => {
+    if (!applierName || jobQueue.length === 0) return;
+    const jobs = jobQueue.filter((j) => !isManualJob(j));
+    if (!jobs.length) return;
+    let cancelled = false;
+    void (async () => {
+      const existing = await fetchJobsWithGeneratedResumes(
+        applierName,
+        jobs.map((j) => j.id),
+      );
+      if (cancelled || existing.size === 0) return;
+
+      setPipelineByJobId((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const id of existing) {
+          if (next[id]?.resumeReady) continue;
+          next[id] = { ...EMPTY_PIPELINE, ...next[id], resumeReady: true };
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+
+      // Prefetch PDFs for the active job and the next few in queue (not all 200).
+      const start = Math.max(0, activeJobIndex);
+      const prefetch = jobs.slice(start, start + 5).filter((j) => existing.has(j.id));
+      for (const job of prefetch) {
+        if (cancelled) return;
+        if (resumesByJobIdRef.current[job.id]?.file?.base64) continue;
+        try {
+          const draft = await fetchAgentJobResumePdf(applierName, job.id);
+          if (cancelled) return;
+          setResumesByJobId((prev) => {
+            if (prev[job.id]?.file?.base64) return prev;
+            return {
+              ...prev,
+              [job.id]: {
+                jobId: job.id,
+                file: {
+                  name: profileResumeFileName(draft.fileName, `${applierName}.pdf`),
+                  mimeType: draft.mimeType,
+                  base64: draft.pdfBase64,
+                },
+                reused: true,
+                generationId: null,
+                resumePdfPath: null,
+              },
+            };
+          });
+          setPipelineByJobId((prev) => ({
+            ...prev,
+            [job.id]: { ...EMPTY_PIPELINE, ...prev[job.id], resumeReady: true },
+          }));
+        } catch {
+          /* draft PDF not on disk yet — ensureJobResume will still reuse Mongo content */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applierName, jobQueue, activeJobIndex]);
+
   useEffect(() => {
     submissionKitCacheRef.current = null;
     setKitSubmitJobId(null);
-  }, [applierName, accountIsPro]);
+  }, [applierName, accountIsBeta]);
 
   const loadSubmissionKitFile = useCallback(async (): Promise<AttachedFile> => {
     if (!applierName) throw new Error("Select an applier profile before applying");
@@ -1017,18 +1134,24 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
 
   const resolveResumeForSubmission = useCallback(
     async (job: QueuedJob, generatedFile: AttachedFile): Promise<AttachedFile> => {
-      if (accountIsPro) {
+      if (accountIsBeta) {
         setKitSubmitJobId(null);
-        return generatedFile;
+        return {
+          ...generatedFile,
+          name: profileResumeFileName(generatedFile.name),
+        };
       }
       const kitFile = await loadSubmissionKitFile();
-      // Free tier uploads kit PDF bytes, but uses the same filename Pro would (generated resume name).
-      const submissionFile: AttachedFile = { ...kitFile, name: generatedFile.name };
+      // Non-Beta tiers upload kit PDF bytes, but use the same generated-resume filename Beta uses.
+      const submissionFile: AttachedFile = {
+        ...kitFile,
+        name: profileResumeFileName(generatedFile.name, kitFile.name),
+      };
       setKitSubmitJobId(job.id);
       pushLog(`Resume Generator Kit PDF selected for "${job.title}" (${submissionFile.name})`, true);
       return submissionFile;
     },
-    [accountIsPro, loadSubmissionKitFile, pushLog],
+    [accountIsBeta, loadSubmissionKitFile, pushLog],
   );
 
   const analyzeTree = useCallback(async () => {
@@ -2759,7 +2882,7 @@ export function useAvalonRelay(applicantContext: string, applierName = "", optio
           mimeType: submissionFile.mimeType,
           base64Bytes: submissionFile.base64?.length ?? 0,
           generatedFileName: resumeFile.name,
-          submissionKit: !accountIsPro,
+          submissionKit: !accountIsBeta,
         });
         const payload = buildApplyInjectionPlanPayload(built.plan, pageCtx, {
           autoSubmit: true,

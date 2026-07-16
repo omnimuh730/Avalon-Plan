@@ -21,7 +21,7 @@ export type NavItem = {
   label: string;
   icon: ElementType;
   comingSoon?: boolean;
-  pro?: boolean;
+  beta?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -34,7 +34,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "mail", label: "Mail", icon: Mail },
   { id: "calendar", label: "Calendar", icon: Calendar, comingSoon: true },
   { id: "interviews", label: "Interview Prep", icon: Video, comingSoon: true },
-  { id: "vendor-monitor", label: "Vendor Monitor", icon: Activity, pro: true },
+  { id: "vendor-monitor", label: "Vendor Monitor", icon: Activity, beta: true },
   { id: "reports", label: "Analytics", icon: BarChart2, comingSoon: true },
   { id: "ai-usage", label: "AI API Usage", icon: Cpu },
   { id: "settings", label: "Settings", icon: Settings },

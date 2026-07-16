@@ -8,6 +8,7 @@ import {
   Filter,
   MousePointerClick,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -30,17 +31,54 @@ import { detectJobSource } from "@/lib/job-source";
 import { API_BASE } from "@/lib/api-base";
 import { display } from "@/app/lib/utils";
 import { JobSourceChip } from "./components/JobSourceChip";
+import {
+  RequirementsMetBadge,
+  SessionScreeningLights,
+} from "./components/SessionScreeningLights";
 import { AnalysisPanel, ImageModal, Thumb } from "./components/VendorMonitorPanels";
-import type { AnalysisInfo, BidMonitorSource, BidSessionSummary, SessionDetail } from "./types";
-import { durationLabel, formatCost, formatTime, RECORD_META } from "./utils";
+import { sessionMeetsAllRequirements } from "./lib/sessionQuality";
+import type { AnalysisInfo, BidSessionSummary, SessionDetail } from "./types";
+import { durationLabel, formatCost, formatTime, matchUploadToRecommended, RECORD_META } from "./utils";
 import { formatVendorMonitorError } from "./api-errors";
 
+function sessionJdAnalyzed(session: BidSessionSummary): boolean {
+  return Boolean(session.jdAnalyzed) || session.analysisCount > 0;
+}
+
+function ResumeMatchBadge({
+  originalName,
+  recommendedName,
+}: {
+  originalName: string;
+  recommendedName: string | null | undefined;
+}) {
+  const match = matchUploadToRecommended(originalName, recommendedName);
+  if (match === "unknown") {
+    return (
+      <span className="text-[10px] text-muted-foreground">
+        {recommendedName ? `Recommended: ${recommendedName}` : "No recommended resume yet"}
+      </span>
+    );
+  }
+  if (match === "match") {
+    return (
+      <span className="inline-flex items-center rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+        Matches recommended · {recommendedName}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+      Differs from recommended · {recommendedName}
+    </span>
+  );
+}
+
 interface BidMonitorViewProps {
-  source?: BidMonitorSource;
   subtitle?: string;
 }
 
-export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewProps) {
+export function BidMonitorView({ subtitle }: BidMonitorViewProps) {
   const { get, del, request } = useApi(API_BASE);
   const { applier } = useApplier();
   const profileName = applier?.name ?? null;
@@ -58,13 +96,12 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
 
   const buildListQuery = useCallback(() => {
     const params = new URLSearchParams();
-    params.set("source", source);
     if (profileName) params.set("applierName", profileName);
     params.set("limit", "200");
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
     return params.toString();
-  }, [source, profileName, dateFrom, dateTo]);
+  }, [profileName, dateFrom, dateTo]);
 
   const loadSessions = useCallback(async () => {
     if (!profileName) {
@@ -80,17 +117,11 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
       };
       setSessions(data.sessions ?? []);
     } catch (err) {
-      setError(
-        formatVendorMonitorError(
-          err,
-          source,
-          `Failed to load ${source} bid sessions.`,
-        ),
-      );
+      setError(formatVendorMonitorError(err, "Failed to load bid sessions."));
     } finally {
       setLoadingList(false);
     }
-  }, [get, profileName, buildListQuery, source]);
+  }, [get, profileName, buildListQuery]);
 
   const loadDetail = useCallback(
     async (sessionId: string) => {
@@ -98,26 +129,24 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
       setLoadingDetail(true);
       setDetail(null);
       try {
-        const params = new URLSearchParams({ source });
-        const data = (await get(`/vendor/bid-sessions/${sessionId}?${params.toString()}`)) as {
+        const data = (await get(`/vendor/bid-sessions/${sessionId}`)) as {
           success: boolean;
         } & SessionDetail;
         setDetail({ session: data.session, records: data.records });
       } catch (err) {
-        setError(formatVendorMonitorError(err, source, `Failed to load ${source} session detail.`));
+        setError(formatVendorMonitorError(err, "Failed to load session detail."));
       } finally {
         setLoadingDetail(false);
       }
     },
-    [get, source],
+    [get],
   );
 
   const deleteSession = useCallback(
     async (sessionId: string) => {
       setError(null);
       try {
-        const params = new URLSearchParams({ source });
-        await del(`/vendor/bid-sessions/${sessionId}?${params.toString()}`);
+        await del(`/vendor/bid-sessions/${sessionId}`);
         if (selectedId === sessionId) {
           setSelectedId(null);
           setDetail(null);
@@ -127,14 +156,14 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
         setError("Failed to delete session.");
       }
     },
-    [del, source, selectedId, loadSessions],
+    [del, selectedId, loadSessions],
   );
 
   const deleteFilteredHistory = useCallback(async () => {
     if (!profileName) return;
     setError(null);
     try {
-      const params = new URLSearchParams({ applierName: profileName, source });
+      const params = new URLSearchParams({ applierName: profileName });
       if (dateFrom) params.set("from", dateFrom);
       if (dateTo) params.set("to", dateTo);
       await request(`/vendor/bid-sessions?${params.toString()}`, { method: "DELETE" });
@@ -144,7 +173,7 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
     } catch {
       setError("Failed to delete history.");
     }
-  }, [profileName, source, dateFrom, dateTo, request, loadSessions]);
+  }, [profileName, dateFrom, dateTo, request, loadSessions]);
 
   useEffect(() => {
     setSelectedId(null);
@@ -156,6 +185,10 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
   const totalBids = sessions.length;
   const completed = sessions.filter((s) => s.status === "completed").length;
   const liveCount = totalBids - completed;
+  const requirementsMetCount = useMemo(
+    () => sessions.filter((s) => sessionMeetsAllRequirements(s)).length,
+    [sessions],
+  );
 
   const visibleSessions = useMemo(
     () => (statusFilter === "all" ? sessions : sessions.filter((s) => s.status === statusFilter)),
@@ -182,20 +215,34 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-2 mb-4 min-w-0">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4 min-w-0">
         {[
-          { label: "Sessions", value: String(totalBids) },
-          { label: "Completed", value: String(completed) },
-          { label: "Total cost", value: formatCost(totalCost) },
+          { label: "Sessions", value: String(totalBids), hint: `${liveCount} live` },
+          { label: "Completed", value: String(completed), hint: "marked done" },
+          {
+            label: "Requirements met",
+            value: String(requirementsMetCount),
+            hint: "screening + resume",
+            accent: true,
+          },
+          { label: "Total cost", value: formatCost(totalCost), hint: "analysis spend" },
         ].map((s) => (
           <div
             key={s.label}
-            className="rounded-xl bg-card border border-border px-3 py-2 flex items-center justify-between min-w-0"
+            className={`relative overflow-hidden rounded-2xl border px-3.5 py-3 min-w-0 ${
+              s.accent
+                ? "border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 via-card to-card"
+                : "border-border bg-card"
+            }`}
           >
-            <span className="text-xs text-muted-foreground truncate">{s.label}</span>
-            <span className="text-base font-bold tracking-tight shrink-0" style={display}>
-              {s.value}
-            </span>
+            <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{s.label}</div>
+            <div className="mt-1 flex items-baseline justify-between gap-2">
+              <span className="text-xl font-bold tracking-tight" style={display}>
+                {s.value}
+              </span>
+              {s.accent ? <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" /> : null}
+            </div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground">{s.hint}</div>
           </div>
         ))}
       </div>
@@ -301,19 +348,21 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,280px)_minmax(0,1fr)] gap-3 min-w-0">
-        <div className="rounded-xl bg-card border border-border overflow-hidden min-w-0">
-          <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground px-3 py-2 border-b border-border">
-            Sessions
-            {statusFilter !== "all" && (
-              <span className="ml-1 normal-case tracking-normal">
-                · {statusFilter === "active" ? "live" : "completed"}
-              </span>
-            )}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] gap-4 min-w-0">
+        <div className="rounded-2xl bg-card border border-border overflow-hidden min-w-0 shadow-sm">
+          <div className="px-3.5 py-2.5 border-b border-border bg-gradient-to-r from-primary/5 via-transparent to-transparent">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              Sessions
+              {statusFilter !== "all" && (
+                <span className="ml-1 normal-case tracking-normal">
+                  · {statusFilter === "active" ? "live" : "completed"}
+                </span>
+              )}
+            </div>
           </div>
-          <div className="max-h-[calc(100vh-340px)] overflow-y-auto subtle-scroll divide-y divide-border">
+          <div className="max-h-[calc(100vh-340px)] overflow-y-auto subtle-scroll p-2 space-y-2">
             {!loadingList && visibleSessions.length === 0 && profileName && (
-              <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+              <div className="px-3 py-8 text-center text-xs text-muted-foreground">
                 {sessions.length === 0
                   ? `No bid sessions for ${profileName} in this range.`
                   : `No ${statusFilter === "active" ? "live" : "completed"} bid sessions in this range.`}
@@ -322,28 +371,58 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
             {visibleSessions.map((s) => {
               const active = s.sessionId === selectedId;
               const jobSource = s.jobSource ?? detectJobSource(s.firstUrl);
+              const requirementsMet = sessionMeetsAllRequirements(s);
               return (
                 <button
                   key={s.sessionId}
                   type="button"
                   onClick={() => void loadDetail(s.sessionId)}
-                  className={`w-full text-left px-3 py-2.5 transition min-w-0 ${
-                    active ? "bg-primary/5" : "hover:bg-secondary/50"
+                  className={`w-full text-left rounded-xl border px-3 py-2.5 transition min-w-0 ${
+                    active
+                      ? "border-primary/40 bg-primary/5 shadow-sm"
+                      : "border-border/70 bg-background/60 hover:border-border hover:bg-secondary/40"
                   }`}
                 >
                   <div className="flex items-start gap-2 min-w-0">
-                    <ChevronRight
-                      className={`w-3.5 h-3.5 mt-0.5 shrink-0 transition ${active ? "text-primary rotate-90" : "text-muted-foreground"}`}
+                    <span
+                      className={`mt-1.5 h-8 w-1 rounded-full shrink-0 ${
+                        requirementsMet
+                          ? "bg-emerald-500"
+                          : s.status === "active"
+                            ? "bg-sky-400"
+                            : "bg-border"
+                      }`}
                     />
                     <div className="min-w-0 flex-1">
-                      <span className="text-xs font-medium truncate block">{s.firstTitle || "Untitled bid"}</span>
-                      <div className="flex flex-wrap items-center gap-1 mt-1">
+                      <div className="flex items-start gap-1.5">
+                        <span className="text-xs font-semibold truncate flex-1 leading-snug">
+                          {s.firstTitle || "Untitled bid"}
+                        </span>
+                        <ChevronRight
+                          className={`w-3.5 h-3.5 mt-0.5 shrink-0 transition ${
+                            active ? "text-primary rotate-90" : "text-muted-foreground"
+                          }`}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                         <JobSourceChip source={jobSource} />
-                        <span className="text-[10px] text-muted-foreground">
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded-md ${
+                            s.status === "active"
+                              ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
                           {durationLabel(s.startedAt, s.completedAt)}
                         </span>
+                        {requirementsMet && <RequirementsMetBadge compact />}
                       </div>
-                      <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+                      <SessionScreeningLights
+                        jdAnalyzed={sessionJdAnalyzed(s)}
+                        flags={s.flags}
+                        className="mt-2"
+                      />
+                      <div className="flex items-center gap-2 mt-2 text-[10px] text-muted-foreground">
                         <span className="flex items-center gap-0.5">
                           <MousePointerClick className="w-2.5 h-2.5" />
                           {s.processCount}
@@ -387,75 +466,94 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
 
           {detail && !loadingDetail && (
             <div className="space-y-3 min-w-0">
-              <div className="rounded-xl bg-card border border-border px-4 py-3 min-w-0">
-                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                  <span className="font-medium text-sm truncate max-w-full">
-                    {detail.session.firstTitle || "Untitled bid"}
-                  </span>
-                  <JobSourceChip
-                    source={detail.session.jobSource ?? detectJobSource(detail.session.firstUrl)}
-                  />
-                  <span className="text-xs text-muted-foreground">{detail.session.applierName}</span>
-                  <span className="text-xs text-muted-foreground">{detail.session.processCount} steps</span>
-                  <span className="text-xs text-muted-foreground">{detail.session.analysisCount} analyses</span>
-                  {(detail.session.resumeUploadCount ?? 0) > 0 && (
-                    <span className="text-xs text-muted-foreground">
-                      {detail.session.resumeUploadCount} resume uploads
+              <div className="rounded-2xl bg-card border border-border overflow-hidden min-w-0 shadow-sm">
+                <div className="bg-gradient-to-r from-primary/8 via-transparent to-emerald-500/5 px-4 py-3.5 border-b border-border/70">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="font-semibold text-sm truncate max-w-full" style={display}>
+                      {detail.session.firstTitle || "Untitled bid"}
                     </span>
-                  )}
-                  {detail.session.modelVersion && (
-                    <span className="text-[10px] text-muted-foreground/80 font-mono">
-                      v{detail.session.modelVersion}
-                    </span>
-                  )}
-                  <span className="text-xs text-muted-foreground">{formatCost(detail.session.totalCost)}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {durationLabel(detail.session.startedAt, detail.session.completedAt)}
-                  </span>
-                  <div className="ml-auto flex items-center gap-2 shrink-0">
-                    {detail.session.firstUrl && (
-                      <a
-                        href={detail.session.firstUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        Open job
-                      </a>
-                    )}
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button size="sm" variant="outline" className="h-7 text-xs">
-                          <Trash2 className="w-3 h-3" />
-                          Delete
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete this session?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            All screenshots and analysis records for this bid will be permanently removed.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => void deleteSession(detail.session.sessionId)}>
+                    <JobSourceChip
+                      source={detail.session.jobSource ?? detectJobSource(detail.session.firstUrl)}
+                    />
+                    {sessionMeetsAllRequirements(detail.session) && <RequirementsMetBadge compact />}
+                    <div className="ml-auto flex items-center gap-2 shrink-0">
+                      {detail.session.firstUrl && (
+                        <a
+                          href={detail.session.firstUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          Open job
+                        </a>
+                      )}
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" variant="outline" className="h-7 text-xs">
+                            <Trash2 className="w-3 h-3" />
                             Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete this session?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              All screenshots and analysis records for this bid will be permanently removed.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => void deleteSession(detail.session.sessionId)}>
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
                   </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <span>{detail.session.applierName}</span>
+                    <span>{detail.session.processCount} steps</span>
+                    <span>{detail.session.analysisCount} analyses</span>
+                    {(detail.session.resumeUploadCount ?? 0) > 0 && (
+                      <span>{detail.session.resumeUploadCount} resume uploads</span>
+                    )}
+                    {detail.session.modelVersion && (
+                      <span className="text-[10px] font-mono opacity-80">v{detail.session.modelVersion}</span>
+                    )}
+                    <span>{formatCost(detail.session.totalCost)}</span>
+                    <span>{durationLabel(detail.session.startedAt, detail.session.completedAt)}</span>
+                  </div>
+                </div>
+                <div className="px-4 py-3 grid grid-cols-1 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)] gap-3 items-start">
+                  <SessionScreeningLights
+                    jdAnalyzed={sessionJdAnalyzed(detail.session)}
+                    flags={detail.session.flags}
+                    showReasons
+                  />
+                  {sessionMeetsAllRequirements(detail.session) ? (
+                    <RequirementsMetBadge />
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border bg-muted/20 px-3 py-2.5 text-[11px] text-muted-foreground leading-snug">
+                      Requirements badge appears when the session is completed, JD is analyzed, Remote & No
+                      clearance are not red, and the uploaded resume matches the recommendation.
+                    </div>
+                  )}
                 </div>
               </div>
 
               {((detail.session.resumeUploads?.length ?? 0) > 0 ||
                 detail.records.some((r) => r.type === "resume-upload")) && (
                 <div className="rounded-xl bg-card border border-border px-3 py-2.5 min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-medium mb-2">
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium mb-2">
                     <FileUp className="w-3.5 h-3.5 text-violet-500" />
                     Resume uploads
+                    {detail.session.recommendedResumeName && (
+                      <span className="text-[10px] font-normal text-muted-foreground">
+                        · Recommended: {detail.session.recommendedResumeName}
+                      </span>
+                    )}
                   </div>
                   <ul className="space-y-1.5">
                     {(detail.session.resumeUploads && detail.session.resumeUploads.length > 0
@@ -469,37 +567,49 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
                             source: r.uploadSource,
                             pageUrl: r.url,
                             ts: undefined as number | undefined,
+                            recommendedResumeName: r.recommendedResumeName,
                           }))
-                    ).map((upload, index) => (
-                      <li
-                        key={`${upload.originalName}-${upload.cleanedName ?? ""}-${index}`}
-                        className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-1.5 text-[11px]"
-                      >
-                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                          Original
-                        </div>
-                        <div className="font-medium text-foreground truncate" title={upload.originalName}>
-                          {upload.originalName}
-                        </div>
-                        {upload.renamed && upload.cleanedName ? (
-                          <>
-                            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">
-                              Uploaded as
-                            </div>
-                            <div
-                              className="font-medium text-emerald-600 dark:text-emerald-400 truncate"
-                              title={upload.cleanedName}
-                            >
-                              {upload.cleanedName}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
-                            Not renamed
+                    ).map((upload, index) => {
+                      const recommended =
+                        upload.recommendedResumeName || detail.session.recommendedResumeName;
+                      return (
+                        <li
+                          key={`${upload.originalName}-${upload.cleanedName ?? ""}-${upload.ts ?? index}-${index}`}
+                          className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-1.5 text-[11px] space-y-1"
+                        >
+                          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            Original
                           </div>
-                        )}
-                      </li>
-                    ))}
+                          <div
+                            className="font-medium text-foreground truncate"
+                            title={upload.originalName}
+                          >
+                            {upload.originalName}
+                          </div>
+                          {upload.renamed && upload.cleanedName ? (
+                            <>
+                              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">
+                                Uploaded as
+                              </div>
+                              <div
+                                className="font-medium text-emerald-600 dark:text-emerald-400 truncate"
+                                title={upload.cleanedName}
+                              >
+                                {upload.cleanedName}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
+                              Not renamed
+                            </div>
+                          )}
+                          <ResumeMatchBadge
+                            originalName={upload.originalName}
+                            recommendedName={recommended}
+                          />
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}
@@ -587,6 +697,12 @@ export function BidMonitorView({ source = "local", subtitle }: BidMonitorViewPro
                                     </span>
                                   </div>
                                 ) : null}
+                                <ResumeMatchBadge
+                                  originalName={r.originalName}
+                                  recommendedName={
+                                    r.recommendedResumeName || detail.session.recommendedResumeName
+                                  }
+                                />
                                 {r.uploadSource && (
                                   <div className="text-[10px] text-muted-foreground uppercase">
                                     via {r.uploadSource}

@@ -35,6 +35,8 @@ import {
   getGeneration,
   renderGenerationPdf,
   deleteGeneration,
+  refreshGeneratedResumesIdentityHandler,
+  refreshGeneratedResumesIdentityStreamHandler,
   checkLlmKey,
 } from "../controllers/resumeGenController.js";
 import { renderResumePdf } from "../controllers/resumePdfController.js";
@@ -95,6 +97,8 @@ router.post('/personal/agent-job-resumes/status', getAgentJobResumesStatus);
 router.get('/personal/resume-generator/config', getGeneratorConfig);
 router.put('/personal/resume-generator/config', saveGeneratorConfig);
 router.get('/personal/resume-generations', listGenerations);
+router.post('/personal/resume-generations/refresh-identity', refreshGeneratedResumesIdentityHandler);
+router.post('/personal/resume-generations/refresh-identity/stream', refreshGeneratedResumesIdentityStreamHandler);
 router.get('/personal/resume-generations/:id', getGeneration);
 router.get('/personal/resume-generations/:id/pdf', renderGenerationPdf);
 router.delete('/personal/resume-generations/:id', deleteGeneration);

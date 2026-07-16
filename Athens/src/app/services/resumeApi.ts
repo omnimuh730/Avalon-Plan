@@ -295,6 +295,30 @@ export async function deleteGenerationRun(id: string, applierName: string): Prom
   return { deleted: true, generationId: id };
 }
 
+/** Render a stored generation to PDF and trigger a browser download. */
+export async function downloadGenerationPdf(id: string, fallbackName = "Resume.pdf"): Promise<void> {
+  const res = await fetch(
+    `${base()}/personal/resume-generations/${encodeURIComponent(id)}/pdf?download=1`,
+  );
+  if (!res.ok) {
+    const data = (await parseJson(res)) as { error?: string } | null;
+    throw new Error(data?.error || `PDF download failed (${res.status})`);
+  }
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const matched = /filename="([^"]+)"/i.exec(disposition);
+  let fileName = matched?.[1] || fallbackName;
+  if (!fileName.toLowerCase().endsWith(".pdf")) fileName = `${fileName}.pdf`;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function fetchGenerationDetail(id: string, applierName: string): Promise<HistoryRunDetail> {
   const data = await apiFetch<{ run: Record<string, unknown> }>(
     `/personal/resume-generations/${encodeURIComponent(id)}?applierName=${encodeURIComponent(applierName)}`,

@@ -4,6 +4,7 @@ let mongoClient;
 let accountInfoCollection;
 let personalInfoCollection;
 let bidRecordsCollection;
+let jobsCollection;
 let mongoReady = false;
 let mongoConnectError = null;
 
@@ -21,6 +22,7 @@ async function initMongo() {
   accountInfoCollection = null;
   personalInfoCollection = null;
   bidRecordsCollection = null;
+  jobsCollection = null;
 
   const mongoUrl = getMongoUrl();
   const mongoDbName = getMongoDbName();
@@ -31,6 +33,7 @@ async function initMongo() {
     accountInfoCollection = db.collection('account_info');
     personalInfoCollection = db.collection('personal_info');
     bidRecordsCollection = db.collection('bid_records');
+    jobsCollection = db.collection('job_market');
     await bidRecordsCollection.createIndex({ sessionId: 1, createdAt: 1 });
     mongoReady = true;
     console.log('[vender-server] Connected to MongoDB', mongoDbName);
@@ -40,6 +43,7 @@ async function initMongo() {
     accountInfoCollection = null;
     personalInfoCollection = null;
     bidRecordsCollection = null;
+    jobsCollection = null;
     if (mongoClient) {
       try {
         await mongoClient.close();
@@ -81,6 +85,7 @@ async function closeMongo() {
   accountInfoCollection = null;
   personalInfoCollection = null;
   bidRecordsCollection = null;
+  jobsCollection = null;
   mongoReady = false;
   mongoConnectError = null;
 }
@@ -93,4 +98,5 @@ export {
   accountInfoCollection,
   personalInfoCollection,
   bidRecordsCollection,
+  jobsCollection,
 };

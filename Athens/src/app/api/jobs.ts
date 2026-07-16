@@ -1,10 +1,9 @@
 import { API_BASE } from "@/lib/api-base";
 import { streamSSE } from "../features/resumes/lib/sse";
-import type { JobStatus } from "../types/job";
 
 export type JobApiStatus = "Applied" | "Scheduled" | "Declined";
 
-export const JOB_STATUS_TO_API: Record<Exclude<JobStatus, "posted">, JobApiStatus> = {
+export const JOB_STATUS_TO_API: Record<"applied" | "scheduled" | "declined", JobApiStatus> = {
   applied: "Applied",
   scheduled: "Scheduled",
   declined: "Declined",
@@ -145,6 +144,41 @@ export async function fetchSubmissionKitResume(
     throw new Error(data.error || "Resume Generator Kit PDF is not available");
   }
   return data.resume;
+}
+
+/**
+ * Load an already-generated agent draft PDF for a job (no LLM).
+ * Used to hydrate Agent mode from Job Search pre-generated résumés.
+ * Filename is always `{profile}.pdf` — never a job-id suffix (those used to
+ * leak into Greenhouse uploads as e.g. "David Moll-6a5656e3.pdf").
+ */
+export async function fetchAgentJobResumePdf(
+  applierName: string,
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<{ fileName: string; mimeType: "application/pdf"; pdfBase64: string }> {
+  const res = await fetch(
+    `${API_BASE}/personal/agent-job-resume/${encodeURIComponent(jobId)}/pdf?applierName=${encodeURIComponent(applierName)}`,
+    { signal },
+  );
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `Draft PDF unavailable (${res.status})`);
+  }
+  const buf = await res.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const matched = /filename="([^"]+)"/i.exec(disposition);
+  let fileName = matched?.[1] || `${applierName.replace(/[^\w.\-()+ ]+/g, "_")}.pdf`;
+  // Strip legacy `-{8 hex job id}` suffix if an older server still sends it.
+  fileName = fileName.replace(/-[a-f0-9]{8}(?=\.pdf$)/i, "");
+  if (!fileName.toLowerCase().endsWith(".pdf")) fileName = `${fileName}.pdf`;
+  return { fileName, mimeType: "application/pdf", pdfBase64: btoa(binary) };
 }
 
 export type ResumeSectionPurpose = "summary" | "skills" | "experience";

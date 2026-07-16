@@ -23,7 +23,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avat
 import { Separator } from "../../../components/ui/separator";
 import { Skeleton } from "../../../components/ui/skeleton";
 import { cn } from "../../../lib/utils";
-import { computeSkillHighlights } from "../../../lib/skill-match";
+import { alignJobScoreForDisplay } from "../../../lib/skill-match";
 import type { Job, WorkMode } from "../../../types";
 import { useJobDetail } from "../hooks/useJobDetail";
 import { useJobResumeRank, useJobSkillRadar } from "../hooks/useJobSkillRadar";
@@ -45,6 +45,7 @@ type JobDescriptionDialogProps = {
   onOpenChange: (open: boolean) => void;
   statusPending?: boolean;
   onApply?: () => void;
+  onMarkBidReady?: () => void;
   onMarkScheduled?: () => void;
   onMarkDeclined?: () => void;
   onCancel?: () => void;
@@ -109,6 +110,7 @@ export function JobDescriptionDialog({
   onOpenChange,
   statusPending = false,
   onApply,
+  onMarkBidReady,
   onMarkScheduled,
   onMarkDeclined,
   onCancel,
@@ -169,29 +171,7 @@ export function JobDescriptionDialog({
 
   const displayJob = useMemo(() => {
     if (localJob) return localJob;
-    if (!matchContext?.profileTokens.length && !matchContext?.profileCompacts.length) return j;
-    if (j.skillHighlights?.length) return j;
-    const highlights = computeSkillHighlights(j.skills, matchContext);
-    const covered = highlights.filter((h) => h.matched).length;
-    const required = highlights.length;
-    const skill = required ? Math.round((covered / required) * 100) : j.scores.skill;
-    const vector = j.scores.vector;
-    const overall =
-      vector != null && vector > 0
-        ? Math.round(0.55 * skill + 0.45 * vector)
-        : skill;
-    return {
-      ...j,
-      skillHighlights: highlights,
-      scores: {
-        ...j.scores,
-        skill,
-        overall,
-        skillsCovered: covered,
-        skillsRequired: required,
-      },
-      matchScore: overall,
-    };
+    return alignJobScoreForDisplay(j, matchContext);
   }, [j, localJob, matchContext]);
 
   return (
@@ -222,7 +202,7 @@ export function JobDescriptionDialog({
                   </a>
                 </div>
                 <div className="shrink-0 mr-2">
-                  <Score score={displayJob.scores.overall} />
+                  <Score score={displayJob.scores.skill} />
                 </div>
               </div>
               <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -354,6 +334,7 @@ export function JobDescriptionDialog({
                 job={displayJob}
                 pending={statusPending}
                 onApply={onApply}
+                onMarkBidReady={onMarkBidReady}
                 onMarkScheduled={() => onMarkScheduled?.()}
                 onMarkDeclined={() => onMarkDeclined?.()}
                 onCancel={() => onCancel?.()}

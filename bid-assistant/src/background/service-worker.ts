@@ -1,5 +1,5 @@
 import { GMAIL_LABEL, INBOX_BATCH_SIZE } from '@/lib/constants';
-import { extractPageContext } from '@/lib/page-context';
+import { extractPageContext, mergePageContexts } from '@/lib/page-context';
 import {
   JOB_ANALYSIS_PORT,
   type AnalysisEvent,
@@ -26,6 +26,11 @@ import {
 } from '@/lib/resume-uploads';
 
 const BRIDGE_URL = (import.meta.env.VITE_BRIDGE_URL ?? 'http://127.0.0.1:3848').replace(/\/$/, '');
+/** Same Athens API the Vendor Monitor Tasks tab uses — source of truth for Bid ready jobs. */
+const ATHENS_API_URL = (import.meta.env.VITE_ATHENS_API_URL ?? 'http://127.0.0.1:8979/api').replace(
+  /\/$/,
+  '',
+);
 /** Remote bridges often need more than 2s; keep status checks honest. */
 const BRIDGE_HEALTH_TIMEOUT_MS = 8_000;
 
@@ -76,6 +81,7 @@ type Message =
   | { type: 'GET_BID_SESSION'; tabId: number }
   | { type: 'START_BID_SESSION'; tabId: number }
   | { type: 'COMPLETE_BID_SESSION'; tabId: number }
+  | { type: 'FETCH_BID_QUEUE'; limit?: number; preview?: number }
   | { type: 'GET_BID_SHOTS'; tabId: number }
   | { type: 'BID_PROCESS_CLICK'; triggerText: string }
   | LogUploadMessage
@@ -92,6 +98,18 @@ type Response =
   | { ok: true; verification: ProfileVerification }
   | { ok: true; session: BidSessionState }
   | { ok: true; shots: BidShot[] }
+  | {
+      ok: true;
+      total: number;
+      preview: {
+        jobId: string;
+        title: string;
+        company: string;
+        applyUrl: string;
+        source: string;
+        bidReadyDate: string | null;
+      }[];
+    }
   | { ok: true }
   | { ok: false; error: string };
 
@@ -153,10 +171,27 @@ function uploadDedupeKey(event: Pick<ResumeUploadEvent, 'originalName' | 'cleane
   ].join('|');
 }
 
+async function getSessionBestResumeName(tabId: number): Promise<string | null> {
+  const key = tabKey('bidSessionBestResume', tabId);
+  const result = await chrome.storage.local.get(key);
+  const value = result[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+async function saveSessionBestResumeName(tabId: number, name: string | null): Promise<void> {
+  await chrome.storage.local.set({
+    [tabKey('bidSessionBestResume', tabId)]: name?.trim() || null,
+  });
+}
+
 async function recordResumeUpload(
   message: LogUploadMessage,
   sender?: chrome.runtime.MessageSender,
 ): Promise<ResumeUploadEvent> {
+  const tabId = sender?.tab?.id;
+  const recommendedFromSession =
+    tabId != null ? await getSessionBestResumeName(tabId) : null;
+
   const event: ResumeUploadEvent = {
     id: `${message.ts}-${Math.random().toString(36).slice(2, 9)}`,
     originalName: message.originalName,
@@ -166,6 +201,8 @@ async function recordResumeUpload(
     pageUrl: message.pageUrl,
     ts: message.ts,
     profileFileBase: message.profileFileBase,
+    recommendedResumeName:
+      message.recommendedResumeName?.trim() || recommendedFromSession || null,
     fileSize: message.fileSize,
     lastModified: message.lastModified,
   };
@@ -192,6 +229,7 @@ async function recordResumeUpload(
     renamed: event.renamed,
     source: event.source,
     profileFileBase: event.profileFileBase,
+    recommendedResumeName: event.recommendedResumeName,
     pageUrl: event.pageUrl,
   });
 
@@ -211,6 +249,7 @@ async function getSessionResumeUploads(tabId: number): Promise<
     source: string;
     pageUrl: string;
     ts: number;
+    recommendedResumeName?: string | null;
   }>
 > {
   const key = tabKey('bidSessionResumeUploads', tabId);
@@ -232,6 +271,7 @@ async function appendSessionResumeUpload(
     source: event.source,
     pageUrl: event.pageUrl,
     ts: event.ts,
+    recommendedResumeName: event.recommendedResumeName ?? null,
   };
   await chrome.storage.local.set({ [key]: [...existing, entry].slice(-50) });
 }
@@ -260,6 +300,7 @@ async function persistResumeUploadToBidSession(
     source: event.source,
     pageUrl: event.pageUrl,
     ts: event.ts,
+    recommendedResumeName: event.recommendedResumeName ?? null,
   });
 }
 
@@ -284,6 +325,7 @@ const TAB_SESSION_KEY_PREFIXES = [
   'bidAnalysisTurns',
   'bidAnalysisUsage',
   'bidSessionResumeUploads',
+  'bidSessionBestResume',
 ] as const;
 
 function tabKey(prefix: string, tabId: number): string {
@@ -389,13 +431,14 @@ async function captureFullPageViaDebugger(tabId: number): Promise<string | null>
   }
 }
 
-async function captureVisibleViewport(windowId?: number): Promise<string | null> {
-  // Process clicks (Apply/Submit/Next) navigate within milliseconds. The tab is
-  // often mid-navigation when capture runs, which makes captureVisibleTab throw
-  // ("Cannot capture, tab is navigating"). Retry a couple of times so we still
-  // grab the page as it was at click time.
+async function captureVisibleViewport(
+  windowId?: number,
+  { attempts = 3, delayMs = 120 }: { attempts?: number; delayMs?: number } = {},
+): Promise<string | null> {
+  // Process clicks (Apply/Submit/Next) often navigate within milliseconds.
+  // captureVisibleTab throws while the tab is navigating — retry briefly.
   const targetWindow = windowId ?? chrome.windows.WINDOW_ID_CURRENT;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const shot = await chrome.tabs.captureVisibleTab(targetWindow, {
         format: 'jpeg',
@@ -405,11 +448,52 @@ async function captureVisibleViewport(windowId?: number): Promise<string | null>
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[vender-sw] captureVisibleTab attempt ${attempt + 1} failed: ${message}`);
-      // The "navigating" / rate-limit errors clear quickly; wait and retry.
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
   return null;
+}
+
+async function waitForTabComplete(tabId: number, timeoutMs = 4000): Promise<void> {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === 'complete') return;
+  } catch {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, timeoutMs);
+
+    function finish() {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      resolve();
+    }
+
+    function onUpdated(updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+    }
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+/**
+ * Viewport capture tuned for process clicks that may navigate away immediately.
+ * Tries immediately, then again after the tab settles.
+ */
+async function captureProcessClickViewport(
+  tabId: number,
+  windowId?: number,
+): Promise<string | null> {
+  const immediate = await captureVisibleViewport(windowId, { attempts: 4, delayMs: 80 });
+  if (immediate) return immediate;
+
+  await waitForTabComplete(tabId, 4000);
+  // Small settle delay so layout paints before capture.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  return captureVisibleViewport(windowId, { attempts: 5, delayMs: 150 });
 }
 
 async function captureTabScreenshot(
@@ -417,8 +501,8 @@ async function captureTabScreenshot(
   windowId?: number,
   { fullPage = true }: { fullPage?: boolean } = {},
 ): Promise<string | null> {
-  // Process-click captures must be instant — full-page CDP stitching takes
-  // seconds and the tab navigates away before it finishes.
+  // Prefer CDP full-page stitching for session start / analyze. Process clicks
+  // pass fullPage:false and use a dedicated viewport helper instead.
   if (fullPage && typeof tabId === 'number') {
     const stitched = await captureFullPageViaDebugger(tabId);
     if (stitched) return stitched;
@@ -552,6 +636,7 @@ async function persistAnalysisRecord(
   page: PageAnalysisResult,
   skills: SkillAnalysisResult | null,
   usage: UsageSummary,
+  flags: BidFlagVerdicts,
 ): Promise<void> {
   if (!sessionId) return;
   try {
@@ -570,6 +655,7 @@ async function persistAnalysisRecord(
         bestResume: skills?.bestResume ?? null,
         topResumes: skills?.topResumes ?? [],
       },
+      flags,
       usage,
       trace: {
         request: {
@@ -591,6 +677,7 @@ async function persistAnalysisRecord(
                 topResumes: skills.topResumes,
               }
             : null,
+          flags,
           usage,
         },
       },
@@ -643,6 +730,7 @@ async function startBidSession(tabId: number): Promise<BidSessionState> {
     [tabKey('bidAnalysisTurns', tabId)]: [],
     [tabKey('bidAnalysisUsage', tabId)]: null,
     [tabKey('bidSessionFlags', tabId)]: EMPTY_FLAGS,
+    [tabKey('bidSessionBestResume', tabId)]: null,
   });
   await saveSessionContext(tabId, IDLE_SESSION_CONTEXT);
 
@@ -664,6 +752,117 @@ async function startBidSession(tabId: number): Promise<BidSessionState> {
   return { sessionId, status: 'active', startedAt, completedAt: null };
 }
 
+type BidQueueJobRow = {
+  jobId: string;
+  title: string;
+  company: string;
+  applyUrl: string;
+  source: string;
+  bidReadyDate: string | null;
+};
+
+async function fetchBidQueueFromAthens(
+  applierName: string,
+  limit: number,
+  previewCount: number,
+): Promise<{ total: number; preview: BidQueueJobRow[] }> {
+  const params = new URLSearchParams({ applierName });
+  const response = await fetch(`${ATHENS_API_URL}/vendor/tasks?${params}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await response.json()) as {
+    success?: boolean;
+    error?: string;
+    tasks?: Array<{
+      jobId?: string | null;
+      title?: string;
+      company?: string;
+      applyUrl?: string | null;
+      source?: string;
+      addedAt?: string | null;
+      progress?: string;
+      status?: string;
+    }>;
+  };
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || `Athens bid queue failed (${response.status})`);
+  }
+  const pending = (Array.isArray(data.tasks) ? data.tasks : []).filter(
+    (t) => t.progress !== 'completed' && t.status !== 'done' && t.status !== 'skipped',
+  );
+  const jobs: BidQueueJobRow[] = pending.map((t) => ({
+    jobId: String(t.jobId || ''),
+    title: String(t.title || 'Untitled role'),
+    company: String(t.company || ''),
+    applyUrl: String(t.applyUrl || ''),
+    source: String(t.source || ''),
+    bidReadyDate: t.addedAt ?? null,
+  }));
+  const take = Math.max(1, Math.min(50, limit));
+  const sliced = jobs.slice(0, take);
+  const show = Math.max(0, Math.min(previewCount, sliced.length));
+  return { total: jobs.length, preview: sliced.slice(0, show) };
+}
+
+async function fetchBidQueueFromBridge(
+  applierName: string,
+  limit: number,
+  previewCount: number,
+): Promise<{ total: number; preview: BidQueueJobRow[] }> {
+  const params = new URLSearchParams({
+    applierName,
+    limit: String(limit),
+    preview: String(previewCount),
+  });
+  const response = await fetch(`${BRIDGE_URL}/bid-queue?${params}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await response.json()) as {
+    ok?: boolean;
+    error?: string;
+    total?: number;
+    preview?: BidQueueJobRow[];
+  };
+  if (response.status === 404) {
+    throw new Error(
+      'Bridge is missing /bid-queue — restart vender-server (`npm run bridge`) or use Athens API.',
+    );
+  }
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || `Bid queue failed (${response.status})`);
+  }
+  return {
+    total: data.total ?? 0,
+    preview: Array.isArray(data.preview) ? data.preview : [],
+  };
+}
+
+async function fetchBidQueue(limit = 8, preview = 3): Promise<{
+  total: number;
+  preview: BidQueueJobRow[];
+}> {
+  const applierState = await getStoredApplierState();
+  if (!applierState.ready || !applierState.applierName) {
+    throw new Error('Load a profile at the top before viewing the bid queue.');
+  }
+  const name = applierState.applierName;
+
+  // Prefer Athens (same source as Vendor Monitor Tasks). Fall back to bridge.
+  try {
+    return await fetchBidQueueFromAthens(name, limit, preview);
+  } catch (athensErr) {
+    try {
+      return await fetchBidQueueFromBridge(name, limit, preview);
+    } catch (bridgeErr) {
+      const athensMsg = athensErr instanceof Error ? athensErr.message : String(athensErr);
+      const bridgeMsg = bridgeErr instanceof Error ? bridgeErr.message : String(bridgeErr);
+      throw new Error(
+        `Could not load bid queue. Athens: ${athensMsg}. Bridge: ${bridgeMsg}. Is Athens-server on ${ATHENS_API_URL}?`,
+      );
+    }
+  }
+}
+
 async function completeBidSession(tabId: number): Promise<BidSessionState> {
   const session = await getStoredBidSession(tabId);
   if (session.status !== 'active' || !session.sessionId) {
@@ -676,6 +875,7 @@ async function completeBidSession(tabId: number): Promise<BidSessionState> {
   const usageKey = tabKey('bidAnalysisUsage', tabId);
   const stored = await chrome.storage.local.get(usageKey);
   const resumeUploads = await getSessionResumeUploads(tabId);
+  const flags = await getSessionFlags(tabId);
 
   await postBidSessionEvent('/bid-session/complete', {
     sessionId: session.sessionId,
@@ -686,6 +886,7 @@ async function completeBidSession(tabId: number): Promise<BidSessionState> {
     screenshot,
     usage: stored[usageKey] ?? null,
     resumeUploads,
+    flags,
   });
 
   const completedAt = new Date().toISOString();
@@ -730,59 +931,202 @@ async function resolveSenderTab(sender: chrome.runtime.MessageSender): Promise<{
 
 async function injectBidRecorder(tabId: number): Promise<void> {
   try {
+    // Hold-until-screenshot protocol (same as bid-recorder-main.ts hold-v1).
     await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
       func: () => {
-        if ((window as unknown as { __bidRecorderMainHook?: boolean }).__bidRecorderMainHook) return;
-        (window as unknown as { __bidRecorderMainHook?: boolean }).__bidRecorderMainHook = true;
-        const P = /(apply|submit|next|continue|proceed|save)/i;
-        const txt = (el: Element | null | undefined) => {
-          if (!el?.getAttribute) return '';
-          return (el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g, ' ').trim();
+        const HOOK_VERSION = 'hold-v1';
+        const w = window as unknown as {
+          __bidRecorderMainHook?: string;
+          __bidReplayAction?: boolean;
         };
-        const findTarget = (start: EventTarget | null) => {
-          let t = start as Element | null;
-          for (let i = 0; i < 16 && t; i += 1) {
-            if (t.nodeType !== 1) {
-              t = t.parentElement;
-              continue;
+        if (w.__bidRecorderMainHook === HOOK_VERSION) return;
+        w.__bidRecorderMainHook = HOOK_VERSION;
+
+        const P = /(apply|submit|next|continue|proceed|save)/i;
+        const ACTION =
+          'a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"], label';
+        const SOURCE = 'bid-recorder-hook';
+        const BRIDGE = 'bid-recorder-bridge';
+        const HOLD_TIMEOUT_MS = 8000;
+
+        type Pending =
+          | { kind: 'click'; label: string; element: Element }
+          | {
+              kind: 'submit';
+              label: string;
+              form: HTMLFormElement;
+              submitter: HTMLElement | null;
+            };
+
+        let pending: Pending | null = null;
+        let holding = false;
+        let holdTimer: number | null = null;
+
+        const labelFor = (el: Element | null | undefined): string | null => {
+          if (!el?.getAttribute) return null;
+          const aria = el.getAttribute('aria-label')?.trim();
+          if (aria && aria.length <= 120 && P.test(aria)) {
+            return aria.replace(/\s+/g, ' ').trim();
+          }
+          if (el instanceof HTMLInputElement) {
+            const v = (el.value || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+            if (v && v.length <= 120 && P.test(v)) return v;
+          }
+          let direct = '';
+          for (const node of el.childNodes) {
+            if (node.nodeType === Node.TEXT_NODE) direct += node.textContent ?? '';
+          }
+          direct = direct.replace(/\s+/g, ' ').trim();
+          if (direct && direct.length <= 120 && P.test(direct)) return direct;
+          const full = (el.textContent || el.getAttribute('title') || '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (full && full.length <= 120 && P.test(full)) return full;
+          if (el instanceof HTMLAnchorElement) {
+            const href = el.getAttribute('href') || '';
+            if (/apply|application/i.test(href)) {
+              return direct || (full.length <= 120 ? full : '') || 'Apply';
             }
-            const s = txt(t);
-            if (s && s.length <= 80 && P.test(s)) return s;
-            t = t.parentElement;
           }
           return null;
         };
-        const post = (label: string) => {
-          window.postMessage({ source: 'bid-recorder-hook', triggerText: label }, '*');
+
+        const collect = (event: Event) => {
+          const out: Element[] = [];
+          const seen = new Set<Element>();
+          const push = (el: Element | null | undefined) => {
+            if (!el || seen.has(el)) return;
+            seen.add(el);
+            out.push(el);
+          };
+          if (event.target instanceof Element) {
+            let cur: Element | null = event.target;
+            for (let i = 0; i < 16 && cur; i += 1) {
+              push(cur);
+              cur = cur.parentElement;
+            }
+          }
+          if (typeof event.composedPath === 'function') {
+            for (const node of event.composedPath()) {
+              if (node instanceof Element) push(node);
+            }
+          }
+          return out;
         };
-        document.addEventListener(
-          'pointerdown',
-          (e) => {
-            const label = findTarget(e.target);
-            if (label) post(label);
-          },
-          true,
-        );
+
+        const findTrigger = (event: Event) => {
+          for (const node of collect(event)) {
+            const s = labelFor(node);
+            if (!s) continue;
+            if (node.matches(ACTION) || node.closest(ACTION) || node.closest('form')) {
+              return { label: s, element: node };
+            }
+            const tag = node.tagName.toLowerCase();
+            if (tag === 'button' || tag === 'a' || tag === 'label' || tag === 'input') {
+              return { label: s, element: node };
+            }
+          }
+          return null;
+        };
+
+        const clearHoldTimer = () => {
+          if (holdTimer != null) {
+            window.clearTimeout(holdTimer);
+            holdTimer = null;
+          }
+        };
+
+        const replay = () => {
+          clearHoldTimer();
+          const action = pending;
+          pending = null;
+          holding = false;
+          if (!action) return;
+          w.__bidReplayAction = true;
+          try {
+            if (action.kind === 'click') {
+              const el = action.element;
+              if (el instanceof HTMLAnchorElement && el.href) {
+                if (el.target && el.target !== '_self' && el.target !== '') {
+                  window.open(el.href, el.target);
+                } else {
+                  window.location.assign(el.href);
+                }
+              } else if (el instanceof HTMLElement) {
+                el.click();
+              } else {
+                el.dispatchEvent(
+                  new MouseEvent('click', { bubbles: true, cancelable: true, view: window }),
+                );
+              }
+            } else if (typeof action.form.requestSubmit === 'function') {
+              action.form.requestSubmit(action.submitter ?? undefined);
+            } else {
+              action.form.submit();
+            }
+          } finally {
+            queueMicrotask(() => {
+              w.__bidReplayAction = false;
+            });
+            window.setTimeout(() => {
+              w.__bidReplayAction = false;
+            }, 300);
+          }
+        };
+
+        const beginHold = (action: Pending, event: Event) => {
+          if (w.__bidReplayAction || holding) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          holding = true;
+          pending = action;
+          clearHoldTimer();
+          holdTimer = window.setTimeout(() => {
+            console.warn('[bid-recorder-main] hold timed out — replaying action');
+            replay();
+          }, HOLD_TIMEOUT_MS);
+          window.postMessage(
+            { source: SOURCE, type: 'hold-capture', triggerText: action.label },
+            '*',
+          );
+        };
+
         document.addEventListener(
           'click',
           (e) => {
-            const label = findTarget(e.target);
-            if (label) post(label);
+            if (w.__bidReplayAction || holding) return;
+            if (typeof e.button === 'number' && e.button !== 0) return;
+            const hit = findTrigger(e);
+            if (!hit) return;
+            beginHold({ kind: 'click', label: hit.label, element: hit.element }, e);
           },
           true,
         );
+
         document.addEventListener(
           'submit',
           (e) => {
-            const submitter = (e as SubmitEvent).submitter as Element | null;
-            const label = submitter ? txt(submitter) : 'Submit';
-            if (label && P.test(label)) post(label);
-            else post('Submit');
+            if (w.__bidReplayAction || holding) return;
+            const form = e.target;
+            if (!(form instanceof HTMLFormElement)) return;
+            const submitter =
+              (e as SubmitEvent).submitter instanceof HTMLElement
+                ? ((e as SubmitEvent).submitter as HTMLElement)
+                : null;
+            const label = (submitter && labelFor(submitter)) || findTrigger(e)?.label || 'Submit';
+            beginHold({ kind: 'submit', label, form, submitter }, e);
           },
           true,
         );
+
+        window.addEventListener('message', (event) => {
+          if (event.source !== window) return;
+          const data = event.data as { source?: string; type?: string } | null;
+          if (data?.source !== BRIDGE || data.type !== 'resume-action') return;
+          replay();
+        });
       },
     });
   } catch {
@@ -1075,71 +1419,75 @@ async function injectResumeUploadHooks(
 async function recordBidProcessClick(
   triggerText: string,
   sender: chrome.runtime.MessageSender,
-): Promise<void> {
+): Promise<{ persist: Promise<void> } | null> {
   const tabId = sender.tab?.id;
   if (tabId == null) {
     console.warn('[vender-sw] BID_PROCESS_CLICK ignored — no sender tab', { triggerText });
-    return;
+    return null;
   }
 
-  // Kick off the capture before anything else — the page is navigating away.
-  // Use a viewport-only grab (no CDP): attaching chrome.debugger mid-click
-  // interrupts the page's own event handling, so the SPA's submit handler never
-  // runs and the browser falls back to a native form submission (full refresh).
-  const windowId = sender.tab?.windowId;
-  const screenshotPromise = captureTabScreenshot(tabId, windowId, { fullPage: false });
+  const [session, tabInfo, applierState] = await Promise.all([
+    getStoredBidSession(tabId),
+    resolveSenderTab(sender),
+    getStoredApplierState(),
+  ]);
 
-  const session = await getStoredBidSession(tabId);
   if (session.status !== 'active' || !session.sessionId) {
     console.warn('[vender-sw] BID_PROCESS_CLICK ignored — no active session', {
       triggerText,
       status: session.status,
     });
-    return;
+    return null;
   }
 
-  const [screenshot, tabInfo, applierState] = await Promise.all([
-    screenshotPromise,
-    resolveSenderTab(sender),
-    getStoredApplierState(),
-  ]);
+  const windowId = sender.tab?.windowId;
+  // Click is held — full-page CDP captures the filled form before navigation.
+  let screenshot = await captureTabScreenshot(tabId, windowId, { fullPage: true });
+  if (!screenshot) {
+    screenshot = await captureVisibleViewport(windowId, { attempts: 3, delayMs: 80 });
+  }
+
   const { url, title } = tabInfo;
+  const at = new Date().toISOString();
 
   console.log('[vender-sw] process click captured', {
     triggerText,
+    fullPage: true,
     hasScreenshot: Boolean(screenshot),
     screenshotKb: screenshot ? Math.round(screenshot.length / 1024) : 0,
     url,
   });
 
-  // Update the live in-extension gallery FIRST so a screenshot always shows,
-  // even if the local bridge / DB write fails.
+  // Local gallery before resume (fast). Mongo must not extend the click hold.
   await recordShot(tabId, {
     type: 'process',
     triggerText,
     url: url || null,
     title: title || null,
     screenshot,
-    at: new Date().toISOString(),
+    at,
   });
 
-  // Persist to MongoDB via the bridge — best effort, never blocks the gallery.
-  try {
-    await postBidSessionEvent('/bid-session/event', {
-      sessionId: session.sessionId,
-      applierName: applierState.applierName ?? '',
-      profileId: applierState.profileId,
-      url,
-      title,
-      triggerText,
-      screenshot,
-    });
-  } catch (error) {
-    console.warn(
-      '[vender-sw] failed to persist process click to bridge:',
-      error instanceof Error ? error.message : error,
-    );
-  }
+  const persist = (async () => {
+    try {
+      await postBidSessionEvent('/bid-session/event', {
+        sessionId: session.sessionId,
+        applierName: applierState.applierName ?? '',
+        profileId: applierState.profileId,
+        url,
+        title,
+        triggerText,
+        screenshot,
+      });
+    } catch (error) {
+      console.warn(
+        '[vender-sw] failed to persist process click to bridge:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  })();
+
+  return { persist };
 }
 
 async function getStoredCredentials(): Promise<StoredCredentials | null> {
@@ -1304,10 +1652,12 @@ async function extractActiveTabContext(tabId: number) {
     throw new Error('Cannot read this page. Open a normal website tab (not chrome:// or extension pages).');
   }
 
-  let injection;
+  let injections;
   try {
-    [injection] = await chrome.scripting.executeScript({
-      target: { tabId },
+    // allFrames: true — iCIMS and similar ATS hosts put the JD / application
+    // form inside an iframe. Parent-frame-only scrapes miss that content.
+    injections = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
       func: extractPageContext,
     });
   } catch (error) {
@@ -1315,7 +1665,15 @@ async function extractActiveTabContext(tabId: number) {
     throw new Error(`Could not read this page (${detail}). Reload the page and try again.`);
   }
 
-  const pageContext = injection?.result;
+  const frames = (injections ?? [])
+    .map((entry) => entry?.result)
+    .filter((result): result is NonNullable<typeof result> => Boolean(result));
+
+  const pageContext = mergePageContexts(frames, {
+    url: tab.url ?? undefined,
+    title: tab.title ?? undefined,
+  });
+
   if (!pageContext) {
     throw new Error('Failed to read page content from the active tab.');
   }
@@ -1323,6 +1681,13 @@ async function extractActiveTabContext(tabId: number) {
   if (pageContext.visibleText.length < 80) {
     throw new Error('Page text is too short. Scroll to load the full job description, then try again.');
   }
+
+  console.log('[vender-sw] page context extracted', {
+    frames: frames.length,
+    usefulChars: pageContext.sourceMeta.charCount,
+    primaryFrame: pageContext.sourceMeta.primaryFrameUrl,
+    frameUrls: pageContext.sourceMeta.frameUrls,
+  });
 
   return pageContext;
 }
@@ -1395,7 +1760,15 @@ async function runJobAnalysis(port: chrome.runtime.Port, tabId: number): Promise
 
     send({ stage: 'status', message: 'Reading the active tab…' });
     const pageContext = await extractActiveTabContext(tabId);
-    send({ stage: 'page-context', pageUrl: pageContext.url, pageTitle: pageContext.title });
+    send({
+      stage: 'page-context',
+      pageUrl: pageContext.url,
+      pageTitle: pageContext.title,
+      visibleText: pageContext.sourceMeta.visibleText,
+      frameCount: pageContext.sourceMeta.frameCount,
+      frameUrls: pageContext.sourceMeta.frameUrls,
+      primaryFrameUrl: pageContext.sourceMeta.primaryFrameUrl,
+    });
 
     // Kick off the traffic-light flag check concurrently with page+skills, but
     // only for verdicts not yet resolved this session (sticky: once decided we
@@ -1466,20 +1839,25 @@ async function runJobAnalysis(port: chrome.runtime.Port, tabId: number): Promise
       updatedContext.skillProfile = skills.result.skillProfile || updatedContext.skillProfile;
       skillsResult = skills.result;
       turnUsage = sumUsage(page.usage, skills.usage);
+      if (skills.result.bestResume?.name) {
+        await saveSessionBestResumeName(tabId, skills.result.bestResume.name);
+      }
       send({ stage: 'skills', result: skills.result, usage: skills.usage });
     }
 
     // Resolve the concurrent flag request (best-effort — a failed flag check
     // never fails the analysis). Roll its tokens into the session total and
     // persist the merged verdicts so they stay resolved for later Analyze runs.
+    let sessionFlags = storedFlags;
     if (flagsPromise) {
       try {
         const flags = await flagsPromise;
         if (flags.usage) turnUsage = sumUsage(turnUsage, flags.usage);
-        await saveSessionFlags(tabId, {
+        sessionFlags = {
           remote: flags.result.remote ?? storedFlags.remote,
           clearance: flags.result.clearance ?? storedFlags.clearance,
-        });
+        };
+        await saveSessionFlags(tabId, sessionFlags);
         send({ stage: 'flags', result: flags.result, usage: flags.usage });
       } catch (error) {
         console.warn(
@@ -1497,6 +1875,7 @@ async function runJobAnalysis(port: chrome.runtime.Port, tabId: number): Promise
       page.result,
       skillsResult,
       turnUsage,
+      sessionFlags,
     );
     send({ stage: 'done' });
   } catch (error) {
@@ -1518,8 +1897,87 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-// Re-inject MAIN-world click hooks after SPA navigations while that tab's
-// session is live.
+const lastNavProcessCaptureAt = new Map<number, number>();
+
+function processLabelFromUrl(url: string): string | null {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    if (path.includes('/application') || /\/apply(?:\/|$)/.test(path)) return 'Apply';
+    if (path.includes('submit')) return 'Submit';
+    return null;
+  } catch {
+    return /apply|application/i.test(url) ? 'Apply' : null;
+  }
+}
+
+async function recordNavigationProcessShot(
+  tabId: number,
+  url: string,
+  sessionId: string,
+  triggerText: string,
+): Promise<void> {
+  const now = Date.now();
+  const last = lastNavProcessCaptureAt.get(tabId) ?? 0;
+  if (now - last < 1500) return;
+  lastNavProcessCaptureAt.set(tabId, now);
+
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return;
+  }
+
+  // Let Ashby/SPA paint the application step before capturing.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const screenshot = await captureProcessClickViewport(tabId, tab.windowId);
+  const applierState = await getStoredApplierState();
+  const at = new Date().toISOString();
+
+  console.log('[vender-sw] navigation process capture', {
+    triggerText,
+    hasScreenshot: Boolean(screenshot),
+    url,
+  });
+
+  await recordShot(tabId, {
+    type: 'process',
+    triggerText,
+    url: url || tab.url || null,
+    title: tab.title ?? null,
+    screenshot,
+    at,
+  });
+
+  try {
+    await postBidSessionEvent('/bid-session/event', {
+      sessionId,
+      applierName: applierState.applierName ?? '',
+      profileId: applierState.profileId,
+      url: url || tab.url || '',
+      title: tab.title ?? '',
+      triggerText,
+      screenshot,
+    });
+  } catch (error) {
+    console.warn(
+      '[vender-sw] failed to persist navigation process click:',
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+async function maybeCaptureApplyNavigation(tabId: number, url: string): Promise<void> {
+  const session = await getStoredBidSession(tabId);
+  if (session.status !== 'active' || !session.sessionId) return;
+  const label = processLabelFromUrl(url);
+  if (!label) return;
+  await recordNavigationProcessShot(tabId, url, session.sessionId, label);
+}
+
+// Re-inject hold-capture hooks after SPA navigations while the session is live.
+// Post-navigation Apply shots are skipped — form verification uses the pre-click
+// full-page capture from BID_PROCESS_CLICK instead.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== 'complete') return;
   void (async () => {
@@ -1597,14 +2055,22 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
           sendResponse({ ok: true, session } satisfies Response);
           break;
         }
+        case 'FETCH_BID_QUEUE': {
+          const queue = await fetchBidQueue(message.limit, message.preview);
+          sendResponse({ ok: true, ...queue } satisfies Response);
+          break;
+        }
         case 'GET_BID_SHOTS': {
           const shots = await getSessionShots(message.tabId);
           sendResponse({ ok: true, shots } satisfies Response);
           break;
         }
         case 'BID_PROCESS_CLICK': {
-          await recordBidProcessClick(message.triggerText, sender);
+          // Reply once the screenshot exists so MAIN can resume Apply/Next.
+          // Mongo write continues afterward and must not extend the click hold.
+          const result = await recordBidProcessClick(message.triggerText, sender);
           sendResponse({ ok: true } satisfies Response);
+          if (result?.persist) await result.persist;
           break;
         }
         case 'LOG_UPLOAD': {

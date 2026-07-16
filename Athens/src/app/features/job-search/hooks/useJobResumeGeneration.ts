@@ -9,7 +9,7 @@ import {
 import type { Job } from "../../../types";
 
 /** Max résumés generated concurrently during a bulk run (rate-limit guard). */
-const MAX_CONCURRENT_GENERATIONS = 10;
+const MAX_CONCURRENT_GENERATIONS = 3;
 
 function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { name?: string }).name === "AbortError";

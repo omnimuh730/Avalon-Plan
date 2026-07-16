@@ -234,8 +234,14 @@ export async function fetchCandidateJobs(
   return docs
     .map((d) => {
       const company = d.company as { name?: string } | undefined;
+      // Prefer Mongo `_id` only — the numeric `id` field is a different scrape key
+      // and must not be used for résumé lookup (Job Search stores under `_id`).
+      const id =
+        d._id != null && typeof d._id === "object" && "$oid" in (d._id as object)
+          ? String((d._id as { $oid: string }).$oid)
+          : String(d._id ?? "");
       return {
-        id: String(d._id ?? d.id ?? ""),
+        id,
         title: String(d.title ?? ""),
         company: String(company?.name ?? ""),
         url: String(d.applyLink ?? d.url ?? ""),

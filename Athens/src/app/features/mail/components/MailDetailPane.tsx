@@ -9,7 +9,7 @@ type MailDetailPaneProps = {
   thread: MailThread | null;
   fullView?: boolean;
   loading?: boolean;
-  /** Pro workspace — enables AI Reply */
+  /** Beta workspace — enables AI Reply */
   aiReplyEnabled?: boolean;
   onBack?: () => void;
   onArchive?: () => void;

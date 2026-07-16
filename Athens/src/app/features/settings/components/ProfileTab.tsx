@@ -1,14 +1,17 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useApplier } from "@/context/applier-context";
 import { ThemeToggle } from "../../../components/shared/ThemeToggle";
 import { emptyCareer, emptyEducation, emptyProfile, type UserProfile } from "../../../data/settings/profile";
 import {
   fetchAutoBidProfile,
+  refreshGeneratedResumesIdentityStream,
+  type RefreshResumesProgress,
   saveAutoBidProfile,
   testLlmKey,
 } from "../../../services/profileApi";
+import { isBetaTier } from "../../../lib/beta";
 import { ProfileBanner, VendorAccessRow } from "./ProfileBanner";
 import {
   ProfileDisclosuresCard,
@@ -25,11 +28,14 @@ export function ProfileTab() {
   const [vendorAllowed, setVendorAllowed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshingResumes, setRefreshingResumes] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<RefreshResumesProgress | null>(null);
   const [accountMissing, setAccountMissing] = useState(false);
   const [keyChecks, setKeyChecks] = useState<{ openai: KeyCheck; deepseek: KeyCheck }>({
     openai: { state: "idle" },
     deepseek: { state: "idle" },
   });
+  const isBeta = isBetaTier(applier?.tier);
   const load = useCallback(async () => {
     if (!applier?.name) {
       setProfile(emptyProfile());
@@ -81,6 +87,63 @@ export function ProfileTab() {
     }
   };
 
+  const refreshResumes = async () => {
+    if (!applier?.name) {
+      toast.warning("Sign in to refresh résumés");
+      return;
+    }
+    if (!isBeta) {
+      toast.warning("Beta workspace required to refresh generated résumés");
+      return;
+    }
+    setRefreshingResumes(true);
+    setRefreshProgress({
+      done: 0,
+      total: 0,
+      left: 0,
+      updated: 0,
+      pdfs: 0,
+      skipped: 0,
+      failed: 0,
+      active: 0,
+      phase: "start",
+    });
+    try {
+      // Persist the latest profile first so LinkedIn / contact changes are on the server.
+      const saved = await saveAutoBidProfile(applier.name, profile, vendorAllowed);
+      if (!saved.success) {
+        toast.error(saved.error || "Save profile before refreshing résumés");
+        return;
+      }
+      setAccountMissing(false);
+      const res = await refreshGeneratedResumesIdentityStream(applier.name, (progress) => {
+        setRefreshProgress(progress);
+      });
+      if (!res.success) {
+        toast.error(res.error || "Could not refresh résumés");
+        return;
+      }
+      const failed = res.failed ?? 0;
+      const already = res.alreadyCurrent ?? 0;
+      if ((res.total ?? 0) === 0 && already > 0) {
+        toast.success(`All ${already} generated résumé${already === 1 ? "" : "s"} already match your profile`);
+      } else {
+        toast.success(
+          `Updated ${res.updated ?? 0} of ${res.total ?? 0} outdated résumé${(res.total ?? 0) === 1 ? "" : "s"}` +
+            (already ? ` · ${already} already current` : "") +
+            (res.pdfs ? ` · ${res.pdfs} PDF${res.pdfs === 1 ? "" : "s"}` : "") +
+            (failed ? ` · ${failed} failed` : ""),
+        );
+      }
+      await load();
+    } catch {
+      toast.error("Could not refresh résumés");
+    } finally {
+      setRefreshingResumes(false);
+      setRefreshProgress(null);
+    }
+  };
+
   const checkKey = async (provider: "openai" | "deepseek") => {
     const apiKey = provider === "openai" ? profile.openaiApiKey : profile.deepseekApiKey;
     if (!apiKey.trim()) {
@@ -125,16 +188,82 @@ export function ProfileTab() {
         </div>
         <div className="flex items-center gap-3">
           <ThemeToggle />
+          {isBeta && (
+            <button
+              type="button"
+              onClick={() => void refreshResumes()}
+              disabled={refreshingResumes || saving || loading}
+              className="inline-flex items-center gap-2 border border-border bg-secondary text-foreground px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-muted min-h-10 disabled:opacity-50"
+              title="Save profile, then re-apply name, contact, and LinkedIn to all generated résumé PDFs"
+            >
+              {refreshingResumes ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {refreshingResumes
+                ? refreshProgress && refreshProgress.total > 0
+                  ? `Updating… ${refreshProgress.done}/${refreshProgress.total}`
+                  : "Updating résumés…"
+                : "Update generated résumés"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void save()}
-            disabled={saving || loading}
+            disabled={saving || loading || refreshingResumes}
             className="bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-primary/90 min-h-10 disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
       </div>
+
+      {refreshingResumes && refreshProgress && (
+        <div className="mb-4 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <p className="text-sm font-bold text-foreground">
+              Updating outdated résumés
+              {refreshProgress.total > 0
+                ? ` · ${refreshProgress.done} of ${refreshProgress.total}`
+                : "…"}
+            </p>
+            <p className="text-xs text-muted-foreground tabular-nums">
+              {refreshProgress.total > 0
+                ? `${refreshProgress.left} left${refreshProgress.active ? ` · ${refreshProgress.active} active` : ""}`
+                : "Starting…"}
+            </p>
+          </div>
+          <div className="h-2 rounded-full bg-secondary overflow-hidden">
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+              style={{
+                width:
+                  refreshProgress.total > 0
+                    ? `${Math.min(100, Math.round((refreshProgress.done / refreshProgress.total) * 100))}%`
+                    : "8%",
+              }}
+            />
+          </div>
+          {refreshProgress.total > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {refreshProgress.updated} updated
+              {refreshProgress.pdfs ? ` · ${refreshProgress.pdfs} PDFs` : ""}
+              {refreshProgress.alreadyCurrent ? ` · ${refreshProgress.alreadyCurrent} already current` : ""}
+              {refreshProgress.failed ? ` · ${refreshProgress.failed} failed` : ""}
+            </p>
+          )}
+        </div>
+      )}
+
+      {isBeta && !loading && !refreshingResumes && (
+        <p className="mb-4 text-xs text-muted-foreground">
+          After changing LinkedIn or other contact details, use{" "}
+          <span className="font-semibold text-foreground">Update generated résumés</span> to refresh outdated
+          Job Search / Agent PDF headers (skips ones already synced).
+          {profile.updatedAt && profile.resumeUpdatedAt && profile.resumeUpdatedAt >= profile.updatedAt
+            ? " All résumés are currently in sync."
+            : profile.updatedAt
+              ? " Some résumés may be out of date."
+              : ""}
+        </p>
+      )}
 
       {accountMissing && (
         <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">

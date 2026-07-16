@@ -7,6 +7,7 @@ import {
   type UsageSummary,
 } from '@/lib/job-analysis';
 import { BID_SESSION_RESET } from '@/lib/bid-session';
+import type { PageSourceMeta } from '@/lib/page-context';
 
 export interface AggregatedUsage {
   inputTokens: number;
@@ -26,6 +27,8 @@ export interface AnalysisTurn {
   page: PageAnalysisResult | null;
   skills: SkillAnalysisResult | null;
   usage: AggregatedUsage | null;
+  /** Page innerText (+ iframe meta) actually sent to Analyze. */
+  pageSource?: PageSourceMeta | null;
 }
 
 const EMPTY_USAGE: AggregatedUsage = {
@@ -78,6 +81,7 @@ interface InFlightTurn {
   page: PageAnalysisResult | null;
   skills: SkillAnalysisResult | null;
   usage: AggregatedUsage | null;
+  pageSource: PageSourceMeta | null;
 }
 
 const EMPTY_IN_FLIGHT: InFlightTurn = {
@@ -86,6 +90,7 @@ const EMPTY_IN_FLIGHT: InFlightTurn = {
   page: null,
   skills: null,
   usage: null,
+  pageSource: null,
 };
 
 export function useJobAnalysis(tabId: number | null) {
@@ -192,7 +197,17 @@ export function useJobAnalysis(tabId: number | null) {
           setStatus(event.message);
           break;
         case 'page-context':
-          update({ pageTitle: event.pageTitle, pageUrl: event.pageUrl });
+          update({
+            pageTitle: event.pageTitle,
+            pageUrl: event.pageUrl,
+            pageSource: {
+              visibleText: event.visibleText,
+              charCount: event.visibleText.length,
+              frameCount: event.frameCount,
+              frameUrls: event.frameUrls,
+              primaryFrameUrl: event.primaryFrameUrl,
+            },
+          });
           break;
         case 'page':
           update({
@@ -228,6 +243,7 @@ export function useJobAnalysis(tabId: number | null) {
               page: finished.page,
               skills: finished.skills,
               usage: finished.usage,
+              pageSource: finished.pageSource,
             };
             setTurns((prevTurns) => {
               const nextTurns = [...prevTurns, turn];

@@ -13,6 +13,62 @@ export type ResumeAnalysisCatalog = Record<
   { name: string; category?: string; level: number }[]
 >;
 
+/** Canonical title token → matching aliases found in JD skill names. */
+const TITLE_ALIASES: Record<string, string[]> = {
+  ai: [
+    'ai',
+    'artificial intelligence',
+    'llm',
+    'llms',
+    'rag',
+    'agentic',
+    'generative',
+    'openai',
+    'chatgpt',
+    'bedrock',
+    'sagemaker',
+    'embeddings',
+    'machine learning',
+    'ml',
+    'diffusion',
+    'prompt',
+  ],
+  go: ['go', 'golang'],
+  golang: ['go', 'golang'],
+  nodejs: ['nodejs', 'node.js', 'node'],
+  node: ['nodejs', 'node.js', 'node'],
+  'c++': ['c++', 'cpp', 'cplusplus'],
+  cpp: ['c++', 'cpp', 'cplusplus'],
+  'c#': ['c#', 'csharp', 'c sharp', '.net', 'dotnet', 'asp.net'],
+  csharp: ['c#', 'csharp', '.net', 'dotnet'],
+  'react native': ['react native', 'reactnative'],
+  mern: ['mern', 'mongo', 'express', 'react', 'node'],
+  gis: ['gis', 'geospatial', 'postgis', 'mapbox', 'geofenc'],
+  healthcare: ['healthcare', 'fhir', 'hipaa', 'hl7', 'clinical'],
+  shopify: ['shopify', 'ecommerce', 'e-commerce'],
+  wordpress: ['wordpress', 'cms', 'gutenberg'],
+  application: ['desktop', 'qt', 'mfc', 'qml', 'native app'],
+  desktop: ['desktop', 'qt', 'mfc', 'qml'],
+  flutter: ['flutter', 'dart', 'ionic'],
+  ionic: ['ionic', 'flutter'],
+  android: ['android', 'kotlin', 'jetpack'],
+  ios: ['ios', 'swift', 'swiftui', 'uikit'],
+  rust: ['rust', 'tokio', 'actix'],
+  python: ['python', 'fastapi', 'pytorch', 'pandas'],
+  django: ['django'],
+  angular: ['angular', 'rxjs', 'ngrx'],
+  vue: ['vue', 'vue.js', 'vuejs', 'pinia'],
+  react: ['react', 'next.js', 'nextjs', 'remix'],
+  java: ['java', 'spring', 'jvm'],
+  kotlin: ['kotlin'],
+  php: ['php', 'laravel', 'symfony'],
+  laravel: ['laravel', 'php'],
+  ruby: ['ruby', 'rails'],
+  rails: ['ruby', 'rails'],
+  nextjs: ['next.js', 'nextjs', 'react'],
+  remix: ['remix', 'react'],
+};
+
 function normalizeSkillName(name: string): string {
   return name
     .trim()
@@ -61,7 +117,6 @@ function parseSkillLine(rawLine: string): { skill: string; score: number } | nul
   return null;
 }
 
-/** Parse radar-format skill profile from prompt.md output. */
 export function parseSkillProfile(skillProfileText: string): Map<string, number> {
   const scores = new Map<string, number>();
 
@@ -75,66 +130,95 @@ export function parseSkillProfile(skillProfileText: string): Map<string, number>
   return scores;
 }
 
-function buildResumeSkillMap(resumeProfile: Record<string, number> | { name: string; level: number }[]) {
-  const map = new Map<string, number>();
-  if (Array.isArray(resumeProfile)) {
-    for (const s of resumeProfile || []) {
-      const name = String(s?.name ?? '').trim();
-      const level = Number(s?.level);
-      if (!name || !Number.isFinite(level)) continue;
-      const clamped = Math.max(1, Math.min(5, Math.round(level)));
-      const score = Math.max(0, Math.min(10, Math.round(clamped * 2)));
-      map.set(normalizeSkillName(name), score);
+/** Resume stack titles — prediction uses title tokens only. */
+export function tokenizeResumeTitle(title: string): Set<string> {
+  let raw = String(title ?? '');
+  raw = raw.replace(/\(([^)]*\b(?:not|never|no)\b[^)]*)\)/gi, ' ');
+  raw = raw.replace(/\(([^)]+)\)/g, ' $1 ');
+  raw = raw.replace(/[/&,|]/g, ' + ');
+
+  const parts = raw
+    .split(/\+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const tokens = new Set<string>();
+  for (const part of parts) {
+    const cleaned = part
+      .toLowerCase()
+      .replace(/\b(?:for|web|scripting|with|and|the|a|an)\b/g, ' ')
+      .replace(/[^a-z0-9+#.\s-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned) continue;
+
+    tokens.add(normalizeSkillName(cleaned));
+    for (const word of cleaned.split(/[\s-]+/)) {
+      const w = normalizeSkillName(word);
+      if (w.length >= 2) tokens.add(w);
     }
-    return map;
+
+    const aliases = TITLE_ALIASES[cleaned] || TITLE_ALIASES[normalizeSkillName(cleaned)];
+    if (aliases) {
+      for (const alias of aliases) tokens.add(normalizeSkillName(alias));
+    }
   }
 
-  for (const [skill, score] of Object.entries(resumeProfile || {})) {
-    map.set(normalizeSkillName(skill), Number(score) || 0);
+  for (const token of [...tokens]) {
+    const aliases = TITLE_ALIASES[token];
+    if (aliases) {
+      for (const alias of aliases) tokens.add(normalizeSkillName(alias));
+    }
   }
-  return map;
+
+  return tokens;
 }
 
-function lookupResumeScore(resumeScores: Map<string, number>, jdSkill: string): number {
-  const direct = resumeScores.get(jdSkill);
-  if (direct !== undefined) return direct;
-
-  for (const [skill, score] of resumeScores) {
-    if (skill.includes(jdSkill) || jdSkill.includes(skill)) {
-      return score;
-    }
-  }
-
-  return 0;
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// The JD skill profile (produced by the AI per prompt.md) already encodes which
-// skills matter: only a few essential skills score high, everything else low.
-// So resume selection is a straight weighted-coverage match against those
-// scores — no extra hardcoded weighting.
-function scoreResume(
-  jdScores: Map<string, number>,
-  resumeProfile: Record<string, number> | { name: string; level: number }[],
-): number {
-  const resumeScores = buildResumeSkillMap(resumeProfile);
+function titleMatchesSkill(titleTokens: Set<string>, jdSkill: string): boolean {
+  if (!jdSkill) return false;
+  for (const token of titleTokens) {
+    if (!token) continue;
+    if (token === jdSkill) return true;
+    if (token.length <= 2) {
+      const re = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(token)}(?:[^a-z0-9]|$)`);
+      if (re.test(jdSkill)) return true;
+      continue;
+    }
+    if (jdSkill.includes(token) || token.includes(jdSkill)) return true;
+  }
+  return false;
+}
+
+export function scoreResumeByTitle(jdScores: Map<string, number>, resumeTitle: string): number {
+  const titleTokens = tokenizeResumeTitle(resumeTitle);
+  if (titleTokens.size === 0) return 0;
+
   let weightedSum = 0;
   let totalWeight = 0;
+  let hitWeight = 0;
 
   for (const [skill, jdScore] of jdScores) {
     if (jdScore <= 0) continue;
-    // Square the JD score so the role's few essential skills dominate the match
-    // far more than the long tail of low-scored, incidental mentions.
     const weight = jdScore * jdScore;
     totalWeight += weight;
-    const resumeScore = lookupResumeScore(resumeScores, skill);
-    weightedSum += weight * (Math.min(jdScore, resumeScore) / jdScore);
+    if (titleMatchesSkill(titleTokens, skill)) {
+      weightedSum += weight;
+      hitWeight += weight;
+    }
   }
 
   if (totalWeight === 0) return 0;
-  return weightedSum / totalWeight;
+
+  const coverage = weightedSum / totalWeight;
+  const focus = hitWeight > 0 ? hitWeight / (hitWeight + totalWeight * 0.15) : 0;
+  return Math.min(1, coverage * 0.85 + focus * 0.15);
 }
 
-/** Rank resume variants from account_info.resumeCatalog against a JD skill profile. */
+/** Rank resume stacks by title vs JD skill profile (ignores analyzed skill JSON). */
 export function rankResumes(
   jdSkillProfileText: string,
   resumesCatalog: ResumeCatalog | ResumeAnalysisCatalog,
@@ -145,12 +229,12 @@ export function rankResumes(
     return [];
   }
 
-  const ranked = Object.entries(resumesCatalog)
-    .map(([name, profile]) => ({
+  const ranked = Object.keys(resumesCatalog || {})
+    .map((name) => ({
       name,
-      score: scoreResume(jdScores, profile),
+      score: scoreResumeByTitle(jdScores, name),
     }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 
   return ranked.slice(0, topN);
 }

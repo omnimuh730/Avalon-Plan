@@ -59,7 +59,15 @@ export type BidFlagsResult = Partial<Record<BidFlag, FlagVerdict>>;
 
 export type AnalysisEvent =
   | { stage: 'status'; message: string }
-  | { stage: 'page-context'; pageUrl: string; pageTitle: string }
+  | {
+      stage: 'page-context';
+      pageUrl: string;
+      pageTitle: string;
+      visibleText: string;
+      frameCount: number;
+      frameUrls: string[];
+      primaryFrameUrl: string | null;
+    }
   | { stage: 'page'; result: PageAnalysisResult; usage: UsageSummary }
   | { stage: 'skills'; result: SkillAnalysisResult; usage: UsageSummary }
   | { stage: 'flags'; result: BidFlagsResult; usage: UsageSummary }

@@ -4,9 +4,9 @@ import { Link } from "react-router";
 import { useApplier } from "@/context/applier-context";
 import { PATHS } from "../config/routes";
 import { PageShell } from "../components/layout/PageShell";
-import { isProTier } from "../lib/pro";
+import { isBetaTier } from "../lib/beta";
 
-export function ProRoute({ children }: { children: ReactNode }) {
+export function BetaRoute({ children }: { children: ReactNode }) {
   const { applier, applierReady } = useApplier();
 
   if (!applierReady) {
@@ -20,7 +20,7 @@ export function ProRoute({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!isProTier(applier?.tier)) {
+  if (!isBetaTier(applier?.tier)) {
     return (
       <PageShell>
         <div className="mx-auto mt-10 max-w-lg rounded-lg border border-border bg-card p-6 shadow-sm">
@@ -29,11 +29,11 @@ export function ProRoute({ children }: { children: ReactNode }) {
           </div>
           <div className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-bold uppercase tracking-wide text-amber-700">
             <Crown className="h-3.5 w-3.5" />
-            Pro
+            Beta
           </div>
-          <h1 className="text-xl font-bold text-foreground">Pro workspace required</h1>
+          <h1 className="text-xl font-bold text-foreground">Beta workspace required</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            This page is available for Pro accounts. Your current workspace still has access to job search,
+            This page is available for Beta accounts. Your current workspace still has access to job search,
             resumes, agents, mail, and settings.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">

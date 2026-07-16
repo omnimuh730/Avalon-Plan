@@ -1,38 +1,55 @@
-import { useState } from "react";
+import { useNavigate, useParams, Link } from "react-router";
+import { ArrowLeft } from "lucide-react";
 import { PageShell } from "../../components/layout/PageShell";
 import { Pill } from "../../components/ui";
+import { Button } from "../../components/ui/button";
 import { TabTransition } from "../../components/overlays";
+import { PATHS, normalizeTab } from "../../config/routes";
 import { BidMonitorView } from "./BidMonitorView";
-import type { BidMonitorSource } from "./types";
+import { BidAnalyticsView } from "./BidAnalyticsView";
+import { TaskPoolView } from "./TaskPoolView";
 
-const SOURCES: { key: BidMonitorSource; label: string; subtitle: string }[] = [
-  {
-    key: "local",
-    label: "Bid records",
-    subtitle: "Bid sessions from the main MongoDB",
-  },
-  {
-    key: "cloud",
-    label: "Cloud bid",
-    subtitle: "Legacy cloud bid sessions (optional)",
-  },
-];
+const VENDOR_TABS = ["sessions", "tasks", "analytics"] as const;
+type VendorMonitorTab = (typeof VENDOR_TABS)[number];
 
 export function VendorMonitorPage() {
-  const [source, setSource] = useState<BidMonitorSource>("local");
-  const active = SOURCES.find((s) => s.key === source) ?? SOURCES[0];
+  const navigate = useNavigate();
+  const { tab: tabParam } = useParams();
+  const tab = normalizeTab(tabParam, VENDOR_TABS, "sessions");
+
+  const setTab = (next: VendorMonitorTab) => {
+    navigate(`${PATHS.vendorMonitor}/${next}`);
+  };
 
   return (
     <PageShell>
-      <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 scroll-row mb-6 w-fit">
-        {SOURCES.map((s) => (
-          <Pill key={s.key} active={source === s.key} onClick={() => setSource(s.key)}>
-            {s.label}
+      <div className="relative z-30 flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 w-fit">
+          <Pill active={tab === "sessions"} onClick={() => setTab("sessions")}>
+            Sessions
           </Pill>
-        ))}
+          <Pill active={tab === "tasks"} onClick={() => setTab("tasks")}>
+            Tasks
+          </Pill>
+          <Pill active={tab === "analytics"} onClick={() => setTab("analytics")}>
+            Analytics
+          </Pill>
+        </div>
+        <Button variant="outline" size="sm" className="gap-1.5" asChild>
+          <Link to={PATHS.jobs}>
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Job Search
+          </Link>
+        </Button>
       </div>
-      <TabTransition tabKey={source}>
-        <BidMonitorView source={active.key} subtitle={active.subtitle} />
+      <TabTransition tabKey={tab}>
+        {tab === "sessions" ? (
+          <BidMonitorView subtitle="Bid sessions from the main MongoDB" />
+        ) : tab === "tasks" ? (
+          <TaskPoolView />
+        ) : (
+          <BidAnalyticsView />
+        )}
       </TabTransition>
     </PageShell>
   );

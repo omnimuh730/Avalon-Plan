@@ -52,6 +52,8 @@ ENV NODE_ENV=production \
     EMBEDDED_MONGO=auto \
     PUPPETEER_CACHE_DIR=/data/puppeteer
 
+# libreoffice-writer-nogui + poppler-utils: uploaded resume template preview
+# (DOCX → PDF via soffice, PDF → PNG pages via pdftoppm).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -59,6 +61,8 @@ RUN apt-get update \
     supervisor \
     fonts-liberation \
     fonts-noto-color-emoji \
+    libreoffice-writer-nogui \
+    poppler-utils \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \

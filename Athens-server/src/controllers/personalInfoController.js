@@ -236,6 +236,7 @@ function normalizeAutoBidProfile(body) {
 		immigrationStatus: pickAllowed(body.immigrationStatus, ALLOWED_IMMIGRATION_STATUS),
 		resumeFolderUrl: String(body.resumeFolderUrl || "").trim(),
 		updatedAt: new Date().toISOString(),
+		// resumeUpdatedAt is server-managed (bulk identity refresh watermark) — not taken from client.
 	};
 }
 
@@ -292,6 +293,7 @@ function buildAutoBidProfileResponse(p) {
 		immigrationStatus: p.immigrationStatus || "",
 		resumeFolderUrl: p.resumeFolderUrl || "",
 		updatedAt: p.updatedAt || null,
+		resumeUpdatedAt: p.resumeUpdatedAt || null,
 	};
 }
 
@@ -344,15 +346,21 @@ export async function upsertAutoBidProfile(req, res) {
 		const body = req.body || {};
 		const name = String(body.applierName || "").trim();
 		if (!name) return res.status(400).json({ success: false, error: "applierName required in body" });
-		const autoBidProfile = encryptProfileApiKeys(normalizeAutoBidProfile(body));
-		const vendorAllowed = body.vendorAllowed === true || body.vendorAllowed === "true";
-		const acc = await findAccountByApplierName(name, { _id: 1, name: 1 });
+		const acc = await findAccountByApplierName(name, { _id: 1, name: 1, autoBidProfile: 1 });
 		if (!acc) {
 			return res.status(404).json({
 				success: false,
 				error: `No account named "${name}". Add it under Applier accounts in the sidebar (or POST /api/account_info) before saving the profile.`,
 			});
 		}
+		const existing = decryptProfileApiKeys(acc.autoBidProfile || {});
+		const normalized = normalizeAutoBidProfile(body);
+		// Preserve server-managed resume sync watermark across profile saves.
+		const autoBidProfile = encryptProfileApiKeys({
+			...normalized,
+			resumeUpdatedAt: existing.resumeUpdatedAt || null,
+		});
+		const vendorAllowed = body.vendorAllowed === true || body.vendorAllowed === "true";
 		const r = await updateAccountInfoById(acc._id, acc.name, {
 			$set: { autoBidProfile, vendorAllowed },
 		});
