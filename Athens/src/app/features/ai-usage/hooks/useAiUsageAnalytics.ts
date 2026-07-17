@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { useApplier } from "@/context/applier-context";
 import {
   fetchAiUsageRows,
   fetchAiUsageSummary,
@@ -21,8 +20,7 @@ const EMPTY_TOTALS: AiUsageTotals = {
   costUsd: 0,
 };
 
-export function useAiUsageAnalytics(range: DateRange) {
-  const { applier, applierReady } = useApplier();
+export function useAiUsageAnalytics(range: DateRange, applierName?: string | null) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [totals, setTotals] = useState<AiUsageTotals>(EMPTY_TOTALS);
@@ -31,17 +29,28 @@ export function useAiUsageAnalytics(range: DateRange) {
   const [byProvider, setByProvider] = useState<AiUsageByProviderRow[]>([]);
   const [recentRows, setRecentRows] = useState<AiUsageCallRow[]>([]);
 
+  const scopedName = String(applierName || "").trim() || undefined;
+
   const load = useCallback(async () => {
-    if (!applierReady) return;
+    if (!scopedName) {
+      setLoading(false);
+      setError(null);
+      setTotals(EMPTY_TOTALS);
+      setByDay([]);
+      setByFeature([]);
+      setByProvider([]);
+      setRecentRows([]);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     const { startDate, endDate } = rangeToIsoDates(range);
-    const applierName = applier?.name;
 
     try {
       const [summary, rowsRes] = await Promise.all([
-        fetchAiUsageSummary({ since: startDate, until: endDate, applierName }),
-        fetchAiUsageRows({ since: startDate, until: endDate, applierName, limit: 100 }),
+        fetchAiUsageSummary({ since: startDate, until: endDate, applierName: scopedName }),
+        fetchAiUsageRows({ since: startDate, until: endDate, applierName: scopedName, limit: 100 }),
       ]);
       setTotals(summary.totals ?? EMPTY_TOTALS);
       setByDay(summary.byDay ?? []);
@@ -58,7 +67,7 @@ export function useAiUsageAnalytics(range: DateRange) {
     } finally {
       setLoading(false);
     }
-  }, [applier?.name, applierReady, range]);
+  }, [scopedName, range]);
 
   useEffect(() => {
     void load();
@@ -67,7 +76,7 @@ export function useAiUsageAnalytics(range: DateRange) {
   return {
     loading,
     error,
-    ready: applierReady && Boolean(applier?.name),
+    ready: Boolean(scopedName),
     totals,
     byDay,
     byFeature,

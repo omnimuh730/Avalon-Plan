@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Area,
   Bar,
@@ -15,6 +15,11 @@ import {
   YAxis,
 } from "recharts";
 import { Activity, Coins, Hash, Loader2, RefreshCw, Zap } from "lucide-react";
+import { useApplier } from "@/context/applier-context";
+import {
+  fetchRegisteredAccounts,
+  type RegisteredAccount,
+} from "../../api/accountInfo";
 import { PageShell } from "../../components/layout/PageShell";
 import { AthensSelect } from "../../components/forms";
 import { Badge, ChartTip, KPI } from "../../components/ui";
@@ -24,6 +29,12 @@ import { rangeLabel } from "../analytics/lib/rangeFilter";
 import { formatRunCost } from "../agents/lib/runUsage";
 import { mono } from "../../lib/utils";
 import { useAiUsageAnalytics } from "./hooks/useAiUsageAnalytics";
+
+function providerLabel(provider: string): string {
+  if (provider === "openai") return "OpenAI";
+  if (provider === "deepseek") return "DeepSeek";
+  return provider;
+}
 
 const CHART_COLORS = ["#6c5ce7", "#2dd4bf", "#f59e0b", "#ec4899", "#3b82f6", "#14b8a6", "#f97316", "#8b5cf6"];
 
@@ -76,9 +87,64 @@ function EmptyChart({ message }: { message: string }) {
 }
 
 export function AiUsagePage() {
+  const { applier, applierReady } = useApplier();
   const [range, setRange] = useState<DateRange>("30d");
+  const [selectedUser, setSelectedUser] = useState("");
+  const [accounts, setAccounts] = useState<RegisteredAccount[]>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersError, setUsersError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setUsersLoading(true);
+      setUsersError(null);
+      try {
+        const list = await fetchRegisteredAccounts();
+        if (cancelled) return;
+        setAccounts(list);
+
+        const preferred = applier?.name?.trim() || "";
+        setSelectedUser((prev) => {
+          if (prev && list.some((a) => a.name === prev)) return prev;
+          if (preferred && list.some((a) => a.name === preferred)) return preferred;
+          return list[0]?.name ?? "";
+        });
+      } catch (e) {
+        if (cancelled) return;
+        setUsersError(e instanceof Error ? e.message : "Failed to load users");
+        setAccounts([]);
+      } finally {
+        if (!cancelled) setUsersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applier?.name]);
+
+  const userOptions = useMemo(
+    () =>
+      accounts.map((a) => ({
+        value: a.name,
+        label: a.tier ? `${a.name} (${a.tier})` : a.name,
+      })),
+    [accounts],
+  );
+
+  const selectedAccount = useMemo(
+    () => accounts.find((a) => a.name === selectedUser) ?? null,
+    [accounts, selectedUser],
+  );
+
   const { loading, error, ready, totals, byDay, byFeature, byProvider, recentRows, refetch } =
-    useAiUsageAnalytics(range);
+    useAiUsageAnalytics(range, selectedUser || null);
+
+  const selectedLabel = useMemo(() => {
+    return userOptions.find((o) => o.value === selectedUser)?.label || selectedUser || "user";
+  }, [userOptions, selectedUser]);
+
+  const configuredKeys = selectedAccount?.keys.filter((k) => k.configured) ?? [];
 
   const avgCostPerCall = totals.calls > 0 ? totals.costUsd / totals.calls : 0;
   const costTrendData = byDay.map((row) => ({
@@ -110,12 +176,33 @@ export function AiUsagePage() {
         <div>
           <p className="text-sm text-muted-foreground">
             LLM API consumption from <code className="text-xs">llm_call_log</code>
-            {ready ? "" : " — select a profile to scope usage"}
+            {!ready && !usersLoading ? " — select a user to scope usage" : ""}
           </p>
-          <p className="text-xs text-muted-foreground mt-1">Showing data for {rangeLabel(range)}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Showing data for {rangeLabel(range)}
+            {ready ? (
+              <>
+                {" "}
+                · user <span className="font-semibold text-foreground">{selectedLabel}</span>
+              </>
+            ) : null}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={loading}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <AthensSelect
+            value={selectedUser}
+            onChange={setSelectedUser}
+            options={userOptions}
+            placeholder={usersLoading || !applierReady ? "Loading users…" : "Select user…"}
+            disabled={usersLoading || userOptions.length === 0}
+            className="w-56"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refetch()}
+            disabled={loading || !ready}
+          >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Refresh
           </Button>
@@ -128,15 +215,63 @@ export function AiUsagePage() {
         </div>
       </div>
 
+      {ready ? (
+        <div className="rounded-xl border border-border bg-card px-4 py-3 mb-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                API keys · {selectedUser}
+              </p>
+              {configuredKeys.length === 0 ? (
+                <p className="text-sm text-muted-foreground mt-1">No API keys configured for this user.</p>
+              ) : (
+                <ul className="mt-2 space-y-1.5">
+                  {configuredKeys.map((key) => (
+                    <li key={key.provider} className="flex items-start gap-2 text-sm min-w-0">
+                      <Badge v="subtle">{providerLabel(key.provider)}</Badge>
+                      <code className="text-xs text-foreground break-all select-all" style={mono}>
+                        {key.value}
+                      </code>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {(selectedAccount?.defaultProvider || selectedAccount?.defaultModel) && (
+              <p className="text-xs text-muted-foreground">
+                Default:{" "}
+                <span className="font-semibold text-foreground">
+                  {[selectedAccount.defaultProvider, selectedAccount.defaultModel]
+                    .filter(Boolean)
+                    .join(" / ")}
+                </span>
+              </p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {usersError ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-800 p-4 text-sm mb-5">
+          {usersError}
+        </div>
+      ) : null}
+
       {error ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-800 p-4 text-sm mb-5">
           {error}
         </div>
       ) : null}
 
-      {loading && totals.calls === 0 ? (
+      {(usersLoading || loading) && totals.calls === 0 ? (
         <div className="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-          Loading AI usage…
+          {usersLoading ? "Loading users…" : "Loading AI usage…"}
+        </div>
+      ) : !ready ? (
+        <div className="rounded-xl border border-dashed border-border bg-muted/30 p-8 text-center text-sm text-muted-foreground">
+          {userOptions.length === 0
+            ? "No registered users found."
+            : "Select a user to view AI usage."}
         </div>
       ) : (
         <div className="space-y-5">

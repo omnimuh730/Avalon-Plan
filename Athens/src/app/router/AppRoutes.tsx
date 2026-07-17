@@ -19,6 +19,7 @@ const {
   interviews: InterviewPrepPage,
   reports: AnalyticsPage,
   "ai-usage": AiUsagePage,
+  "api-usage-monitor": ApiUsageMonitorPage,
   "vendor-monitor": VendorMonitorPage,
   firebase: FirebaseExplorerPage,
   "bid-management": BidManagementPage,
@@ -78,6 +79,7 @@ export function AppRoutes() {
           }
         />
         <Route path={PATHS.aiUsage.slice(1)} element={<AiUsagePage />} />
+        <Route path={PATHS.apiUsageMonitor.slice(1)} element={<ApiUsageMonitorPage />} />
         <Route
           path={`${PATHS.vendorMonitor.slice(1)}/:tab?`}
           element={

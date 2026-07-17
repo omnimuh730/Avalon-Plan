@@ -11,6 +11,7 @@ import {
   Video,
   BarChart2,
   Cpu,
+  Gauge,
   Activity,
   Flame,
   Clapperboard,
@@ -41,6 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "firebase", label: "Firebase Atlas", icon: Flame },
   { id: "reports", label: "Analytics", icon: BarChart2, comingSoon: true },
   { id: "ai-usage", label: "AI API Usage", icon: Cpu },
+  { id: "api-usage-monitor", label: "API Usage Monitor", icon: Gauge },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -48,7 +50,7 @@ export const NAV_GROUPS: { label: string | null; ids: View[] }[] = [
   { label: "WORKSPACE", ids: ["dashboard", "job-board", "resumes"] },
   { label: "PIPELINE", ids: ["ats", "copilot"] },
   { label: "TOOLS", ids: ["agents", "mail", "calendar", "interviews", "vendor-monitor", "bid-management", "firebase"] },
-  { label: "INSIGHTS", ids: ["reports", "ai-usage"] },
+  { label: "INSIGHTS", ids: ["reports", "ai-usage", "api-usage-monitor"] },
   { label: null, ids: ["settings"] },
 ];
 
@@ -64,6 +66,7 @@ export const VIEW_TITLES: Record<View, string> = {
   interviews: "Interview Prep",
   reports: "Job Search Analytics",
   "ai-usage": "AI API Usage",
+  "api-usage-monitor": "API Usage Monitor",
   "vendor-monitor": "Vendor Monitor",
   "bid-management": "Bid Management",
   firebase: "Firebase Atlas",
