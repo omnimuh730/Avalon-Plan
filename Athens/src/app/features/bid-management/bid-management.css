@@ -836,17 +836,18 @@
   font-size: 0.85rem;
 }
 
-/* Player modal */
+/* Player modal — portaled to body; must sit above Sheet overlay (z-50) */
 .bm-player-overlay {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: 200;
   background: rgba(6, 8, 7, 0.72);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
+  pointer-events: auto;
 }
 
 .bm-player {
@@ -857,6 +858,13 @@
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+  isolation: isolate;
+}
+
+/* While the recording player is open, don't let the detail Sheet chrome steal hits. */
+body[data-bm-player-open="1"] [data-slot="sheet-overlay"] {
+  pointer-events: none !important;
 }
 
 .bm-player-top {
@@ -883,6 +891,8 @@
 }
 
 .bm-player-close {
+  position: relative;
+  z-index: 2;
   border: 0;
   background: rgba(255, 255, 255, 0.08);
   color: inherit;
@@ -894,6 +904,7 @@
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
+  pointer-events: auto;
 }
 
 .bm-player-close:hover {
@@ -902,6 +913,7 @@
 
 .bm-player-stage {
   position: relative;
+  z-index: 1;
   background: #000;
   aspect-ratio: 16 / 9;
   display: flex;
@@ -910,10 +922,13 @@
 }
 
 .bm-player-video {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: contain;
   background: #000;
+  pointer-events: auto;
 }
 
 .bm-player-state {

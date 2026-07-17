@@ -37,7 +37,9 @@ export function SlidePanel({
   lockDismiss = false,
 }: SlidePanelProps) {
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    // modal=false while a higher layer (video player) is open so Radix does not
+    // inert the rest of the document / trap focus away from the player.
+    <Sheet open={open} onOpenChange={onOpenChange} modal={!lockDismiss}>
       <SheetContent
         side={side}
         aria-describedby={undefined}
@@ -45,6 +47,7 @@ export function SlidePanel({
           "w-full p-0 gap-0 flex flex-col bg-card border-border shadow-xl",
           WIDTHS[width],
           !showClose && "[&>button]:hidden",
+          lockDismiss && "bm-sheet-locked",
           className,
         )}
         onPointerDownOutside={(event) => {

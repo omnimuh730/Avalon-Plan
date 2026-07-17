@@ -1,10 +1,12 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { X, AlertCircle, Loader2 } from "lucide-react";
 
 /**
  * YouTube-style player fed by a signed Firebase Storage URL.
- * Signing is resolved by the caller (useRecordingUrl).
+ * Portaled to document.body so it sits above the Bid detail Sheet overlay
+ * (Radix portals at z-50 and otherwise steals all pointer events).
  */
 export function MediaPlayerModal({
   open,
@@ -28,23 +30,38 @@ export function MediaPlayerModal({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.body.dataset.bmPlayerOpen = "1";
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.body.style.overflow = prevOverflow;
+      delete document.body.dataset.bmPlayerOpen;
+    };
   }, [open, onClose]);
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
           className="bm-player-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
           onMouseDown={(e) => {
-            // Only dismiss when pressing the dimmed backdrop, not the player chrome.
             if (e.target === e.currentTarget) onClose();
           }}
         >
@@ -55,14 +72,21 @@ export function MediaPlayerModal({
             exit={{ opacity: 0, y: 16, scale: 0.98 }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
           >
             <div className="bm-player-top">
               <div>
                 <h2 className="bm-player-title">{title}</h2>
                 {subtitle ? <p className="bm-player-sub">{subtitle}</p> : null}
               </div>
-              <button type="button" className="bm-player-close" onClick={onClose} aria-label="Close">
+              <button
+                type="button"
+                className="bm-player-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose();
+                }}
+                aria-label="Close"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -84,6 +108,7 @@ export function MediaPlayerModal({
                   className="bm-player-video"
                   src={src}
                   controls
+                  controlsList="nodownload"
                   autoPlay
                   playsInline
                   preload="metadata"
@@ -102,6 +127,7 @@ export function MediaPlayerModal({
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
