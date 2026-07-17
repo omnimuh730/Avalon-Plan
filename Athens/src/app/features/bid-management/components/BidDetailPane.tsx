@@ -22,8 +22,14 @@ import {
 import { AgentResumePdfPreview } from "../../agents/components/AgentResumePdfPreview";
 import { SlidePanel, SlidePanelHeader } from "../../../components/overlays";
 import { useApplier } from "@/context/applier-context";
-import { fetchBidResultEvents } from "../../../api/bidResults";
-import type { BidResult, BidResultStatus, BidReviewEvent, FlagLight } from "../types";
+import { fetchBidResultAiUsage, fetchBidResultEvents } from "../../../api/bidResults";
+import type {
+  BidAiUsageRow,
+  BidResult,
+  BidResultStatus,
+  BidReviewEvent,
+  FlagLight,
+} from "../types";
 import { EDITABLE_STATUSES, canChangeStatus, isEditableStatus, isRejectableStatus } from "../types";
 import { STATUS_LABELS, formatDuration, formatWhen } from "../lib";
 import { useBidPreview } from "../hooks/useBidPreview";
@@ -87,10 +93,54 @@ const EVENT_LABELS: Record<string, string> = {
   reviewer_undo: "Reviewer undo",
   vendor_mark_fixed: "Vendor marked fixed",
   resume_name_mismatch: "Résumé name mismatch",
+  analyze: "Analyze (JD / flags)",
+  recommend_resume: "Recommend resume",
 };
 
 function eventLabel(ev: BidReviewEvent): string {
   return EVENT_LABELS[ev.eventType] || ev.eventType;
+}
+
+function eventMetaLine(ev: BidReviewEvent): string | null {
+  const meta = ev.meta;
+  if (!meta) return null;
+  const bits: string[] = [];
+  if (typeof meta.summary === "string" && meta.summary.trim()) {
+    bits.push(meta.summary.trim().slice(0, 120));
+  }
+  if (typeof meta.recommendedResumeStack === "string" && meta.recommendedResumeStack) {
+    bits.push(`stack: ${meta.recommendedResumeStack}`);
+  }
+  if (meta.useCustomizedResume) bits.push("customized resume");
+  if (typeof meta.recommendWarning === "string" && meta.recommendWarning) {
+    bits.push(meta.recommendWarning);
+  }
+  if (typeof meta.reason === "string" && meta.reason) bits.push(meta.reason);
+  if (typeof meta.resumeStackMatch === "string" && meta.resumeStackMatch) {
+    bits.push(`upload vs stack: ${meta.resumeStackMatch}`);
+  }
+  return bits.length ? bits.join(" · ") : null;
+}
+
+function stackMatchLabel(match: BidResult["resumeStackMatch"]): string {
+  if (match === "match") return "Match";
+  if (match === "mismatch") return "Mismatch";
+  if (match === "unknown") return "Unknown";
+  return "—";
+}
+
+function formatUsd(cost: number | null): string {
+  if (cost == null || !Number.isFinite(cost)) return "—";
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  return `$${cost.toFixed(3)}`;
+}
+
+function featureLabel(feature: string | null): string {
+  if (!feature) return "AI call";
+  if (feature === "bid-job-analyze") return "Page analyze";
+  if (feature === "bid-job-flags") return "Flags";
+  if (feature === "bid-recommend-resume") return "Recommend resume";
+  return feature;
 }
 
 function promptRejectReason(): string | null {
@@ -121,14 +171,18 @@ export function BidDetailPane({
   const preview = useBidPreview(result?.jobId ?? null, result?.bidder.name);
   const [events, setEvents] = useState<BidReviewEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [aiUsage, setAiUsage] = useState<BidAiUsageRow[]>([]);
+  const [aiUsageLoading, setAiUsageLoading] = useState(false);
 
   useEffect(() => {
     if (!result || !applier?.name) {
       setEvents([]);
+      setAiUsage([]);
       return;
     }
     let cancelled = false;
     setEventsLoading(true);
+    setAiUsageLoading(true);
     void fetchBidResultEvents(result.id, applier.name)
       .then((rows) => {
         if (!cancelled) setEvents(rows);
@@ -139,6 +193,16 @@ export function BidDetailPane({
       .finally(() => {
         if (!cancelled) setEventsLoading(false);
       });
+    void fetchBidResultAiUsage(result.id, applier.name)
+      .then((rows) => {
+        if (!cancelled) setAiUsage(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setAiUsage([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAiUsageLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -147,13 +211,16 @@ export function BidDetailPane({
     result?.status,
     result?.resubmitCount,
     result?.rejectCount,
+    result?.recommendedAt,
+    result?.resumeOriginalName,
     applier?.name,
   ]);
 
   const editable = result ? isEditableStatus(result.status) : false;
   const rejectable = result ? isRejectableStatus(result.status) : false;
   const detail = preview.jobDetail || result?.jobDetail;
-  const recommended = preview.recommendedResume || result?.recommendedResume;
+  // Prefer Bid-Monitor Library recommendation over job-preview stack.
+  const recommended = result?.recommendedResume || preview.recommendedResume;
   const submission = result?.submissionResume;
   const desc = detail?.description?.trim() || "";
   const posted =
@@ -262,6 +329,12 @@ export function BidDetailPane({
                   {result.resumeMismatch ? (
                     <span className="bm-mini-badge danger">Résumé name mismatch</span>
                   ) : null}
+                  {result.resumeStackMatch === "mismatch" ? (
+                    <span className="bm-mini-badge danger">Stack mismatch</span>
+                  ) : null}
+                  {result.resumeStackMatch === "match" ? (
+                    <span className="bm-mini-badge">Stack match</span>
+                  ) : null}
                 </div>
 
                 <div className="bm-detail-row">
@@ -301,17 +374,75 @@ export function BidDetailPane({
               </div>
 
               <div className="bm-detail-scroll subtle-scroll">
-                {result.resumeMismatch || result.resumeOriginalName ? (
-                  <div
-                    className={`bm-resume-mismatch-banner ${result.resumeMismatch ? "warn" : ""}`}
-                  >
+                {result.analysisSummary ? (
+                  <Section title="Analyze summary">
+                    <div className="bm-notes-box">{result.analysisSummary}</div>
+                  </Section>
+                ) : null}
+
+                {result.recommendedResumeStack ||
+                result.useCustomizedResume ||
+                result.resumeOriginalName ||
+                result.recommendWarning ? (
+                  <Section title="Recommended vs uploaded">
+                    <div
+                      className={`bm-resume-mismatch-banner ${
+                        result.resumeStackMatch === "mismatch" || result.resumeMismatch
+                          ? "warn"
+                          : ""
+                      }`}
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <div>
+                        <strong>
+                          Upload vs Library stack: {stackMatchLabel(result.resumeStackMatch)}
+                        </strong>
+                        <div className="bm-resume-audit-lines">
+                          <div>
+                            Recommended:{" "}
+                            <code>
+                              {result.recommendedResumeStack ||
+                                (result.useCustomizedResume
+                                  ? "Use customized resume"
+                                  : "—")}
+                            </code>
+                          </div>
+                          {result.resumeOriginalName ? (
+                            <div>
+                              Uploaded: <code>{result.resumeOriginalName}</code>
+                            </div>
+                          ) : (
+                            <div>Uploaded: <code>—</code></div>
+                          )}
+                          {result.resumeExpectedName ? (
+                            <div>
+                              Canonical expected: <code>{result.resumeExpectedName}</code>
+                            </div>
+                          ) : null}
+                          {result.resumeCleanedName ? (
+                            <div>
+                              Uploaded as: <code>{result.resumeCleanedName}</code>
+                              {result.resumeRenamed ? " (renamed)" : ""}
+                            </div>
+                          ) : null}
+                          {result.recommendedResumeReason ? (
+                            <div>{result.recommendedResumeReason}</div>
+                          ) : null}
+                          {result.recommendWarning ? (
+                            <div>{result.recommendWarning}</div>
+                          ) : null}
+                          {result.recommendedAt ? (
+                            <div>Recommended {formatWhen(result.recommendedAt)}</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  </Section>
+                ) : result.resumeMismatch ? (
+                  <div className="bm-resume-mismatch-banner warn">
                     <AlertTriangle className="w-3.5 h-3.5" />
                     <div>
-                      <strong>
-                        {result.resumeMismatch
-                          ? "Résumé filename mismatch"
-                          : "Résumé upload audit"}
-                      </strong>
+                      <strong>Résumé filename mismatch</strong>
                       <div className="bm-resume-audit-lines">
                         {result.resumeOriginalName ? (
                           <div>
@@ -321,12 +452,6 @@ export function BidDetailPane({
                         {result.resumeExpectedName ? (
                           <div>
                             Expected: <code>{result.resumeExpectedName}</code>
-                          </div>
-                        ) : null}
-                        {result.resumeCleanedName ? (
-                          <div>
-                            Uploaded as: <code>{result.resumeCleanedName}</code>
-                            {result.resumeRenamed ? " (renamed)" : ""}
                           </div>
                         ) : null}
                       </div>
@@ -464,7 +589,7 @@ export function BidDetailPane({
                 </Section>
 
                 <Section
-                  title="Timeline"
+                  title="Bidder activity"
                   action={
                     eventsLoading ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin opacity-50" />
@@ -475,22 +600,26 @@ export function BidDetailPane({
                 >
                   {events.length > 0 ? (
                     <ol className="bm-timeline-list events">
-                      {events.map((ev) => (
-                        <li key={ev.id} className="done">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <div>
-                            <strong>{eventLabel(ev)}</strong>
-                            <span>
-                              {formatWhen(ev.createdAt)}
-                              {ev.fromStatus && ev.toStatus
-                                ? ` · ${ev.fromStatus} → ${ev.toStatus}`
-                                : ""}
-                              {ev.rejectReason ? ` · ${ev.rejectReason}` : ""}
-                              {ev.rejectSource ? ` · source: ${ev.rejectSource}` : ""}
-                            </span>
-                          </div>
-                        </li>
-                      ))}
+                      {events.map((ev) => {
+                        const metaLine = eventMetaLine(ev);
+                        return (
+                          <li key={ev.id} className="done">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <div>
+                              <strong>{eventLabel(ev)}</strong>
+                              <span>
+                                {formatWhen(ev.createdAt)}
+                                {ev.fromStatus && ev.toStatus
+                                  ? ` · ${ev.fromStatus} → ${ev.toStatus}`
+                                  : ""}
+                                {ev.rejectReason ? ` · ${ev.rejectReason}` : ""}
+                                {ev.rejectSource ? ` · source: ${ev.rejectSource}` : ""}
+                                {metaLine ? ` · ${metaLine}` : ""}
+                              </span>
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ol>
                   ) : (
                     <ol className="bm-timeline-list">
@@ -536,6 +665,42 @@ export function BidDetailPane({
                         </div>
                       </li>
                     </ol>
+                  )}
+                </Section>
+
+                <Section
+                  title="AI usage"
+                  action={
+                    aiUsageLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin opacity-50" />
+                    ) : null
+                  }
+                >
+                  {aiUsage.length > 0 ? (
+                    <ul className="bm-ai-usage-list">
+                      {aiUsage.map((row) => (
+                        <li key={row.id} className="bm-ai-usage-row">
+                          <div className="bm-ai-usage-head">
+                            <strong>{featureLabel(row.feature)}</strong>
+                            <span>{formatWhen(row.createdAt)}</span>
+                          </div>
+                          <div className="bm-ai-usage-meta">
+                            {row.billedModel || row.requestedModel || "—"}
+                            {" · "}
+                            {row.totalTokens.toLocaleString()} tokens
+                            {" · "}
+                            {formatUsd(row.costUsd)}
+                            {row.success ? "" : " · failed"}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="bm-empty-inline">
+                      {aiUsageLoading
+                        ? "Loading AI usage…"
+                        : "No AI calls logged for this bid yet"}
+                    </div>
                   )}
                 </Section>
 

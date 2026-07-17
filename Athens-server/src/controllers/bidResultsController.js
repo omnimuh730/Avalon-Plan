@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import {
 	getVendorTasksCollection,
 	jobsCollection,
+	llmCallLogCollection,
 } from "../db/mongo.js";
 import { detectJobSource } from "../lib/jobSource.js";
 import { deriveBidUiStatus, REVIEW_STATUSES } from "../lib/bidResultStatus.js";
@@ -11,6 +12,7 @@ import {
 	profileNameToFileBase,
 	resumeBasename,
 } from "../lib/canonicalResumeName.js";
+import { matchUploadToRecommended } from "../lib/resumeCatalogCompress.js";
 import {
 	getJobBidReadyDate,
 	listBidQueueJobs,
@@ -151,8 +153,39 @@ function mapTaskToBidResult(task) {
 		},
 		analysisSummary: task.analysisSummary || null,
 		jobDetail: null,
-		recommendedResume: null,
+		recommendedResume: task.recommendedResumeStack
+			? {
+					name: task.useCustomizedResume
+						? "Use customized resume"
+						: `Recommended · ${task.recommendedResumeStack}`,
+					techStack: task.recommendedResumeStack,
+					source: "Library recommend",
+					fileName: null,
+					usedAt: task.recommendedAt || null,
+					scorePercent: null,
+				}
+			: task.useCustomizedResume
+				? {
+						name: "Use customized resume",
+						techStack: null,
+						source: "Library recommend",
+						fileName: null,
+						usedAt: task.recommendedAt || null,
+						scorePercent: null,
+					}
+				: null,
 		submissionResume: null,
+		recommendedResumeStack: task.recommendedResumeStack || null,
+		recommendedResumeReason: task.recommendedResumeReason || null,
+		useCustomizedResume: Boolean(task.useCustomizedResume),
+		recommendWarning: task.recommendWarning || null,
+		recommendedAt: task.recommendedAt || null,
+		resumeStackMatch:
+			task.resumeStackMatch === "match" ||
+			task.resumeStackMatch === "mismatch" ||
+			task.resumeStackMatch === "unknown"
+				? task.resumeStackMatch
+				: null,
 		recording,
 		notes:
 			status === "pending"
@@ -178,6 +211,30 @@ function mapTaskToBidResult(task) {
 		resumeCleanedName: task.resumeCleanedName || null,
 		resumeRenamed: Boolean(task.resumeRenamed),
 		resumeMismatch: Boolean(task.resumeMismatch),
+	};
+}
+
+function serializeAiUsageRow(doc) {
+	if (!doc) return null;
+	return {
+		id: String(doc._id),
+		feature: doc.feature || null,
+		provider: doc.provider || null,
+		requestedModel: doc.requestedModel || null,
+		billedModel: doc.billedModel || null,
+		inputTokens: Number(doc.inputTokens || 0) || 0,
+		cachedInputTokens: Number(doc.cachedInputTokens || 0) || 0,
+		outputTokens: Number(doc.outputTokens || 0) || 0,
+		totalTokens: Number(doc.totalTokens || 0) || 0,
+		costUsd: typeof doc.costUsd === "number" ? doc.costUsd : null,
+		success: doc.success !== false,
+		durationMs: typeof doc.durationMs === "number" ? doc.durationMs : null,
+		applierName: doc.applierName || null,
+		jobId: doc.jobId || null,
+		createdAt:
+			doc.createdAt instanceof Date
+				? doc.createdAt.toISOString()
+				: doc.createdAt ?? null,
 	};
 }
 
@@ -1000,6 +1057,22 @@ export async function saveBidResultFlags(req, res) {
 		if (summary !== undefined) fields.analysisSummary = summary || null;
 
 		const doc = await upsertVendorTaskRecording(applierName, jobId, fields);
+
+		await appendBidReviewEvent({
+			taskId: doc?._id ? String(doc._id) : null,
+			jobId,
+			applierName,
+			eventType: "analyze",
+			fromStatus: null,
+			toStatus: null,
+			actorType: "vendor",
+			actorName: applierName,
+			meta: {
+				flags,
+				summary: fields.analysisSummary ?? null,
+			},
+		});
+
 		const task = serializeTask(doc);
 		return res.json({ success: true, task, result: mapTaskToBidResult(task) });
 	} catch (err) {
@@ -1102,6 +1175,11 @@ export async function saveResumeAudit(req, res) {
 				? req.body.renamed
 				: cleanedName !== originalName;
 		const mismatch = isResumeNameMismatch(originalName, expectedName);
+		const recommendedStack =
+			typeof existing?.recommendedResumeStack === "string"
+				? existing.recommendedResumeStack
+				: null;
+		const resumeStackMatch = matchUploadToRecommended(originalName, recommendedStack);
 
 		const doc = await upsertVendorTaskRecording(applierName, jobId, {
 			resumeOriginalName: originalName,
@@ -1109,6 +1187,7 @@ export async function saveResumeAudit(req, res) {
 			resumeCleanedName: cleanedName,
 			resumeRenamed: renamed,
 			resumeMismatch: mismatch,
+			resumeStackMatch,
 			title: existing?.title || title,
 			company: existing?.company || company,
 		});
@@ -1128,6 +1207,8 @@ export async function saveResumeAudit(req, res) {
 					cleanedName,
 					renamed,
 					mismatch,
+					resumeStackMatch,
+					recommendedResumeStack: recommendedStack,
 					pageUrl: typeof req.body?.pageUrl === "string" ? req.body.pageUrl : null,
 				},
 			});
@@ -1189,6 +1270,55 @@ export async function downloadBidResumesZip(req, res) {
 		return res.status(500).json({
 			success: false,
 			error: err.message || "Failed to build resumes zip.",
+		});
+	}
+}
+
+/**
+ * GET /bid-results/:id/ai-usage?applierName=
+ * Per-bid LLM call history from llm_call_log (jobId scoped).
+ */
+export async function getBidResultAiUsage(req, res) {
+	try {
+		const rawId = String(req.params.id ?? "").trim().replace(/^bid-/, "");
+		const applierName = String(req.query.applierName ?? "").trim();
+		if (!applierName) {
+			return res.status(400).json({ success: false, error: "applierName is required." });
+		}
+		if (!rawId) {
+			return res.status(400).json({ success: false, error: "id is required." });
+		}
+		if (!llmCallLogCollection) {
+			return res.status(503).json({ success: false, error: "MongoDB is not connected." });
+		}
+
+		const collection = getVendorTasksCollection();
+		if (!collection) {
+			return res.status(503).json({ success: false, error: "MongoDB is not connected." });
+		}
+
+		const doc = await findVendorTaskDoc(collection, applierName, rawId);
+		const jobId = doc?.jobId ? String(doc.jobId) : rawId;
+		const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+
+		const rows = await llmCallLogCollection
+			.find({ jobId: String(jobId) })
+			.sort({ createdAt: -1 })
+			.limit(limit)
+			.toArray();
+
+		return res.json({
+			success: true,
+			jobId,
+			applierName,
+			rows: rows.map(serializeAiUsageRow).filter(Boolean),
+			total: rows.length,
+		});
+	} catch (err) {
+		console.error("[bid-results] ai-usage failed", err);
+		return res.status(500).json({
+			success: false,
+			error: err.message || "Failed to load AI usage.",
 		});
 	}
 }

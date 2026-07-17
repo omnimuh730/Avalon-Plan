@@ -102,6 +102,34 @@ export type BidResult = {
   resumeCleanedName?: string | null;
   resumeRenamed?: boolean;
   resumeMismatch?: boolean;
+  /** JD page summary from Bid-Monitor Analyze. */
+  analysisSummary?: string | null;
+  /** Library stack recommended by Bid-Monitor Recommend resume. */
+  recommendedResumeStack?: string | null;
+  recommendedResumeReason?: string | null;
+  useCustomizedResume?: boolean;
+  recommendWarning?: string | null;
+  recommendedAt?: string | null;
+  /** Upload basename vs recommended Library stack. */
+  resumeStackMatch?: "match" | "mismatch" | "unknown" | null;
+};
+
+export type BidAiUsageRow = {
+  id: string;
+  feature: string | null;
+  provider: string | null;
+  requestedModel: string | null;
+  billedModel: string | null;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number | null;
+  success: boolean;
+  durationMs: number | null;
+  applierName: string | null;
+  jobId: string | null;
+  createdAt: string | null;
 };
 
 export type BidResultKpis = Record<BidResultStatus, number> & { total: number };

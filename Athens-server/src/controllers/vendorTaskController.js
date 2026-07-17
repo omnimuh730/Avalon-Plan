@@ -124,6 +124,23 @@ export function serializeTask(doc, sessionMatch = null) {
 			typeof doc.resumeCleanedName === "string" ? doc.resumeCleanedName : null,
 		resumeRenamed: Boolean(doc.resumeRenamed),
 		resumeMismatch: Boolean(doc.resumeMismatch),
+		recommendedResumeStack:
+			typeof doc.recommendedResumeStack === "string" ? doc.recommendedResumeStack : null,
+		recommendedResumeReason:
+			typeof doc.recommendedResumeReason === "string" ? doc.recommendedResumeReason : null,
+		useCustomizedResume: Boolean(doc.useCustomizedResume),
+		recommendWarning:
+			typeof doc.recommendWarning === "string" ? doc.recommendWarning : null,
+		recommendedAt:
+			doc.recommendedAt instanceof Date
+				? doc.recommendedAt.toISOString()
+				: doc.recommendedAt ?? null,
+		resumeStackMatch:
+			doc.resumeStackMatch === "match" ||
+			doc.resumeStackMatch === "mismatch" ||
+			doc.resumeStackMatch === "unknown"
+				? doc.resumeStackMatch
+				: null,
 	};
 }
 

@@ -313,19 +313,20 @@ const AthensApi = (() => {
     });
   }
 
-  async function analyzeJobPage(applierName, { pageContext, sessionContext }) {
+  async function analyzeJobPage(applierName, { pageContext, sessionContext, jobId }) {
     return fetchJson('/job-analyze/page', {
       method: 'POST',
       body: {
         applierName,
         pageContext,
         sessionContext: sessionContext || undefined,
+        jobId: jobId || undefined,
       },
       timeoutMs: ANALYZE_TIMEOUT_MS,
     });
   }
 
-  async function analyzeJobFlags(applierName, { pageContext, sessionContext, neededFlags }) {
+  async function analyzeJobFlags(applierName, { pageContext, sessionContext, neededFlags, jobId }) {
     return fetchJson('/job-analyze/flags', {
       method: 'POST',
       body: {
@@ -333,6 +334,19 @@ const AthensApi = (() => {
         pageContext,
         sessionContext: sessionContext || undefined,
         neededFlags: neededFlags || ['remote', 'clearance'],
+        jobId: jobId || undefined,
+      },
+      timeoutMs: ANALYZE_TIMEOUT_MS,
+    });
+  }
+
+  async function recommendResume(applierName, { pageContext, jobId }) {
+    return fetchJson('/job-analyze/recommend-resume', {
+      method: 'POST',
+      body: {
+        applierName,
+        pageContext,
+        jobId: jobId || undefined,
       },
       timeoutMs: ANALYZE_TIMEOUT_MS,
     });
@@ -480,6 +494,7 @@ const AthensApi = (() => {
     saveBidFlags,
     analyzeJobPage,
     analyzeJobFlags,
+    recommendResume,
     checkAthensHealth,
     checkGeneratedResumes,
     getResumePdfUrl,

@@ -46,6 +46,9 @@ const analyzeStatus = document.getElementById('analyzeStatus');
 const summaryDetails = document.getElementById('summaryDetails');
 const analyzeSummary = document.getElementById('analyzeSummary');
 const flagExplanations = document.getElementById('flagExplanations');
+const recommendResumeBtn = document.getElementById('recommendResumeBtn');
+const recommendResumeResult = document.getElementById('recommendResumeResult');
+const recommendResumeWarning = document.getElementById('recommendResumeWarning');
 const formAnswersDetails = document.getElementById('formAnswersDetails');
 const formAnswersCount = document.getElementById('formAnswersCount');
 const formAnswersList = document.getElementById('formAnswersList');
@@ -221,6 +224,48 @@ function setLight(el, status) {
   else el.classList.add('unknown');
 }
 
+function renderRecommend(recommend) {
+  if (!recommendResumeResult || !recommendResumeWarning) return;
+
+  if (!recommend) {
+    recommendResumeResult.classList.add('hidden');
+    recommendResumeResult.textContent = '';
+    recommendResumeWarning.classList.add('hidden');
+    recommendResumeWarning.textContent = '';
+    return;
+  }
+
+  if (recommend.warning && !recommend.isJobDescription) {
+    recommendResumeResult.textContent = 'None';
+    recommendResumeResult.classList.remove('hidden');
+    recommendResumeWarning.textContent = recommend.warning;
+    recommendResumeWarning.classList.remove('hidden');
+    return;
+  }
+
+  if (recommend.recommendedResume) {
+    recommendResumeResult.textContent = recommend.recommendedResume;
+    recommendResumeResult.classList.remove('hidden');
+  } else if (recommend.useCustomizedResume) {
+    recommendResumeResult.textContent = 'Use customized resume';
+    recommendResumeResult.classList.remove('hidden');
+  } else {
+    recommendResumeResult.textContent = 'None';
+    recommendResumeResult.classList.remove('hidden');
+  }
+
+  if (recommend.warning) {
+    recommendResumeWarning.textContent = recommend.warning;
+    recommendResumeWarning.classList.remove('hidden');
+  } else if (recommend.reason) {
+    recommendResumeWarning.textContent = recommend.reason;
+    recommendResumeWarning.classList.remove('hidden');
+  } else {
+    recommendResumeWarning.classList.add('hidden');
+    recommendResumeWarning.textContent = '';
+  }
+}
+
 function renderAnalysis(data) {
   if (!data) {
     screeningPanel?.classList.add('hidden');
@@ -232,6 +277,8 @@ function renderAnalysis(data) {
     if (flagExplanations) flagExplanations.innerHTML = '';
     formAnswersDetails?.classList.add('hidden');
     if (formAnswersList) formAnswersList.innerHTML = '';
+    if (recommendResumeBtn) recommendResumeBtn.disabled = true;
+    renderRecommend(null);
     return;
   }
 
@@ -239,6 +286,8 @@ function renderAnalysis(data) {
   setLight(lightJd, data.jdAnalyzed ? 'green' : 'unknown');
   setLight(lightRemote, data.flags?.remote?.status);
   setLight(lightClearance, data.flags?.clearance?.status);
+  if (recommendResumeBtn) recommendResumeBtn.disabled = !data.jdAnalyzed;
+  renderRecommend(data.recommend || null);
 
   if (data.summary) {
     summaryDetails?.classList.remove('hidden');
@@ -984,6 +1033,7 @@ async function runAnalyze() {
       return;
     }
 
+    const priorRecommend = persistedAnalysis?.recommend || null;
     persistedAnalysis = response.analysis || {
       jdAnalyzed: response.jdAnalyzed,
       flags: response.flags || { remote: null, clearance: null },
@@ -996,6 +1046,9 @@ async function runAnalyze() {
           ? 'Analyzed with local heuristics (no LLM key or LLM unavailable)'
           : response.flagsError || response.pageError || null,
     };
+    if (!persistedAnalysis.recommend && priorRecommend) {
+      persistedAnalysis.recommend = priorRecommend;
+    }
     renderAnalysis(persistedAnalysis);
   } catch (err) {
     alert(err.message || 'Analyze failed.');
@@ -1011,6 +1064,77 @@ startRecordingBtn?.addEventListener('click', () => {
 
 analyzeBtn?.addEventListener('click', () => {
   runAnalyze().catch((err) => alert(err?.message || 'Analyze failed.'));
+});
+
+async function runRecommendResume() {
+  if (!persistedAnalysis?.jdAnalyzed) {
+    alert('Analyze the job first (JD light green), then recommend a resume.');
+    return;
+  }
+
+  let tabId = resolveFinishTabId() || currentTabId;
+  const job = currentTabState?.applyJob;
+  if (!tabId && activeJobId) {
+    const reopen = await sendMessage({ type: 'REOPEN_APPLY_TAB', jobId: activeJobId });
+    tabId = reopen?.tabId || null;
+  }
+  if (!tabId) {
+    alert('Open a job tab first.');
+    return;
+  }
+
+  if (recommendResumeBtn) {
+    recommendResumeBtn.disabled = true;
+    recommendResumeBtn.textContent = 'Recommending…';
+  }
+  if (recommendResumeWarning) {
+    recommendResumeWarning.textContent = 'Matching Library resumes to this JD…';
+    recommendResumeWarning.classList.remove('hidden');
+  }
+
+  try {
+    const response = await sendMessage({
+      type: 'RECOMMEND_RESUME',
+      tabId,
+      jobId: job?.id || job?.athensJobId || activeJobId,
+    });
+
+    if (!response?.ok) {
+      renderRecommend({
+        recommendedResume: null,
+        useCustomizedResume: false,
+        isJobDescription: false,
+        warning: response?.error || 'Recommend resume failed.',
+      });
+      alert(response?.error || 'Recommend resume failed. Is Athens-server running?');
+      return;
+    }
+
+    const recommend = response.recommend || {
+      recommendedResume: response.result?.matchedCatalogKey || null,
+      useCustomizedResume: Boolean(response.result?.useCustomizedResume),
+      warning: response.result?.warning || null,
+      reason: response.result?.reason || null,
+      isJobDescription: Boolean(response.result?.isJobDescription),
+    };
+
+    persistedAnalysis = {
+      ...(persistedAnalysis || {}),
+      recommend,
+    };
+    renderRecommend(recommend);
+  } catch (err) {
+    alert(err.message || 'Recommend resume failed.');
+  } finally {
+    if (recommendResumeBtn) {
+      recommendResumeBtn.disabled = !persistedAnalysis?.jdAnalyzed;
+      recommendResumeBtn.textContent = 'Recommend resume';
+    }
+  }
+}
+
+recommendResumeBtn?.addEventListener('click', () => {
+  runRecommendResume().catch((err) => alert(err?.message || 'Recommend resume failed.'));
 });
 
 openJobBtn?.addEventListener('click', () => {

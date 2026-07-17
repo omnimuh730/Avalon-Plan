@@ -1679,3 +1679,39 @@ body[data-bm-player-open="1"] [data-slot="sheet-overlay"] {
   font-size: 0.7rem;
   word-break: break-all;
 }
+
+.bm-ai-usage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bm-ai-usage-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  background: color-mix(in srgb, var(--background, #fff) 92%, transparent);
+}
+
+.bm-ai-usage-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.bm-ai-usage-head span {
+  color: var(--muted-foreground, #6b7280);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.bm-ai-usage-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted-foreground, #6b7280);
+  line-height: 1.4;
+}

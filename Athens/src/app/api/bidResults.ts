@@ -1,5 +1,6 @@
 import { API_BASE } from "@/lib/api-base";
 import type {
+  BidAiUsageRow,
   BidResult,
   BidResultStatus,
   BidResultStats,
@@ -31,6 +32,7 @@ function companyLabel(company: unknown): string {
 }
 
 function normalizeBidResult(row: BidResult): BidResult {
+  const stackMatch = row.resumeStackMatch;
   return {
     ...row,
     job: {
@@ -45,6 +47,27 @@ function normalizeBidResult(row: BidResult): BidResult {
     resubmitCount: Number(row.resubmitCount || 0) || 0,
     resumeMismatch: Boolean(row.resumeMismatch),
     resumeRenamed: Boolean(row.resumeRenamed),
+    useCustomizedResume: Boolean(row.useCustomizedResume),
+    analysisSummary:
+      typeof row.analysisSummary === "string" ? row.analysisSummary : null,
+    recommendedResumeStack:
+      typeof row.recommendedResumeStack === "string"
+        ? row.recommendedResumeStack
+        : null,
+    recommendedResumeReason:
+      typeof row.recommendedResumeReason === "string"
+        ? row.recommendedResumeReason
+        : null,
+    recommendWarning:
+      typeof row.recommendWarning === "string" ? row.recommendWarning : null,
+    recommendedAt:
+      typeof row.recommendedAt === "string" ? row.recommendedAt : null,
+    resumeStackMatch:
+      stackMatch === "match" ||
+      stackMatch === "mismatch" ||
+      stackMatch === "unknown"
+        ? stackMatch
+        : null,
   };
 }
 
@@ -86,6 +109,18 @@ export async function fetchBidResultEvents(
   );
   const data = await parseJson<{ events?: BidReviewEvent[] }>(res);
   return Array.isArray(data.events) ? data.events : [];
+}
+
+export async function fetchBidResultAiUsage(
+  id: string,
+  applierName: string,
+): Promise<BidAiUsageRow[]> {
+  const params = new URLSearchParams({ applierName });
+  const res = await fetch(
+    `${API_BASE}/bid-results/${encodeURIComponent(id)}/ai-usage?${params}`,
+  );
+  const data = await parseJson<{ rows?: BidAiUsageRow[] }>(res);
+  return Array.isArray(data.rows) ? data.rows : [];
 }
 
 export async function patchBidResultStatus(

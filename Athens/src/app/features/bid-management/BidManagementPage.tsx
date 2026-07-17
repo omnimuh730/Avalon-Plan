@@ -96,7 +96,10 @@ function TicketCard({
         {result.recording ? <Film className="w-3 h-3 bm-ticket-rec" /> : null}
       </div>
       <div className="bm-ticket-title">{result.job.title}</div>
-      {(result.resubmitCount ?? 0) > 0 || result.resumeMismatch || result.rejectSource ? (
+      {(result.resubmitCount ?? 0) > 0 ||
+      result.resumeMismatch ||
+      result.resumeStackMatch === "mismatch" ||
+      result.rejectSource ? (
         <div className="bm-ticket-badges">
           {(result.resubmitCount ?? 0) > 0 ? (
             <span className="bm-mini-badge warn">×{result.resubmitCount} resub</span>
@@ -105,6 +108,9 @@ function TicketCard({
             <span className="bm-mini-badge">from skip</span>
           ) : null}
           {result.resumeMismatch ? <span className="bm-mini-badge danger">name</span> : null}
+          {result.resumeStackMatch === "mismatch" ? (
+            <span className="bm-mini-badge danger">stack</span>
+          ) : null}
         </div>
       ) : null}
       <div className="bm-ticket-foot">

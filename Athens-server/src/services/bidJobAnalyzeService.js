@@ -2,8 +2,13 @@
  * Bid job page + Remote/Clearance analysis (bid-assistant / vender-server style).
  * AI reads full page innerText (+ optional form hints) and profile JSON — no hardcoded answers.
  */
+import { accountInfoCollection } from "../db/mongo.js";
+import {
+	compressResumeCatalog,
+	resolveCatalogKey,
+} from "../lib/resumeCatalogCompress.js";
 import { chatCompletion, resolveDefaultModel, summarizeUsage } from "./llm/llmService.js";
-import { loadDecryptedAutoBidProfile } from "./autoBidProfileSecrets.js";
+import { decryptAccountDoc, loadDecryptedAutoBidProfile } from "./autoBidProfileSecrets.js";
 
 const FLAG_KEYWORDS = {
 	remote:
@@ -48,6 +53,23 @@ Rules:
 - When a question maps clearly to a profile field, use that value with confidence "high".
 - Never invent API keys or passwords. Never leave suggestedAnswer empty.
 - notJobPageReason: required when isJobPage is false.`;
+
+const RECOMMEND_RESUME_SYSTEM_PROMPT = `You recommend the best matching resume stack for a job description from a fixed list of Library resumes.
+
+Respond with JSON only:
+{
+  "isJobDescription": boolean,
+  "recommendedResume": string | null,
+  "reason": string
+}
+
+Rules:
+- isJobDescription true only when the page text clearly contains a job posting / job description (role requirements, responsibilities, qualifications). Application-only forms without a JD → false.
+- When isJobDescription is false: recommendedResume must be null; reason briefly explains why.
+- When isJobDescription is true: recommendedResume MUST be exactly one Resume label from the provided catalog list (copy the label character-for-character), or null if none fit.
+- Prefer the stack whose skills best cover the JD requirements.
+- Do not invent stack names. Do not include file extensions.
+- reason: one short sentence.`;
 
 function shouldOmitProfileKey(key) {
 	const normalized = String(key || "").trim();
@@ -219,10 +241,45 @@ function normalizeVerdict(verdict) {
 	return { status, explanation: String(verdict.explanation ?? "").trim() };
 }
 
+async function loadAccountCatalog(applierNameRaw) {
+	const name = String(applierNameRaw ?? "").trim();
+	if (!name || !accountInfoCollection) return { catalog: null, stackNames: [] };
+
+	const proj = {
+		projection: {
+			resumeAnalysisCatalog: 1,
+			resumeCatalog: 1,
+			autoBidProfile: 1,
+			name: 1,
+		},
+	};
+	let acc = await accountInfoCollection.findOne({ name }, proj);
+	if (!acc) {
+		const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		acc = await accountInfoCollection.findOne(
+			{ name: { $regex: new RegExp(`^${esc}$`, "i") } },
+			proj,
+		);
+	}
+	acc = decryptAccountDoc(acc);
+	const catalog =
+		acc?.resumeAnalysisCatalog &&
+		typeof acc.resumeAnalysisCatalog === "object" &&
+		!Array.isArray(acc.resumeAnalysisCatalog)
+			? acc.resumeAnalysisCatalog
+			: acc?.resumeCatalog &&
+				  typeof acc.resumeCatalog === "object" &&
+				  !Array.isArray(acc.resumeCatalog)
+				? acc.resumeCatalog
+				: null;
+	const { stackNames } = compressResumeCatalog(catalog || {});
+	return { catalog, stackNames, autoBidProfile: acc?.autoBidProfile || null };
+}
+
 /**
  * @returns {{ result: object, usage: object|null, mode: 'llm'|'heuristic' }}
  */
-export async function analyzeJobPage({ pageContext, applierName, sessionContext }) {
+export async function analyzeJobPage({ pageContext, applierName, sessionContext, jobId }) {
 	if (!pageContext || typeof pageContext !== "object") {
 		throw new Error("pageContext is required.");
 	}
@@ -231,6 +288,7 @@ export async function analyzeJobPage({ pageContext, applierName, sessionContext 
 	const profile = autoBidProfile && typeof autoBidProfile === "object" ? autoBidProfile : {};
 	const { provider, apiKey, model } = resolveDefaultModel(profile);
 	const profileJson = JSON.stringify(sanitizeProfileForLlm(profile), null, 2);
+	const jobIdStr = String(jobId ?? "").trim() || undefined;
 
 	if (!apiKey) {
 		return {
@@ -283,6 +341,7 @@ export async function analyzeJobPage({ pageContext, applierName, sessionContext 
 		cacheKey: "athens-job-bid-page",
 		feature: "bid-job-analyze",
 		applierName,
+		jobId: jobIdStr,
 	});
 
 	let parsed;
@@ -322,6 +381,7 @@ export async function analyzeJobFlags({
 	applierName,
 	sessionContext,
 	neededFlags = ["remote", "clearance"],
+	jobId,
 }) {
 	if (!pageContext || typeof pageContext !== "object") {
 		throw new Error("pageContext is required.");
@@ -338,6 +398,7 @@ export async function analyzeJobFlags({
 	const currentText = String(pageContext.visibleText ?? "").trim();
 	const jdBody =
 		rememberedJd && rememberedJd.length > currentText.length ? rememberedJd : currentText;
+	const jobIdStr = String(jobId ?? "").trim() || undefined;
 
 	const profile = (await loadDecryptedAutoBidProfile(applierName)) || {};
 	const { provider, apiKey, model } = resolveDefaultModel(profile);
@@ -365,8 +426,9 @@ export async function analyzeJobFlags({
 			],
 			jsonMode: true,
 			cacheKey: "athens-job-bid-flags",
-			feature: "bid-job-analyze",
+			feature: "bid-job-flags",
 			applierName,
+			jobId: jobIdStr,
 		});
 
 		let parsed;
@@ -389,4 +451,141 @@ export async function analyzeJobFlags({
 		console.warn("[bid-job-analyze] flags LLM failed, using heuristic:", err.message);
 		return { result: heuristicFlags(jdBody, flags), usage: null, mode: "heuristic" };
 	}
+}
+
+/**
+ * Recommend best Library resume stack from compressed resumeAnalysisCatalog + page JD text.
+ * @returns {{ result: object, usage: object|null, mode: 'llm'|'heuristic' }}
+ */
+export async function recommendResumeForJob({ pageContext, applierName, jobId }) {
+	if (!pageContext || typeof pageContext !== "object") {
+		throw new Error("pageContext is required.");
+	}
+
+	const name = String(applierName ?? "").trim();
+	if (!name) {
+		throw new Error("applierName is required.");
+	}
+
+	const pageText = String(pageContext.visibleText ?? "").replace(/\s+/g, " ").trim();
+	const jobIdStr = String(jobId ?? "").trim() || undefined;
+
+	if (!pageText) {
+		return {
+			result: {
+				isJobDescription: false,
+				recommendedResume: null,
+				matchedCatalogKey: null,
+				useCustomizedResume: true,
+				warning: "Page text is empty — open the job description page and try again.",
+				reason: "No page text.",
+				stackCount: 0,
+			},
+			usage: null,
+			mode: "heuristic",
+		};
+	}
+
+	const { catalog, stackNames, autoBidProfile } = await loadAccountCatalog(name);
+	const { text: catalogText } = compressResumeCatalog(catalog || {});
+
+	if (!stackNames.length) {
+		return {
+			result: {
+				isJobDescription: true,
+				recommendedResume: null,
+				matchedCatalogKey: null,
+				useCustomizedResume: true,
+				warning: "No analyzed Library resumes in resumeAnalysisCatalog.",
+				reason: "Empty catalog — use customized resume.",
+				stackCount: 0,
+			},
+			usage: null,
+			mode: "heuristic",
+		};
+	}
+
+	const profile = autoBidProfile && typeof autoBidProfile === "object" ? autoBidProfile : {};
+	const { provider, apiKey, model } = resolveDefaultModel(profile);
+
+	if (!apiKey) {
+		return {
+			result: {
+				isJobDescription: false,
+				recommendedResume: null,
+				matchedCatalogKey: null,
+				useCustomizedResume: true,
+				warning: "LLM unavailable — set an API key on the applier autoBidProfile.",
+				reason: "No LLM API key.",
+				stackCount: stackNames.length,
+			},
+			usage: null,
+			mode: "heuristic",
+		};
+	}
+
+	const allowedList = stackNames.map((s) => `- ${s}`).join("\n");
+	const { content, usage } = await chatCompletion({
+		provider,
+		apiKey,
+		model,
+		messages: [
+			{ role: "system", content: RECOMMEND_RESUME_SYSTEM_PROMPT },
+			{
+				role: "user",
+				content: `ALLOWED RESUME LABELS (pick exactly one or null):\n${allowedList}\n\nRESUME CATALOG:\n${catalogText}\n\n=== PAGE TEXT ===\nURL: ${pageContext.url || "(unknown)"}\nTitle: ${pageContext.title || "(unknown)"}\n\n${pageText}`,
+			},
+		],
+		jsonMode: true,
+		cacheKey: "athens-job-recommend-resume",
+		feature: "bid-recommend-resume",
+		applierName: name,
+		jobId: jobIdStr,
+	});
+
+	let parsed;
+	try {
+		parsed = JSON.parse(content);
+	} catch {
+		throw new Error("LLM returned invalid JSON for resume recommendation.");
+	}
+
+	const isJobDescription = Boolean(parsed.isJobDescription);
+	const reason = String(parsed.reason ?? "").trim() || null;
+
+	if (!isJobDescription) {
+		return {
+			result: {
+				isJobDescription: false,
+				recommendedResume: null,
+				matchedCatalogKey: null,
+				useCustomizedResume: false,
+				warning:
+					"This page does not appear to contain a job description. Open the JD page and try again.",
+				reason: reason || "Not a job description.",
+				stackCount: stackNames.length,
+			},
+			usage: summarizeUsage(usage, model),
+			mode: "llm",
+		};
+	}
+
+	const matchedCatalogKey = resolveCatalogKey(parsed.recommendedResume, stackNames);
+	const useCustomizedResume = !matchedCatalogKey;
+
+	return {
+		result: {
+			isJobDescription: true,
+			recommendedResume: matchedCatalogKey,
+			matchedCatalogKey,
+			useCustomizedResume,
+			warning: useCustomizedResume
+				? "No Library stack matched — use customized resume."
+				: null,
+			reason: reason || (matchedCatalogKey ? `Matched ${matchedCatalogKey}.` : "No match."),
+			stackCount: stackNames.length,
+		},
+		usage: summarizeUsage(usage, model),
+		mode: "llm",
+	};
 }

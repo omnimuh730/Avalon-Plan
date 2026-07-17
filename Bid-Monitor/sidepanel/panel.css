@@ -415,6 +415,37 @@ body {
   color: var(--bm-muted);
 }
 
+.recommend-resume-block {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recommend-resume-block .btn {
+  width: 100%;
+}
+
+.recommend-resume-result {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--bm-radius-sm);
+  background: color-mix(in srgb, var(--bm-teal) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bm-teal) 35%, transparent);
+  color: var(--bm-ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.recommend-resume-warning {
+  margin: 0;
+  color: var(--bm-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .summary-details,
 .form-answers {
   margin-top: 8px;

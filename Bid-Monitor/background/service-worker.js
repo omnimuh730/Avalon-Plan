@@ -2181,15 +2181,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             applyUrl: message.applyUrl || pageContext.url,
           };
 
+          const jobId = message.jobId || null;
+
           const [pageRes, flagsRes] = await Promise.all([
             AthensApi.analyzeJobPage(applierName, {
               pageContext,
               sessionContext,
+              jobId,
             }).catch((err) => ({ error: err.message })),
             AthensApi.analyzeJobFlags(applierName, {
               pageContext,
               sessionContext,
               neededFlags: ['remote', 'clearance'],
+              jobId,
             }).catch((err) => ({ error: err.message })),
           ]);
 
@@ -2214,7 +2218,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const jdAnalyzed = Boolean(page?.isJobPage || summary || flags.remote || flags.clearance);
           const mode = pageRes?.mode || flagsRes?.mode || null;
 
-          const jobId = message.jobId || null;
           if (applierName && jobId && (flags.remote || flags.clearance || summary)) {
             try {
               await AthensApi.saveBidFlags(applierName, { jobId, flags, summary });
@@ -2226,6 +2229,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const formAnswers = Array.isArray(page?.formAnswers) ? page.formAnswers : [];
           // Count answers from page text (AI), not DOM label/name field count.
           const formCount = page?.formCount ?? formAnswers.length;
+          let priorRecommend = null;
+          if (jobId) {
+            const existing = await ApplyLifecycle.getByJobId(jobId);
+            priorRecommend = existing?.analysis?.recommend || null;
+            if (!priorRecommend) {
+              const active = await ApplyLifecycle.resolveActiveApply();
+              if (
+                active &&
+                (String(active.jobId) === String(jobId) ||
+                  String(active.athensJobId) === String(jobId))
+              ) {
+                priorRecommend = active.analysis?.recommend || null;
+              }
+            }
+          }
           const analysis = {
             jdAnalyzed,
             flags,
@@ -2240,6 +2258,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 : pageRes?.error || flagsRes?.error || null,
             pageUrl: pageContext.url,
             pageTitle: pageContext.title,
+            ...(priorRecommend ? { recommend: priorRecommend } : {}),
           };
 
           if (jobId) {
@@ -2273,6 +2292,91 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Analyze failed.' });
+        }
+        break;
+      }
+
+      case 'RECOMMEND_RESUME': {
+        try {
+          const tabId = message.tabId ?? sender.tab?.id;
+          if (!tabId) {
+            sendResponse({ ok: false, error: 'No tab to analyze.' });
+            break;
+          }
+          const pageContext = await PageContext.extractFromTab(tabId);
+          if (!pageContext?.visibleText) {
+            sendResponse({
+              ok: false,
+              error: 'Could not read page text from this tab (try the job description page).',
+            });
+            break;
+          }
+
+          const auth = await MockApi.getAuth();
+          const settings = await AthensApi.getSettings();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          if (!applierName) {
+            sendResponse({ ok: false, error: 'Athens applier name is required.' });
+            break;
+          }
+
+          const jobId = message.jobId || null;
+          const recommendRes = await AthensApi.recommendResume(applierName, {
+            pageContext,
+            jobId,
+          });
+
+          if (recommendRes?.error || recommendRes?.success === false || recommendRes?.ok === false) {
+            sendResponse({
+              ok: false,
+              error:
+                recommendRes?.error ||
+                'Recommend resume failed. Is Athens-server running?',
+            });
+            break;
+          }
+
+          const result = recommendRes?.result || recommendRes || {};
+          const recommend = {
+            recommendedResume: result.matchedCatalogKey || result.recommendedResume || null,
+            useCustomizedResume: Boolean(result.useCustomizedResume),
+            warning: result.warning || null,
+            reason: result.reason || null,
+            isJobDescription: Boolean(result.isJobDescription),
+            updatedAt: new Date().toISOString(),
+          };
+
+          if (jobId) {
+            const existing = await ApplyLifecycle.getByJobId(jobId);
+            const prevAnalysis = existing?.analysis || {};
+            const nextAnalysis = { ...prevAnalysis, recommend };
+            if (existing) {
+              await ApplyLifecycle.setAnalysis(jobId, nextAnalysis);
+            } else {
+              const active = await ApplyLifecycle.resolveActiveApply();
+              if (
+                active &&
+                (String(active.jobId) === String(jobId) ||
+                  String(active.athensJobId) === String(jobId))
+              ) {
+                await ApplyLifecycle.setAnalysis(active.jobId, {
+                  ...(active.analysis || {}),
+                  recommend,
+                });
+              }
+            }
+          }
+
+          sendResponse({
+            ok: true,
+            recommend,
+            result,
+            usage: recommendRes?.usage || null,
+            mode: recommendRes?.mode || null,
+          });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Recommend resume failed.' });
         }
         break;
       }
