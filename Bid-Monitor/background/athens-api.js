@@ -50,21 +50,44 @@ const AthensApi = (() => {
   }
 
   function mapTaskToJob(task, applierName) {
-    // Align with Athens Bid Management (bidResultsController.mapTaskToBidResult):
-    // In process ONLY after Bid Monitor Apply sets bidderInProcess.
-    // Do NOT use progress === 'active' (Avalon session URL match).
+    // Align with Athens: prefer reviewStatus over skipped.
     let status = 'pending';
-    if (task.status === 'skipped' || task.progress === 'skipped') status = 'skipped';
+    if (task.reviewStatus === 'rejected') status = 'rejected';
+    else if (task.reviewStatus === 'submitted' || task.reviewStatus === 'reviewed') status = 'applied';
+    else if (task.status === 'skipped' || task.progress === 'skipped') status = 'skipped';
     else if (task.progress === 'completed' || task.status === 'done') status = 'applied';
     else if (task.bidderInProcess) status = 'in_process';
+
+    const jobId = task.jobId ? String(task.jobId) : String(task.id);
+    const companyName = task.company || 'Unknown company';
+    const title = task.title || 'Untitled role';
+    const profileBase = applierName.replace(/\s+/g, '') || 'Resume';
+    let expectedResumeName = null;
+    try {
+      if (typeof CanonicalResumeName !== 'undefined') {
+        expectedResumeName = CanonicalResumeName.buildCanonicalResumeFileName(
+          companyName,
+          title,
+          applierName,
+          jobId,
+          '.pdf',
+        );
+      }
+    } catch {
+      expectedResumeName = null;
+    }
 
     return {
       id: String(task.jobId || task.id),
       taskId: String(task.id),
-      companyName: task.company || 'Unknown company',
-      title: task.title || 'Untitled role',
+      companyName,
+      title,
       jdUrl: task.applyUrl || '',
-      resumeFolderName: applierName.replace(/\s+/g, '') || 'Resume',
+      resumeFolderName: profileBase,
+      expectedResumeName,
+      canonicalResumeStem: expectedResumeName
+        ? expectedResumeName.replace(/\.pdf$/i, '')
+        : null,
       status,
       sessionId: task.recording?.sessionId || task.sessionMatch?.sessionId || null,
       appliedAt: task.completedAt || null,
@@ -74,6 +97,12 @@ const AthensApi = (() => {
       hasRecording: Boolean(task.recording?.storagePath),
       hasGeneratedResume: false,
       bidderInProcess: Boolean(task.bidderInProcess),
+      rejectReason: typeof task.rejectReason === 'string' ? task.rejectReason : null,
+      rejectSource: task.rejectSource || null,
+      resubmitCount: Number(task.resubmitCount || 0) || 0,
+      resumeMismatch: Boolean(task.resumeMismatch),
+      resumeOriginalName: task.resumeOriginalName || null,
+      resumeExpectedName: task.resumeExpectedName || null,
     };
   }
 
@@ -86,9 +115,13 @@ const AthensApi = (() => {
       timeoutMs: options.timeoutMs ?? QUEUE_TIMEOUT_MS,
     });
     const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-    // Open Bid Ready queue only — Submitted / Skipped leave the monitor list.
+    // Open Bid Ready queue only — Submitted / Skipped / Rejected leave the monitor list.
+    // Mark-fixed → submitted/done must NOT reappear here.
     const open = tasks.filter(
       (t) =>
+        t.reviewStatus !== 'rejected' &&
+        t.reviewStatus !== 'submitted' &&
+        t.reviewStatus !== 'reviewed' &&
         t.status !== 'skipped' &&
         t.status !== 'done' &&
         t.progress !== 'completed' &&
@@ -175,6 +208,96 @@ const AthensApi = (() => {
       body: { applierName, jobId, bidderName: bidderName || undefined },
       timeoutMs: QUEUE_TIMEOUT_MS,
     });
+  }
+
+  /**
+   * Rejected bids for Bid-Monitor Rejected workspace (not mixed with Bid Ready).
+   */
+  async function fetchRejectedBids(applierName, apiUrl, options = {}) {
+    const name = String(applierName || '').trim();
+    if (!name) throw new Error('Athens applier name is required.');
+    const data = await fetchJson(
+      `/bid-results/rejected?applierName=${encodeURIComponent(name)}`,
+      {
+        apiUrl,
+        timeoutMs: options.timeoutMs ?? QUEUE_TIMEOUT_MS,
+      },
+    );
+    const results = Array.isArray(data.results) ? data.results : [];
+    return results.map((r) => {
+      const company =
+        typeof r.job?.company === 'string'
+          ? r.job.company
+          : r.job?.company?.name || 'Unknown company';
+      return {
+        id: String(r.jobId || r.taskId || r.id),
+        taskId: r.taskId ? String(r.taskId) : null,
+        athensJobId: r.jobId ? String(r.jobId) : null,
+        companyName: company || 'Unknown company',
+        title: r.job?.title || 'Untitled role',
+        jdUrl: r.job?.applyUrl || '',
+        rejectReason:
+          typeof r.rejectReason === 'string' && r.rejectReason.trim()
+            ? r.rejectReason.trim()
+            : null,
+        rejectSource:
+          r.rejectSource === 'submitted' || r.rejectSource === 'skipped'
+            ? r.rejectSource
+            : null,
+        rejectCount: Number(r.rejectCount || 0) || 0,
+        resubmitCount: Number(r.resubmitCount || 0) || 0,
+        rejectedAt: r.lastRejectedAt || r.submittedAt || null,
+        resumeMismatch: Boolean(r.resumeMismatch),
+        resumeOriginalName: r.resumeOriginalName || null,
+        resumeExpectedName: r.resumeExpectedName || null,
+      };
+    });
+  }
+
+  /**
+   * Vendor mark-fixed: rejected → submitted. Does not return item to Bid Ready.
+   */
+  async function markBidFixed(applierName, { jobId, id } = {}) {
+    const name = String(applierName || '').trim();
+    const raw = String(jobId || id || '').trim();
+    if (!name || !raw) throw new Error('applierName and jobId (or id) are required.');
+    return fetchJson('/bid-results/mark-fixed', {
+      method: 'POST',
+      body: {
+        applierName: name,
+        jobId: raw,
+        id: raw,
+      },
+      timeoutMs: QUEUE_TIMEOUT_MS,
+    });
+  }
+
+  async function saveResumeAudit(applierName, payload) {
+    return fetchJson('/bid-results/resume-audit', {
+      method: 'POST',
+      body: {
+        applierName,
+        jobId: payload.jobId,
+        originalName: payload.originalName,
+        expectedName: payload.expectedName || undefined,
+        cleanedName: payload.cleanedName || undefined,
+        renamed: payload.renamed,
+        company: payload.company || undefined,
+        title: payload.title || undefined,
+        pageUrl: payload.pageUrl || undefined,
+      },
+      timeoutMs: QUEUE_TIMEOUT_MS,
+    });
+  }
+
+  async function getResumesZipUrl(applierName, jobIds) {
+    const settings = await getSettings();
+    const base = settings.apiUrl.replace(/\/$/, '');
+    const params = new URLSearchParams({ applierName });
+    if (Array.isArray(jobIds) && jobIds.length) {
+      params.set('jobIds', jobIds.join(','));
+    }
+    return `${base}/bid-results/resumes.zip?${params}`;
   }
 
   async function saveBidFlags(applierName, { jobId, flags, summary }) {
@@ -346,6 +469,10 @@ const AthensApi = (() => {
     saveSettings,
     bidderSignIn,
     fetchBidReadyPools,
+    fetchRejectedBids,
+    markBidFixed,
+    saveResumeAudit,
+    getResumesZipUrl,
     startBid,
     uploadRecording,
     completeBid,

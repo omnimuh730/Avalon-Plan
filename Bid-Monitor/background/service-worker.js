@@ -2,6 +2,7 @@ importScripts(
   'video-format.js',
   'video-store.js',
   'session-recorder.js',
+  'canonical-resume-name.js',
   'athens-api.js',
   'auth-session.js',
   'queue-sync.js',
@@ -1105,11 +1106,26 @@ async function beginRecordingSession({
   }
 
   const normalizedFormat = VideoFormat.normalizePreference(videoFormat);
+  let expectedResumeName = '';
+  try {
+    if (companyName && jobTitle && jobId && bidderName) {
+      expectedResumeName = CanonicalResumeName.buildCanonicalResumeFileName(
+        companyName,
+        jobTitle,
+        bidderName,
+        jobId,
+        '.pdf',
+      );
+    }
+  } catch {
+    expectedResumeName = '';
+  }
   const session = {
     id: createSessionId(),
     status: 'recording',
     bidderName: bidderName?.trim() || 'Unknown',
     resumeSetFolder: resumeSetFolder?.trim() || '',
+    expectedResumeName,
     startedAt: new Date().toISOString(),
     stoppedAt: null,
     startUrl: tab.url,
@@ -2412,12 +2428,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
         }
 
+        const payload = message.payload || {};
         const event = {
-          ...message.payload,
+          ...payload,
           recordedAt: new Date().toISOString(),
-          pageUrl: sender.tab?.url ?? message.payload.pageUrl,
-          pageTitle: sender.tab?.title ?? message.payload.pageTitle,
+          pageUrl: sender.tab?.url ?? payload.pageUrl,
+          pageTitle: sender.tab?.title ?? payload.pageTitle,
           sessionResumeSetFolder: session.resumeSetFolder || null,
+          expectedName:
+            payload.expectedName || session.expectedResumeName || null,
         };
 
         await updateSession(session.id, (s) => ({
@@ -2425,7 +2444,112 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           resumeEvents: [...(s.resumeEvents ?? []), event],
         }));
 
+        // Persist audit to Athens (original vs canonical expected).
+        try {
+          const auth = await MockApi.getAuth();
+          const jobId = session.jobId || null;
+          const originalName =
+            payload.originalName || payload.originalFileName || null;
+          const settings = await AthensApi.getSettings();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          if (applierName && jobId && originalName) {
+            await AthensApi.saveResumeAudit(applierName, {
+              jobId,
+              originalName,
+              expectedName: event.expectedName,
+              cleanedName: payload.cleanedName || payload.submittedFileName,
+              renamed: Boolean(payload.renamed),
+              company: session.companyName,
+              title: session.jobTitle,
+              pageUrl: event.pageUrl,
+            });
+          }
+        } catch (err) {
+          console.warn('Bid Monitor: resume audit failed', err);
+        }
+
+        sendResponse({ ok: true, mismatch: Boolean(event.mismatch) });
+        break;
+      }
+
+      case 'SHOW_TOAST': {
+        const tabId = sender.tab?.id;
+        const text = String(message.message || '').trim();
+        if (tabId != null && text) {
+          chrome.tabs
+            .sendMessage(tabId, { type: 'SHOW_TOAST', message: text }, { frameId: 0 })
+            .catch(() => {});
+        }
         sendResponse({ ok: true });
+        break;
+      }
+
+      case 'GET_REJECTED_BIDS': {
+        try {
+          const auth = await MockApi.getAuth();
+          const settings = await AthensApi.getSettings();
+          // profileName is a slug (eli-taylor); Athens APIs need display applierName.
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          if (!applierName) {
+            sendResponse({ ok: false, error: 'Sign in required.' });
+            break;
+          }
+          const results = await AthensApi.fetchRejectedBids(
+            applierName,
+            settings.apiUrl,
+          );
+          sendResponse({ ok: true, results });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || String(err) });
+        }
+        break;
+      }
+
+      case 'MARK_BID_FIXED': {
+        try {
+          const auth = await MockApi.getAuth();
+          const settings = await AthensApi.getSettings();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          if (!applierName) {
+            sendResponse({ ok: false, error: 'Sign in required.' });
+            break;
+          }
+          const jobId = String(message.jobId || message.id || '').trim();
+          if (!jobId) {
+            sendResponse({ ok: false, error: 'jobId is required.' });
+            break;
+          }
+          const data = await AthensApi.markBidFixed(applierName, { jobId });
+          sendResponse({ ok: true, result: data.result || null });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || String(err) });
+        }
+        break;
+      }
+
+      case 'DOWNLOAD_RESUMES_ZIP': {
+        try {
+          const auth = await MockApi.getAuth();
+          const settings = await AthensApi.getSettings();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          if (!applierName) {
+            sendResponse({ ok: false, error: 'Sign in required.' });
+            break;
+          }
+          const jobIds = Array.isArray(message.jobIds) ? message.jobIds : [];
+          const url = await AthensApi.getResumesZipUrl(applierName, jobIds);
+          await chrome.downloads.download({
+            url,
+            filename: `bid-monitor/resumes/${applierName.replace(/[^\w.\-()+ ]+/g, '_')}-bid-resumes.zip`,
+          });
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || String(err) });
+        }
         break;
       }
 

@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from "react";
+import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Play,
@@ -16,12 +16,15 @@ import {
   Sparkles,
   Loader2,
   GraduationCap,
+  AlertTriangle,
+  History,
 } from "lucide-react";
 import { AgentResumePdfPreview } from "../../agents/components/AgentResumePdfPreview";
 import { SlidePanel, SlidePanelHeader } from "../../../components/overlays";
 import { useApplier } from "@/context/applier-context";
-import type { BidResult, BidResultStatus, FlagLight } from "../types";
-import { EDITABLE_STATUSES, isEditableStatus } from "../types";
+import { fetchBidResultEvents } from "../../../api/bidResults";
+import type { BidResult, BidResultStatus, BidReviewEvent, FlagLight } from "../types";
+import { EDITABLE_STATUSES, canChangeStatus, isEditableStatus, isRejectableStatus } from "../types";
 import { STATUS_LABELS, formatDuration, formatWhen } from "../lib";
 import { useBidPreview } from "../hooks/useBidPreview";
 
@@ -74,6 +77,28 @@ function Section({
   );
 }
 
+const EVENT_LABELS: Record<string, string> = {
+  apply_start: "Apply started",
+  submit: "Submitted",
+  skip: "Skipped",
+  reviewer_reject: "Rejected",
+  skip_to_reject: "Skipped → Rejected",
+  reviewer_mark_reviewed: "Marked reviewed",
+  reviewer_undo: "Reviewer undo",
+  vendor_mark_fixed: "Vendor marked fixed",
+  resume_name_mismatch: "Résumé name mismatch",
+};
+
+function eventLabel(ev: BidReviewEvent): string {
+  return EVENT_LABELS[ev.eventType] || ev.eventType;
+}
+
+function promptRejectReason(): string | null {
+  const raw = window.prompt("Reject reason (optional — leave blank to skip):", "");
+  if (raw === null) return null; // cancelled
+  return raw.trim();
+}
+
 export function BidDetailPane({
   result,
   onClose,
@@ -84,14 +109,49 @@ export function BidDetailPane({
   result: BidResult | null;
   onClose: () => void;
   onWatch: () => void;
-  onChangeStatus: (id: string, status: BidResultStatus) => void;
+  onChangeStatus: (
+    id: string,
+    status: BidResultStatus,
+    options?: { rejectReason?: string | null },
+  ) => void;
   /** Keep the detail sheet open while the recording player is up. */
   lockDismiss?: boolean;
 }) {
   const { applier } = useApplier();
   const preview = useBidPreview(result?.jobId ?? null, result?.bidder.name);
+  const [events, setEvents] = useState<BidReviewEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!result || !applier?.name) {
+      setEvents([]);
+      return;
+    }
+    let cancelled = false;
+    setEventsLoading(true);
+    void fetchBidResultEvents(result.id, applier.name)
+      .then((rows) => {
+        if (!cancelled) setEvents(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setEvents([]);
+      })
+      .finally(() => {
+        if (!cancelled) setEventsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    result?.id,
+    result?.status,
+    result?.resubmitCount,
+    result?.rejectCount,
+    applier?.name,
+  ]);
 
   const editable = result ? isEditableStatus(result.status) : false;
+  const rejectable = result ? isRejectableStatus(result.status) : false;
   const detail = preview.jobDetail || result?.jobDetail;
   const recommended = preview.recommendedResume || result?.recommendedResume;
   const submission = result?.submissionResume;
@@ -100,6 +160,18 @@ export function BidDetailPane({
     detail?.postedLabel ||
     (detail?.postedAt ? formatWhen(detail.postedAt) : null) ||
     (result ? formatWhen(result.pooledAt) : null);
+
+  const handleStatusChange = (next: BidResultStatus) => {
+    if (!result) return;
+    if (!canChangeStatus(result.status, next)) return;
+    if (next === "rejected") {
+      const reason = promptRejectReason();
+      if (reason === null) return;
+      onChangeStatus(result.id, next, { rejectReason: reason || null });
+      return;
+    }
+    onChangeStatus(result.id, next);
+  };
 
   return (
     <SlidePanel
@@ -141,7 +213,7 @@ export function BidDetailPane({
                       value={result.status}
                       aria-label="Edit status"
                       onChange={(e) =>
-                        onChangeStatus(result.id, e.target.value as BidResultStatus)
+                        handleStatusChange(e.target.value as BidResultStatus)
                       }
                     >
                       {EDITABLE_STATUSES.map((s) => (
@@ -153,12 +225,43 @@ export function BidDetailPane({
                   ) : (
                     <div className="bm-status-locked">
                       <StatusPill status={result.status} />
-                      <span className="bm-lock-hint">
-                        <Lock className="w-3 h-3" />
-                        Locked
-                      </span>
+                      {rejectable && result.status === "skipped" ? (
+                        <button
+                          type="button"
+                          className="bm-reject-btn"
+                          onClick={() => handleStatusChange("rejected")}
+                        >
+                          Reject
+                        </button>
+                      ) : (
+                        <span className="bm-lock-hint">
+                          <Lock className="w-3 h-3" />
+                          Locked
+                        </span>
+                      )}
                     </div>
                   )}
+                </div>
+
+                <div className="bm-detail-badges">
+                  {(result.resubmitCount ?? 0) > 0 ? (
+                    <span className="bm-mini-badge warn">
+                      Resubmitted {result.resubmitCount}×
+                    </span>
+                  ) : null}
+                  {result.rejectSource ? (
+                    <span className="bm-mini-badge">
+                      From {result.rejectSource === "skipped" ? "Skipped" : "Submitted"}
+                    </span>
+                  ) : null}
+                  {(result.rejectCount ?? 0) > 0 ? (
+                    <span className="bm-mini-badge muted">
+                      Rejected {result.rejectCount}×
+                    </span>
+                  ) : null}
+                  {result.resumeMismatch ? (
+                    <span className="bm-mini-badge danger">Résumé name mismatch</span>
+                  ) : null}
                 </div>
 
                 <div className="bm-detail-row">
@@ -189,10 +292,55 @@ export function BidDetailPane({
                   {result.durationSec != null ? (
                     <MetaChip icon={Clock}>{formatDuration(result.durationSec)}</MetaChip>
                   ) : null}
+                  {result.biddingDurationSec != null ? (
+                    <MetaChip icon={Clock}>
+                      Bid {formatDuration(result.biddingDurationSec)}
+                    </MetaChip>
+                  ) : null}
                 </div>
               </div>
 
               <div className="bm-detail-scroll subtle-scroll">
+                {result.resumeMismatch || result.resumeOriginalName ? (
+                  <div
+                    className={`bm-resume-mismatch-banner ${result.resumeMismatch ? "warn" : ""}`}
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <div>
+                      <strong>
+                        {result.resumeMismatch
+                          ? "Résumé filename mismatch"
+                          : "Résumé upload audit"}
+                      </strong>
+                      <div className="bm-resume-audit-lines">
+                        {result.resumeOriginalName ? (
+                          <div>
+                            Original: <code>{result.resumeOriginalName}</code>
+                          </div>
+                        ) : null}
+                        {result.resumeExpectedName ? (
+                          <div>
+                            Expected: <code>{result.resumeExpectedName}</code>
+                          </div>
+                        ) : null}
+                        {result.resumeCleanedName ? (
+                          <div>
+                            Uploaded as: <code>{result.resumeCleanedName}</code>
+                            {result.resumeRenamed ? " (renamed)" : ""}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {result.status === "rejected" && result.rejectReason ? (
+                  <div className="bm-reject-reason-box">
+                    <strong>Reject reason</strong>
+                    <p>{result.rejectReason}</p>
+                  </div>
+                ) : null}
+
                 {preview.loading ? (
                   <div className="bm-preview-loading">
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -315,42 +463,80 @@ export function BidDetailPane({
                   ) : null}
                 </Section>
 
-                <Section title="Timeline">
-                  <ol className="bm-timeline-list">
-                    <li className="done">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <div>
-                        <strong>{result.status === "pending" ? "Bid ready" : "Pooled"}</strong>
-                        <span>{formatWhen(result.pooledAt)}</span>
-                      </div>
-                    </li>
-                    <li className={result.recording || result.submittedAt ? "done" : "pending"}>
-                      {result.recording ? (
-                        <Film className="w-4 h-4" />
-                      ) : (
-                        <Clock className="w-4 h-4" />
-                      )}
-                      <div>
-                        <strong>Recording</strong>
-                        <span>
-                          {result.recording
-                            ? `${(result.recording.sizeBytes / 1024).toFixed(0)} KB · ${result.recording.contentType.split(";")[0]}`
-                            : "Not uploaded yet"}
-                        </span>
-                      </div>
-                    </li>
-                    <li className={result.submittedAt ? "done" : "pending"}>
-                      {result.submittedAt ? (
+                <Section
+                  title="Timeline"
+                  action={
+                    eventsLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin opacity-50" />
+                    ) : (
+                      <History className="w-3.5 h-3.5 opacity-40" />
+                    )
+                  }
+                >
+                  {events.length > 0 ? (
+                    <ol className="bm-timeline-list events">
+                      {events.map((ev) => (
+                        <li key={ev.id} className="done">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <div>
+                            <strong>{eventLabel(ev)}</strong>
+                            <span>
+                              {formatWhen(ev.createdAt)}
+                              {ev.fromStatus && ev.toStatus
+                                ? ` · ${ev.fromStatus} → ${ev.toStatus}`
+                                : ""}
+                              {ev.rejectReason ? ` · ${ev.rejectReason}` : ""}
+                              {ev.rejectSource ? ` · source: ${ev.rejectSource}` : ""}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <ol className="bm-timeline-list">
+                      <li className="done">
                         <CheckCircle2 className="w-4 h-4" />
-                      ) : (
-                        <Clock className="w-4 h-4" />
-                      )}
-                      <div>
-                        <strong>Submitted</strong>
-                        <span>{formatWhen(result.submittedAt)}</span>
-                      </div>
-                    </li>
-                  </ol>
+                        <div>
+                          <strong>
+                            {result.status === "pending" ? "Bid ready" : "Pooled"}
+                          </strong>
+                          <span>{formatWhen(result.pooledAt)}</span>
+                        </div>
+                      </li>
+                      <li className={result.recording || result.submittedAt ? "done" : "pending"}>
+                        {result.recording ? (
+                          <Film className="w-4 h-4" />
+                        ) : (
+                          <Clock className="w-4 h-4" />
+                        )}
+                        <div>
+                          <strong>Recording</strong>
+                          <span>
+                            {result.recording
+                              ? `${(result.recording.sizeBytes / 1024).toFixed(0)} KB · ${result.recording.contentType.split(";")[0]}`
+                              : "Not uploaded yet"}
+                          </span>
+                        </div>
+                      </li>
+                      <li className={result.submittedAt ? "done" : "pending"}>
+                        {result.submittedAt ? (
+                          <CheckCircle2 className="w-4 h-4" />
+                        ) : (
+                          <Clock className="w-4 h-4" />
+                        )}
+                        <div>
+                          <strong>
+                            {result.status === "skipped"
+                              ? "Skipped"
+                              : result.status === "rejected"
+                                ? "Rejected"
+                                : "Submitted"}
+                          </strong>
+                          <span>{formatWhen(result.submittedAt)}</span>
+                        </div>
+                      </li>
+                    </ol>
+                  )}
                 </Section>
 
                 {result.notes ? (
@@ -359,7 +545,7 @@ export function BidDetailPane({
                   </Section>
                 ) : null}
 
-                {!editable && (
+                {!editable && result.status !== "skipped" && (
                   <div className="bm-locked-banner">
                     <Lock className="w-3.5 h-3.5" />
                     {result.status === "pending"

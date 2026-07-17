@@ -18,7 +18,13 @@ import { Link } from "react-router";
 import { PageShell } from "../../components/layout/PageShell";
 import { PATHS } from "../../config/routes";
 import type { BidResult, BidResultStatus, FlagLight, PeriodPreset, ViewMode } from "./types";
-import { BID_STATUSES, EDITABLE_STATUSES, isEditableStatus } from "./types";
+import {
+  BID_STATUSES,
+  EDITABLE_STATUSES,
+  canChangeStatus,
+  isEditableStatus,
+  isRejectableStatus,
+} from "./types";
 import {
   STATUS_LABELS,
   PERIOD_LABELS,
@@ -63,11 +69,12 @@ function TicketCard({
   onDragStart?: (e: DragEvent, id: string) => void;
 }) {
   const editable = isEditableStatus(result.status);
+  const draggable = editable || result.status === "skipped";
   return (
     <div
-      className={`bm-ticket ${active ? "active" : ""} ${editable ? "draggable" : "locked"}`}
-      draggable={editable}
-      onDragStart={editable ? (e) => onDragStart?.(e, result.id) : undefined}
+      className={`bm-ticket ${active ? "active" : ""} ${draggable ? "draggable" : "locked"}`}
+      draggable={draggable}
+      onDragStart={draggable ? (e) => onDragStart?.(e, result.id) : undefined}
       onClick={onSelect}
       role="button"
       tabIndex={0}
@@ -79,12 +86,27 @@ function TicketCard({
       }}
     >
       <div className="bm-ticket-top">
-        {editable ? <GripVertical className="w-3.5 h-3.5 bm-grip" /> : <Lock className="w-3 h-3 bm-grip locked" />}
+        {draggable ? (
+          <GripVertical className="w-3.5 h-3.5 bm-grip" />
+        ) : (
+          <Lock className="w-3 h-3 bm-grip locked" />
+        )}
         <span className="bm-avatar xs">{result.bidder.avatarInitials}</span>
         <span className="bm-ticket-company">{result.job.company}</span>
         {result.recording ? <Film className="w-3 h-3 bm-ticket-rec" /> : null}
       </div>
       <div className="bm-ticket-title">{result.job.title}</div>
+      {(result.resubmitCount ?? 0) > 0 || result.resumeMismatch || result.rejectSource ? (
+        <div className="bm-ticket-badges">
+          {(result.resubmitCount ?? 0) > 0 ? (
+            <span className="bm-mini-badge warn">×{result.resubmitCount} resub</span>
+          ) : null}
+          {result.rejectSource === "skipped" ? (
+            <span className="bm-mini-badge">from skip</span>
+          ) : null}
+          {result.resumeMismatch ? <span className="bm-mini-badge danger">name</span> : null}
+        </div>
+      ) : null}
       <div className="bm-ticket-foot">
         <span>{result.status === "pending" ? "Bid ready" : result.bidder.name}</span>
         <span>{formatDuration(result.durationSec)}</span>
@@ -171,9 +193,9 @@ function KanbanBoard({
         return (
           <div
             key={status}
-            className={`bm-kanban-col ${droppable ? "droppable" : "locked-col"} ${dragOver === status ? "drag-over" : ""}`}
+            className={`bm-kanban-col ${droppable || status === "rejected" ? "droppable" : "locked-col"} ${dragOver === status ? "drag-over" : ""}`}
             onDragOver={
-              droppable
+              droppable || status === "rejected"
                 ? (e) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
@@ -183,7 +205,7 @@ function KanbanBoard({
             }
             onDragLeave={() => setDragOver((cur) => (cur === status ? null : cur))}
             onDrop={
-              droppable
+              droppable || status === "rejected"
                 ? (e) => {
                     e.preventDefault();
                     setDragOver(null);
@@ -288,6 +310,17 @@ function ListBoard({
                       </option>
                     ))}
                   </select>
+                ) : isRejectableStatus(r.status) && r.status === "skipped" ? (
+                  <button
+                    type="button"
+                    className="bm-reject-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onChangeStatus(r.id, "rejected");
+                    }}
+                  >
+                    Reject
+                  </button>
                 ) : null}
               </div>
             </motion.div>
@@ -298,9 +331,16 @@ function ListBoard({
   );
 }
 
+function promptRejectReason(): string | null {
+  const raw = window.prompt("Reject reason (optional — leave blank to skip):", "");
+  if (raw === null) return null;
+  return raw.trim();
+}
+
 export function BidManagementPage() {
   const {
     results: allResults,
+    stats,
     loading: resultsLoading,
     error: resultsError,
     setStatus,
@@ -311,6 +351,18 @@ export function BidManagementPage() {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+
+  const moveStatus = (id: string, next: BidResultStatus) => {
+    const current = allResults.find((r) => r.id === id);
+    if (!current || !canChangeStatus(current.status, next)) return;
+    if (next === "rejected") {
+      const reason = promptRejectReason();
+      if (reason === null) return;
+      void setStatus(id, next, { rejectReason: reason || null });
+      return;
+    }
+    void setStatus(id, next);
+  };
 
   const periodResults = useMemo(() => filterByPeriod(allResults, period), [allResults, period]);
   const folders = useMemo(() => buildDateFolders(periodResults), [periodResults]);
@@ -405,6 +457,28 @@ export function BidManagementPage() {
                   <span className="bm-kpi-label">{STATUS_LABELS[key]}</span>
                 </div>
               ))}
+              {stats ? (
+                <>
+                  <div className="bm-kpi static">
+                    <span className="bm-kpi-val">
+                      {Math.round((stats.rejectionRate || 0) * 100)}%
+                    </span>
+                    <span className="bm-kpi-label">Reject rate</span>
+                  </div>
+                  <div className="bm-kpi static">
+                    <span className="bm-kpi-val">{stats.realRejects}</span>
+                    <span className="bm-kpi-label">Real rejects</span>
+                  </div>
+                  <div className="bm-kpi static">
+                    <span className="bm-kpi-val">
+                      {stats.avgBiddingDurationSec != null
+                        ? formatDuration(stats.avgBiddingDurationSec)
+                        : "—"}
+                    </span>
+                    <span className="bm-kpi-label">Avg bid time</span>
+                  </div>
+                </>
+              ) : null}
             </div>
           </div>
         </motion.header>
@@ -508,14 +582,14 @@ export function BidManagementPage() {
                       results={dayResults}
                       selectedId={selectedId}
                       onSelect={setSelectedId}
-                      onMove={setStatus}
+                      onMove={moveStatus}
                     />
                   ) : (
                     <ListBoard
                       results={dayResults}
                       selectedId={selectedId}
                       onSelect={setSelectedId}
-                      onChangeStatus={setStatus}
+                      onChangeStatus={moveStatus}
                     />
                   )}
                 </div>
@@ -528,7 +602,9 @@ export function BidManagementPage() {
                   setPlaying(false);
                 }}
                 onWatch={() => setPlaying(true)}
-                onChangeStatus={setStatus}
+                onChangeStatus={(id, status, options) => {
+                  void setStatus(id, status, options);
+                }}
                 lockDismiss={playing}
               />
             </motion.div>

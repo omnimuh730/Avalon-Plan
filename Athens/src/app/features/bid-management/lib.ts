@@ -71,15 +71,16 @@ export function vendorTaskToBidResult(task: {
 }): BidResult {
   const pooledAt = task.bidReadyDate || task.addedAt || new Date().toISOString();
   const bidderName = task.bidderName || task.applierName || "Unassigned";
+  // Prefer reviewStatus over skipped (rejected-from-skip must show Rejected).
   let status: BidResult["status"] = "pending";
-  if (task.progress === "skipped" || task.status === "skipped") {
-    status = "skipped";
-  } else if (
+  if (
     task.reviewStatus === "reviewed" ||
     task.reviewStatus === "rejected" ||
     task.reviewStatus === "submitted"
   ) {
     status = task.reviewStatus;
+  } else if (task.progress === "skipped" || task.status === "skipped") {
+    status = "skipped";
   } else if (task.progress === "completed" || task.status === "done") {
     status = "submitted";
   } else if (task.bidderInProcess) {

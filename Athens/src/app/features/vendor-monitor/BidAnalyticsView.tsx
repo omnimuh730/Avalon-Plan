@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Area,
   Bar,
@@ -29,12 +29,16 @@ import {
   Sparkles,
   Target,
   Timer,
+  Ban,
 } from "lucide-react";
 import { AthensSelect } from "../../components/forms";
 import { ChartTip, KPI } from "../../components/ui";
 import { Button } from "../../components/ui/button";
 import { DATE_RANGE_OPTIONS, type DateRange } from "../../hooks/useAnalyticsFilters";
 import { mono } from "../../lib/utils";
+import { useApplier } from "@/context/applier-context";
+import { fetchBidResultStats } from "../../api/bidResults";
+import type { BidResultStats } from "../bid-management/types";
 import { useVendorMonitorAnalytics } from "./hooks/useVendorMonitorAnalytics";
 import { useVendorTaskAnalytics } from "./hooks/useVendorTaskAnalytics";
 import {
@@ -121,14 +125,38 @@ const inputClass =
   "h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground";
 
 export function BidAnalyticsView() {
+  const { applier } = useApplier();
   const [draft, setDraft] = useState<AnalyticsPeriod>(() => defaultAnalyticsPeriod("30d"));
   const [applied, setApplied] = useState<AnalyticsPeriod>(() => defaultAnalyticsPeriod("30d"));
   const [periodError, setPeriodError] = useState<string | null>(null);
+  const [bidStats, setBidStats] = useState<BidResultStats | null>(null);
 
   const resolved = useMemo(() => resolveAnalyticsPeriod(applied), [applied]);
   const { loading, error, ready, timezone, granularity, totals, byBucket, byJobSource, refetch } =
     useVendorMonitorAnalytics(resolved);
   const taskAnalytics = useVendorTaskAnalytics(resolved);
+
+  useEffect(() => {
+    const name = applier?.name?.trim();
+    if (!name || !resolved) {
+      setBidStats(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchBidResultStats(name, {
+      since: resolved.sinceIso,
+      until: resolved.untilIso,
+    })
+      .then((stats) => {
+        if (!cancelled) setBidStats(stats);
+      })
+      .catch(() => {
+        if (!cancelled) setBidStats(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [applier?.name, resolved]);
 
   const applyDraft = () => {
     const next = resolveAnalyticsPeriod({ ...draft, mode: "custom" });
@@ -366,6 +394,57 @@ export function BidAnalyticsView() {
               accent="sky"
             />
           </div>
+
+          {bidStats ? (
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+              <KPI
+                label="Bid reject rate"
+                value={formatPercent(bidStats.rejectionRate)}
+                sub={`${bidStats.rejected} currently rejected`}
+                icon={Ban}
+                accent="rose"
+              />
+              <KPI
+                label="Real rejects"
+                value={String(bidStats.realRejects)}
+                sub="reject + mark fixed"
+                icon={Target}
+                accent="amber"
+              />
+              <KPI
+                label="Skip→Reject"
+                value={String(bidStats.rejectFromSkipped)}
+                sub={`${bidStats.rejectFromSubmitted} from submitted`}
+                icon={ClipboardList}
+                accent="violet"
+              />
+              <KPI
+                label="Resubmits"
+                value={String(bidStats.resubmitCount)}
+                sub={`${bidStats.rejectCount} reject events`}
+                icon={RefreshCw}
+                accent="teal"
+              />
+              <KPI
+                label="Avg bid time"
+                value={
+                  bidStats.avgBiddingDurationSec != null
+                    ? formatAvgDuration(bidStats.avgBiddingDurationSec * 1000)
+                    : "—"
+                }
+                sub={`${bidStats.biddingDurationSamples} samples`}
+                icon={Clock}
+                accent="sky"
+              />
+              <KPI
+                label="Submitted"
+                value={String(bidStats.submitted)}
+                sub={`${bidStats.skipped} skipped · ${bidStats.reviewed} reviewed`}
+                icon={CheckCircle2}
+                accent="emerald"
+              />
+            </div>
+          ) : null}
 
           <ChartCard
             title="Bidder diligence"

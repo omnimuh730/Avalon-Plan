@@ -14,7 +14,15 @@ const completedTodayEl = document.getElementById('completedToday');
 const signOutBtn = document.getElementById('signOutBtn');
 const jobList = document.getElementById('jobList');
 const refreshQueueBtn = document.getElementById('refreshQueueBtn');
+const downloadResumesZipBtn = document.getElementById('downloadResumesZipBtn');
 const queueHint = document.getElementById('queueHint');
+const queueSection = document.getElementById('queueSection');
+const rejectedSection = document.getElementById('rejectedSection');
+const rejectedList = document.getElementById('rejectedList');
+const rejectedHint = document.getElementById('rejectedHint');
+const refreshRejectedBtn = document.getElementById('refreshRejectedBtn');
+const rejectedCountBadge = document.getElementById('rejectedCountBadge');
+const workspaceTabs = document.getElementById('workspaceTabs');
 const applySessionView = document.getElementById('applySessionView');
 const applyJobCompany = document.getElementById('applyJobCompany');
 const applyJobTitle = document.getElementById('applyJobTitle');
@@ -62,6 +70,9 @@ let completedTodayCount = 0;
 let applyResumeJobId = null;
 let applyResumeCheckToken = 0;
 let queueLoading = false;
+let workspacePage = 'ready';
+let rejectedJobs = [];
+let rejectedLoading = false;
 
 async function sendMessage(message) {
   return chrome.runtime.sendMessage(message);
@@ -478,8 +489,14 @@ function getQueueJobs() {
   const jobs = [];
   for (const pool of pools) {
     for (const job of pool.jobs ?? []) {
-      // Submitted / Skipped leave the monitor queue (Athens Bid Ready parity).
-      if (job.status === 'applied' || job.status === 'skipped') continue;
+      // Submitted / Skipped / Rejected leave Bid Ready (Rejected has its own page).
+      if (
+        job.status === 'applied' ||
+        job.status === 'skipped' ||
+        job.status === 'rejected'
+      ) {
+        continue;
+      }
       jobs.push({ ...job, poolId: pool.id });
     }
   }
@@ -663,6 +680,131 @@ function renderQueue() {
   });
 }
 
+function setWorkspacePage(page) {
+  workspacePage = page === 'rejected' ? 'rejected' : 'ready';
+  queueSection?.classList.toggle('hidden', workspacePage !== 'ready');
+  rejectedSection?.classList.toggle('hidden', workspacePage !== 'rejected');
+  workspaceTabs?.querySelectorAll('.workspace-tab').forEach((btn) => {
+    const active = btn.dataset.tab === workspacePage;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  if (workspacePage === 'rejected') {
+    loadRejected().catch(() => {});
+  }
+}
+
+function renderRejected() {
+  if (!rejectedList) return;
+  rejectedList.innerHTML = '';
+
+  if (rejectedHint) {
+    rejectedHint.textContent = rejectedLoading
+      ? 'Loading rejected bids…'
+      : 'Mark fixed → Submitted (no re-record). Reason shown when provided.';
+  }
+
+  if (rejectedCountBadge) {
+    const n = rejectedJobs.length;
+    rejectedCountBadge.textContent = String(n);
+    rejectedCountBadge.classList.toggle('hidden', n === 0);
+  }
+
+  if (rejectedLoading && !rejectedJobs.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'Loading rejected bids…';
+    rejectedList.appendChild(empty);
+    return;
+  }
+
+  if (!rejectedJobs.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'No rejected bids. You’re clear.';
+    rejectedList.appendChild(empty);
+    return;
+  }
+
+  for (const job of rejectedJobs) {
+    const li = document.createElement('li');
+    const reason = job.rejectReason
+      ? escapeHtml(job.rejectReason)
+      : 'No reason provided';
+    const source =
+      job.rejectSource === 'skipped'
+        ? 'From skipped'
+        : job.rejectSource === 'submitted'
+          ? 'From submitted'
+          : '';
+    const mismatch = job.resumeMismatch
+      ? `<span class="status-badge status-rejected">Name mismatch</span>`
+      : '';
+    li.innerHTML = `
+      <strong>${escapeHtml(job.companyName)}</strong>
+      <span class="meta-line">${escapeHtml(job.title)}</span>
+      <span class="status-badge status-rejected">Rejected</span>
+      ${mismatch}
+      ${source ? `<span class="meta-line">${escapeHtml(source)}</span>` : ''}
+      <span class="reject-reason ${job.rejectReason ? '' : 'empty'}">${reason}</span>
+      <div class="item-actions">
+        <button type="button" class="btn btn-primary" data-mark-fixed="${escapeHtml(job.athensJobId || job.id)}">
+          Mark fixed
+        </button>
+      </div>
+    `;
+    rejectedList.appendChild(li);
+  }
+
+  rejectedList.querySelectorAll('[data-mark-fixed]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      const prev = button.textContent;
+      button.textContent = 'Saving…';
+      try {
+        const response = await sendMessage({
+          type: 'MARK_BID_FIXED',
+          jobId: button.dataset.markFixed,
+        });
+        if (!response?.ok) {
+          alert(response?.error || 'Failed to mark fixed.');
+          return;
+        }
+        await loadRejected();
+      } catch (err) {
+        alert(err.message || 'Failed to mark fixed.');
+      } finally {
+        button.disabled = false;
+        button.textContent = prev;
+      }
+    });
+  });
+}
+
+async function loadRejected() {
+  rejectedLoading = true;
+  renderRejected();
+  try {
+    const response = await sendMessage({ type: 'GET_REJECTED_BIDS' });
+    if (!response?.ok) {
+      rejectedJobs = [];
+      if (rejectedHint) {
+        rejectedHint.textContent = response?.error || 'Failed to load rejected bids.';
+      }
+    } else {
+      rejectedJobs = Array.isArray(response.results) ? response.results : [];
+    }
+  } catch (err) {
+    rejectedJobs = [];
+    if (rejectedHint) {
+      rejectedHint.textContent = err.message || 'Failed to load rejected bids.';
+    }
+  } finally {
+    rejectedLoading = false;
+    renderRejected();
+  }
+}
+
 function renderDashboard() {
   const auth = dashboardState.auth;
   if (!auth) {
@@ -677,6 +819,11 @@ function renderDashboard() {
   roleBadgeEl.textContent = auth.role;
   roleBadgeEl.className = `role-badge ${auth.role}`;
   renderQueue();
+  if (workspacePage === 'rejected') {
+    renderRejected();
+  } else {
+    loadRejected().catch(() => {});
+  }
   refreshApplySession().catch(() => {});
   refreshBridgeBadge().catch(() => {});
 }
@@ -829,6 +976,34 @@ skipRecordingBtn?.addEventListener('click', () => {
 
 refreshQueueBtn?.addEventListener('click', () => {
   loadDashboard({ force: true }).catch(() => {});
+});
+
+refreshRejectedBtn?.addEventListener('click', () => {
+  loadRejected().catch(() => {});
+});
+
+downloadResumesZipBtn?.addEventListener('click', async () => {
+  downloadResumesZipBtn.disabled = true;
+  const prev = downloadResumesZipBtn.textContent;
+  downloadResumesZipBtn.textContent = 'Zipping…';
+  try {
+    const jobs = getQueueJobs();
+    const jobIds = jobs.map((j) => j.athensJobId || j.id).filter(Boolean);
+    const response = await sendMessage({
+      type: 'DOWNLOAD_RESUMES_ZIP',
+      jobIds,
+    });
+    if (!response?.ok) alert(response?.error || 'Failed to download zip.');
+  } catch (err) {
+    alert(err.message || 'Failed to download zip.');
+  } finally {
+    downloadResumesZipBtn.disabled = false;
+    downloadResumesZipBtn.textContent = prev;
+  }
+});
+
+workspaceTabs?.querySelectorAll('.workspace-tab').forEach((btn) => {
+  btn.addEventListener('click', () => setWorkspacePage(btn.dataset.tab));
 });
 
 loginForm.addEventListener('submit', async (event) => {

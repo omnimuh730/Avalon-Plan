@@ -215,6 +215,10 @@
         detail: {
           isRecording: !!activeSessionCache,
           resumeSetFolder: activeSessionCache?.resumeSetFolder || '',
+          expectedResumeName:
+            activeSessionCache?.expectedResumeName ||
+            applyJobCache?.expectedResumeName ||
+            '',
         },
       }),
     );
@@ -671,7 +675,11 @@
   }
 
   function boot() {
-    if (!isTopFrame) return;
+    // Iframes: keep session/resume hooks alive without UI polling.
+    if (!isTopFrame) {
+      syncRecordingUI().catch(() => {});
+      return;
+    }
 
     watchPanelMount();
     syncRecordingUI().catch(() => {});
@@ -695,7 +703,11 @@
     });
 
     window.addEventListener('bid-monitor-toast', (event) => {
-      if (isTopFrame) showToast(event.detail?.message);
+      const message = event.detail?.message;
+      if (!message) return;
+      // page-hook runs in iframes (ATS embeds); surface toast on the top frame.
+      if (isTopFrame) showToast(message);
+      else void sendRuntimeMessage({ type: 'SHOW_TOAST', message });
     });
 
     chrome.storage.onChanged.addListener((changes, area) => {
@@ -717,6 +729,12 @@
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === 'PING_CONTENT') {
+        sendResponse({ ok: true });
+        return;
+      }
+
+      if (message.type === 'SHOW_TOAST') {
+        if (isTopFrame && message.message) showToast(String(message.message));
         sendResponse({ ok: true });
         return;
       }
@@ -748,6 +766,10 @@
       }
 
       if (message.type === 'CONTENT_START_RECORDING') {
+        if (!isTopFrame) {
+          sendResponse({ ok: false, error: 'Tab recording only runs in the top frame.' });
+          return;
+        }
         startTabRecording(message)
           .then((result) => sendResponse({ ok: true, ...result }))
           .catch((err) => sendResponse({ ok: false, error: err.message }));
@@ -755,6 +777,10 @@
       }
 
       if (message.type === 'CONTENT_PAUSE_RECORDING') {
+        if (!isTopFrame) {
+          sendResponse({ ok: false, error: 'Tab recording only runs in the top frame.' });
+          return;
+        }
         pauseTabRecording(message.sessionId)
           .then((result) => sendResponse({ ok: true, ...result }))
           .catch((err) => sendResponse({ ok: false, error: err.message }));
@@ -762,6 +788,10 @@
       }
 
       if (message.type === 'CONTENT_RESUME_RECORDING') {
+        if (!isTopFrame) {
+          sendResponse({ ok: false, error: 'Tab recording only runs in the top frame.' });
+          return;
+        }
         resumeTabRecording(message.sessionId)
           .then((result) => sendResponse({ ok: true, ...result }))
           .catch((err) => sendResponse({ ok: false, error: err.message }));
@@ -769,6 +799,10 @@
       }
 
       if (message.type === 'CONTENT_STOP_RECORDING') {
+        if (!isTopFrame) {
+          sendResponse({ ok: false, error: 'Tab recording only runs in the top frame.' });
+          return;
+        }
         stopTabRecording(message.sessionId)
           .then((result) => sendResponse({ ok: true, ...result }))
           .catch((err) => sendResponse({ ok: false, error: err.message }));

@@ -90,11 +90,40 @@ export function serializeTask(doc, sessionMatch = null) {
 		reviewStatus: doc.reviewStatus || null,
 		bidderName: doc.bidderName || null,
 		bidderInProcess: Boolean(doc.bidderInProcess),
+		bidderInProcessAt:
+			doc.bidderInProcessAt instanceof Date
+				? doc.bidderInProcessAt.toISOString()
+				: doc.bidderInProcessAt ?? null,
 		recordingDurationSec:
 			typeof doc.recordingDurationSec === "number" ? doc.recordingDurationSec : null,
+		biddingDurationSec:
+			typeof doc.biddingDurationSec === "number" ? doc.biddingDurationSec : null,
 		flags: doc.flags && typeof doc.flags === "object" ? doc.flags : null,
 		analysisSummary:
 			typeof doc.analysisSummary === "string" ? doc.analysisSummary : null,
+		rejectReason: typeof doc.rejectReason === "string" ? doc.rejectReason : null,
+		rejectSource:
+			doc.rejectSource === "submitted" || doc.rejectSource === "skipped"
+				? doc.rejectSource
+				: null,
+		rejectCount: Number(doc.rejectCount || 0) || 0,
+		resubmitCount: Number(doc.resubmitCount || 0) || 0,
+		lastRejectedAt:
+			doc.lastRejectedAt instanceof Date
+				? doc.lastRejectedAt.toISOString()
+				: doc.lastRejectedAt ?? null,
+		lastResubmittedAt:
+			doc.lastResubmittedAt instanceof Date
+				? doc.lastResubmittedAt.toISOString()
+				: doc.lastResubmittedAt ?? null,
+		resumeOriginalName:
+			typeof doc.resumeOriginalName === "string" ? doc.resumeOriginalName : null,
+		resumeExpectedName:
+			typeof doc.resumeExpectedName === "string" ? doc.resumeExpectedName : null,
+		resumeCleanedName:
+			typeof doc.resumeCleanedName === "string" ? doc.resumeCleanedName : null,
+		resumeRenamed: Boolean(doc.resumeRenamed),
+		resumeMismatch: Boolean(doc.resumeMismatch),
 	};
 }
 

@@ -18,6 +18,7 @@ let rulesCollection;
 let bidRecordsCollection;
 let bidRecordsLocalCollection;
 let vendorTasksCollection;
+let bidReviewEventsCollection;
 let skillEnrichmentQueueCollection;
 let skillCooccurrenceCollection;
 let userKnowledgeGraphsCollection;
@@ -226,6 +227,7 @@ async function initMongo() {
 	// Vendor Monitor + bid-assistant write/read the main (local) MongoDB.
 	bidRecordsCollection = bidRecordsLocalCollection;
 	vendorTasksCollection = db.collection('vendor_tasks');
+	bidReviewEventsCollection = db.collection('bid_review_events');
 	try {
 		await vendorTasksCollection.createIndex({ applierName: 1, addedAt: -1 });
 		await vendorTasksCollection.createIndex(
@@ -236,8 +238,16 @@ async function initMongo() {
 			{ applierName: 1, applyUrl: 1 },
 			{ unique: true, partialFilterExpression: { applyUrl: { $type: 'string' } } },
 		);
+		await vendorTasksCollection.createIndex({ applierName: 1, reviewStatus: 1, updatedAt: -1 });
 	} catch (err) {
 		console.warn('[vendor_tasks] index creation failed', err.message);
+	}
+	try {
+		await bidReviewEventsCollection.createIndex({ applierName: 1, taskId: 1, createdAt: 1 });
+		await bidReviewEventsCollection.createIndex({ applierName: 1, jobId: 1, createdAt: 1 });
+		await bidReviewEventsCollection.createIndex({ applierName: 1, eventType: 1, createdAt: -1 });
+	} catch (err) {
+		console.warn('[bid_review_events] index creation failed', err.message);
 	}
 
 	const mongoCloudUrl = process.env.MONGO_CLOUD_URL?.trim();
@@ -284,6 +294,10 @@ function getVendorTasksCollection() {
 	return vendorTasksCollection || null;
 }
 
+function getBidReviewEventsCollection() {
+	return bidReviewEventsCollection || null;
+}
+
 function isCloudMirrorConfigured() {
 	return cloudMirrorConfigured;
 }
@@ -309,6 +323,7 @@ async function closeMongo() {
 	bidRecordsCollection = null;
 	bidRecordsLocalCollection = null;
 	vendorTasksCollection = null;
+	bidReviewEventsCollection = null;
 	cloudMirrorConfigured = false;
 	cloudMirrorConnectError = null;
 }
@@ -327,10 +342,12 @@ export {
 	getCloudMirrorStatus,
 	getBidRecordsCollection,
 	getVendorTasksCollection,
+	getBidReviewEventsCollection,
 	rulesCollection,
 	bidRecordsCollection,
 	bidRecordsLocalCollection,
 	vendorTasksCollection,
+	bidReviewEventsCollection,
 	resumeGeneratorConfigCollection,
 	resumeGenerationsCollection,
 	mailMessagesCollection,

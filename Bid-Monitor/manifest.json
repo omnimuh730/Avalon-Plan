@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bid Monitor",
-  "version": "2.16.0",
-  "description": "Athens Bid Ready video recording — vendor-access login, Apply, Analyze, Submit or Skip.",
+  "version": "2.17.1",
+  "description": "Athens Bid Ready video bidding — Apply, Analyze, Submit/Skip, Rejected queue + Mark fixed, résumé mismatch.",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:* http://localhost:* https: http:;"
   },
@@ -46,7 +46,7 @@
       "matches": ["<all_urls>"],
       "js": ["content/content.js"],
       "run_at": "document_idle",
-      "all_frames": false
+      "all_frames": true
     }
   ],
   "web_accessible_resources": [

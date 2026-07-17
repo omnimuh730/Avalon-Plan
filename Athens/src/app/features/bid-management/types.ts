@@ -8,6 +8,8 @@ export type BidResultStatus =
 
 export type FlagLight = "green" | "red" | null;
 
+export type RejectSource = "submitted" | "skipped";
+
 export type BidJobDetail = {
   description: string | null;
   postedAt: string | null;
@@ -28,6 +30,22 @@ export type BidResumeInfo = {
   fileName: string | null;
   usedAt: string | null;
   scorePercent: number | null;
+};
+
+export type BidReviewEvent = {
+  id: string;
+  taskId: string | null;
+  jobId: string | null;
+  applierName: string | null;
+  eventType: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  actorType: string;
+  actorName: string | null;
+  rejectReason: string | null;
+  rejectSource: RejectSource | null;
+  meta: Record<string, unknown> | null;
+  createdAt: string | null;
 };
 
 export type BidResult = {
@@ -53,6 +71,7 @@ export type BidResult = {
   pooledAt: string;
   submittedAt: string | null;
   durationSec: number | null;
+  biddingDurationSec?: number | null;
   matchScore: number | null;
   flags: {
     remote: FlagLight;
@@ -72,9 +91,39 @@ export type BidResult = {
     previewUrl?: string | null;
   } | null;
   notes: string | null;
+  rejectReason?: string | null;
+  rejectSource?: RejectSource | null;
+  rejectCount?: number;
+  resubmitCount?: number;
+  lastRejectedAt?: string | null;
+  lastResubmittedAt?: string | null;
+  resumeOriginalName?: string | null;
+  resumeExpectedName?: string | null;
+  resumeCleanedName?: string | null;
+  resumeRenamed?: boolean;
+  resumeMismatch?: boolean;
 };
 
 export type BidResultKpis = Record<BidResultStatus, number> & { total: number };
+
+export type BidResultStats = {
+  totalTasks: number;
+  submitted: number;
+  reviewed: number;
+  rejected: number;
+  skipped: number;
+  rejectFromSubmitted: number;
+  rejectFromSkipped: number;
+  rejectCount: number;
+  resubmitCount: number;
+  realRejects: number;
+  rejectionRate: number;
+  realRejectRate: number;
+  avgBiddingDurationSec: number | null;
+  biddingDurationSamples: number;
+  since?: string | null;
+  until?: string | null;
+};
 
 export type DateFolder = {
   dayKey: string;
@@ -96,9 +145,21 @@ export const BID_STATUSES: BidResultStatus[] = [
   "skipped",
 ];
 
-/** Kanban drag + preview status edit allowed only among these. */
+/** Kanban drag + preview status edit among reviewable statuses. */
 export const EDITABLE_STATUSES: BidResultStatus[] = ["submitted", "reviewed", "rejected"];
 
 export function isEditableStatus(status: BidResultStatus): boolean {
   return EDITABLE_STATUSES.includes(status);
+}
+
+/** Submitted/reviewed/rejected editable; skipped can only move to rejected. */
+export function canChangeStatus(from: BidResultStatus, to: BidResultStatus): boolean {
+  if (from === to) return true;
+  if (from === "skipped" && to === "rejected") return true;
+  if (isEditableStatus(from) && isEditableStatus(to)) return true;
+  return false;
+}
+
+export function isRejectableStatus(status: BidResultStatus): boolean {
+  return status === "submitted" || status === "reviewed" || status === "skipped";
 }

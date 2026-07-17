@@ -130,13 +130,37 @@
         <ul id="recordingsList" class="item-list"></ul>
       </section>
 
-      <section id="queueSection" class="queue-section">
+      <nav id="workspaceTabs" class="workspace-tabs" role="tablist" aria-label="Bid Monitor pages">
+        <button type="button" class="workspace-tab active" data-tab="ready" role="tab" aria-selected="true">
+          Bid Ready
+        </button>
+        <button type="button" class="workspace-tab" data-tab="rejected" role="tab" aria-selected="false">
+          Rejected
+          <span id="rejectedCountBadge" class="tab-count hidden">0</span>
+        </button>
+      </nav>
+
+      <section id="queueSection" class="queue-section" data-page="ready">
         <div class="section-header">
           <h2>Bid Ready</h2>
-          <button id="refreshQueueBtn" class="btn-link" type="button">Refresh</button>
+          <div class="section-header-actions">
+            <button id="downloadResumesZipBtn" class="btn-link" type="button">Zip résumés</button>
+            <button id="refreshQueueBtn" class="btn-link" type="button">Refresh</button>
+          </div>
         </div>
         <p id="queueHint" class="hint queue-hint">Pending until Apply → then In process</p>
         <ul id="jobList" class="item-list"></ul>
+      </section>
+
+      <section id="rejectedSection" class="queue-section hidden" data-page="rejected">
+        <div class="section-header">
+          <h2>Rejected</h2>
+          <button id="refreshRejectedBtn" class="btn-link" type="button">Refresh</button>
+        </div>
+        <p id="rejectedHint" class="hint queue-hint">
+          Mark fixed returns the bid to Submitted (no re-record).
+        </p>
+        <ul id="rejectedList" class="item-list"></ul>
       </section>
 
       <footer id="finishFooter" class="sticky-footer hidden">
