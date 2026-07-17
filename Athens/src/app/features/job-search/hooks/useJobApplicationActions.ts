@@ -178,8 +178,9 @@ export function useJobApplicationActions(
 
         if (res?.success && res.data) {
           onJobUpdated(mapDocToJob(res.data, applier));
-          await refreshStatusCounts();
           toast.success("Marked as Bid ready");
+          // Counts hit a heavy $facet aggregation — don't block the button on it.
+          void refreshStatusCounts();
         }
       } catch {
         toast.error("Failed to mark job as Bid ready");
@@ -204,35 +205,37 @@ export function useJobApplicationActions(
         return;
       }
 
-      let ok = 0;
-      let failed = 0;
-      for (const job of eligible) {
-        const jobId = job.backendId || job.id;
-        setPending(jobId, true);
-        try {
-          const res = (await post(`/jobs/${jobId}/bid-status`, {
-            applierName: applier.name,
-            status: "BidReady",
-          })) as JobMutationResponse;
-          if (res?.success && res.data) {
-            onJobUpdated(mapDocToJob(res.data, applier));
-            ok += 1;
-          } else {
-            failed += 1;
+      // Parallelize — sequential POSTs made bulk Bid ready feel multi-second.
+      const outcomes = await Promise.all(
+        eligible.map(async (job) => {
+          const jobId = job.backendId || job.id;
+          setPending(jobId, true);
+          try {
+            const res = (await post(`/jobs/${jobId}/bid-status`, {
+              applierName: applier.name,
+              status: "BidReady",
+            })) as JobMutationResponse;
+            if (res?.success && res.data) {
+              onJobUpdated(mapDocToJob(res.data, applier));
+              return true;
+            }
+            return false;
+          } catch {
+            return false;
+          } finally {
+            setPending(jobId, false);
           }
-        } catch {
-          failed += 1;
-        } finally {
-          setPending(jobId, false);
-        }
-      }
-      await refreshStatusCounts();
+        }),
+      );
+      const ok = outcomes.filter(Boolean).length;
+      const failed = outcomes.length - ok;
       if (ok > 0) {
         toast.success(`Marked ${ok} job${ok === 1 ? "" : "s"} as Bid ready`);
       }
       if (failed > 0) {
         toast.error(`Failed on ${failed} job${failed === 1 ? "" : "s"}`);
       }
+      void refreshStatusCounts();
     },
     [applier, onJobUpdated, post, refreshStatusCounts, setPending],
   );

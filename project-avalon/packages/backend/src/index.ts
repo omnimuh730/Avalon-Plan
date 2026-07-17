@@ -13,6 +13,7 @@ import {
   type ApplyProgress,
   type RegisterPayload,
   type RegisteredPayload,
+  type RelaySessionInfo,
   type RemoteAction,
   type TabInfo,
 } from '@avalon/shared';
@@ -25,6 +26,8 @@ interface Session {
   profileId: string;
   sessionId: string;
   key: string;
+  /** Display name from the Athens controller (session tab name). */
+  label?: string;
   extension?: Socket;
   controller?: Socket;
   /** Read-only listeners (e.g. Athens) — receive broadcasts, never take the controller slot. */
@@ -92,15 +95,35 @@ function cleanupSocket(socket: Socket) {
   }
 }
 
+function toRelaySessionInfo(session: Session): RelaySessionInfo {
+  return {
+    profileId: session.profileId,
+    sessionId: session.sessionId,
+    ...(session.label ? { label: session.label } : {}),
+    peers: peerStatus(session),
+  };
+}
+
+function listSessions(profileId?: string): RelaySessionInfo[] {
+  const want = profileId?.trim();
+  return [...sessions.values()]
+    .filter((s) => !want || s.profileId === want)
+    .map(toRelaySessionInfo);
+}
+
 const app = express();
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(requestLogger('api'));
 app.get('/health', (_req, res) => {
-  const active = [...sessions.values()].map((session) => ({
-    id: session.sessionId,
-    peers: peerStatus(session),
-  }));
+  const active = listSessions();
   res.json({ ok: true, sessions: sessions.size, active });
+});
+
+/** Controllers/extensions currently registered — filter with ?profileId= for the extension picker. */
+app.get('/sessions', (req, res) => {
+  const profileId = typeof req.query.profileId === 'string' ? req.query.profileId : undefined;
+  const active = listSessions(profileId);
+  res.json({ ok: true, sessions: active.length, active });
 });
 
 const httpServer = createServer(app);
@@ -132,13 +155,21 @@ io.on('connection', (socket) => {
     boundSession = session;
 
     if (payload.role === 'extension') {
-      session.extension?.disconnect();
+      // Only kick a *different* peer — same-socket re-register (e.g. label refresh)
+      // must not disconnect ourselves (that causes Athens "io server disconnect" loops).
+      if (session.extension && session.extension.id !== socket.id) {
+        session.extension.disconnect();
+      }
       session.extension = socket;
     } else if (payload.role === 'observer') {
       session.observers.add(socket);
     } else {
-      session.controller?.disconnect();
+      if (session.controller && session.controller.id !== socket.id) {
+        session.controller.disconnect();
+      }
       session.controller = socket;
+      const label = typeof payload.label === 'string' ? payload.label.trim() : '';
+      if (label) session.label = label;
     }
 
     const response: RegisteredPayload = {

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
 import { removeJobs } from "../../api/jobs";
 import { PageShell } from "../../components/layout/PageShell";
 import { PaginationBar } from "../../components/shared/PaginationBar";
@@ -12,6 +11,7 @@ import {
   type JobSearchFilterState,
 } from "../../hooks/useJobSearchFilters";
 import { JobExportDialog } from "./components/JobExportDialog";
+import { JobListSkeleton } from "./components/JobListSkeleton";
 import { JobListStickyBar } from "./components/JobListStickyBar";
 import { JobListView } from "./components/JobListView";
 import { JobSearchFilterPanel } from "./components/JobSearchFilterPanel";
@@ -20,6 +20,8 @@ import { useJobApplicationActions } from "./hooks/useJobApplicationActions";
 import { useJobResumeGeneration } from "./hooks/useJobResumeGeneration";
 import { useJobsList, recommendationFallbackMessage } from "./hooks/useJobsList";
 import { isExternalJob } from "../../types/job";
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 export function JobSearchPage() {
   const jobNav = useJobSearchNavigationOptional();
@@ -189,6 +191,7 @@ export function JobSearchPage() {
         total={total}
         onPageChange={setPage}
         onPageSizeChange={setPageSize}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
         showGrid={showGrid}
         onToggleGrid={() => setShowGrid((g) => !g)}
       />
@@ -202,41 +205,34 @@ export function JobSearchPage() {
         busy={exportBusy}
       />
 
-      {loading && jobs.length === 0 ? (
-        <div className="py-16 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
-          <Loader2 className="w-6 h-6 animate-spin" />
-          Loading jobs from server…
-        </div>
+      {loading || refreshing ? (
+        <JobListSkeleton
+          count={Math.min(pageSize, 8)}
+          layout={showGrid ? "grid" : "list"}
+        />
       ) : (
-        <div className={refreshing ? "relative" : undefined}>
-          {refreshing ? (
-            <div className="absolute inset-x-0 top-0 z-10 flex justify-center py-2 pointer-events-none">
-              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-            </div>
-          ) : null}
-          <TabTransition tabKey={showGrid ? "grid" : "list"}>
-            <JobListView
-              jobs={jobs}
-              layout={showGrid ? "grid" : "list"}
-              selectedIds={selectedIds}
-              onSelectJob={selectJob}
-              showScores={showScoresOnCards}
-              bookmarkedIds={bookmarkedIds}
-              onToggleBookmark={toggleBookmark}
-              isJobPending={isPending}
-              onApply={(job) => void applyToJob(job)}
-              onMarkBidReady={(job) => void markBidReady(job)}
-              onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
-              onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
-              onCancel={(job) => void cancelJobStatus(job)}
-              onJobScoresUpdated={patchJob}
-              resumeStates={resumeStates}
-              onGenerateResume={(job) => {
-                void generateForJob(job);
-              }}
-            />
-          </TabTransition>
-        </div>
+        <TabTransition tabKey={showGrid ? "grid" : "list"}>
+          <JobListView
+            jobs={jobs}
+            layout={showGrid ? "grid" : "list"}
+            selectedIds={selectedIds}
+            onSelectJob={selectJob}
+            showScores={showScoresOnCards}
+            bookmarkedIds={bookmarkedIds}
+            onToggleBookmark={toggleBookmark}
+            isJobPending={isPending}
+            onApply={(job) => void applyToJob(job)}
+            onMarkBidReady={(job) => void markBidReady(job)}
+            onMarkScheduled={(job) => void updateJobStatus(job, "scheduled")}
+            onMarkDeclined={(job) => void updateJobStatus(job, "declined")}
+            onCancel={(job) => void cancelJobStatus(job)}
+            onJobScoresUpdated={patchJob}
+            resumeStates={resumeStates}
+            onGenerateResume={(job) => {
+              void generateForJob(job);
+            }}
+          />
+        </TabTransition>
       )}
 
       <PaginationBar
@@ -245,7 +241,7 @@ export function JobSearchPage() {
         total={total}
         onPageChange={setPage}
         onPageSizeChange={setPageSize}
-        pageSizeOptions={[10, 25, 50, 100]}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
         detailed
         className="mt-2"
       />

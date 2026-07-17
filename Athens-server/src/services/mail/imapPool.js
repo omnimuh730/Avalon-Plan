@@ -7,7 +7,7 @@
  *
  * Design:
  *  - Pool keyed by email (one pool per Gmail account).
- *  - Up to MAX_CONNS_PER_ACCOUNT (3) concurrent connections per account.
+ *  - Up to IMAP_MAX_CONNS_PER_ACCOUNT (default 8) concurrent connections per account.
  *  - Idle connections are evicted after IDLE_TTL_MS (5 min).
  *  - A periodic sweep runs every 60s to close idle connections.
  *  - Connections are health-checked before being handed out.
@@ -17,7 +17,12 @@
 
 import { ImapFlow } from 'imapflow';
 
-const MAX_CONNS_PER_ACCOUNT = 3;
+function envInt(name, fallback) {
+  const n = Number.parseInt(String(process.env[name] ?? ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const MAX_CONNS_PER_ACCOUNT = envInt('IMAP_MAX_CONNS_PER_ACCOUNT', 8);
 const IDLE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const SWEEP_INTERVAL_MS = 60 * 1000; // 1 minute
 

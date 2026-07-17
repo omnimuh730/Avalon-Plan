@@ -6,6 +6,7 @@ import { VIEW_COMPONENTS } from "../config/views";
 import { AppLayout } from "./AppLayout";
 import { ProtectedRoute } from "./ProtectedRoute";
 import { BetaRoute } from "./BetaRoute";
+import { AdminRoute } from "./AdminRoute";
 
 const {
   dashboard: DashboardPage,
@@ -19,7 +20,10 @@ const {
   interviews: InterviewPrepPage,
   reports: AnalyticsPage,
   "ai-usage": AiUsagePage,
+  "api-usage-monitor": ApiUsageMonitorPage,
   "vendor-monitor": VendorMonitorPage,
+  firebase: FirebaseExplorerPage,
+  "bid-management": BidManagementPage,
   settings: SettingsPage,
 } = VIEW_COMPONENTS;
 
@@ -75,7 +79,22 @@ export function AppRoutes() {
             <AnalyticsPage />
           }
         />
-        <Route path={PATHS.aiUsage.slice(1)} element={<AiUsagePage />} />
+        <Route
+          path={PATHS.aiUsage.slice(1)}
+          element={
+            <AdminRoute>
+              <AiUsagePage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path={PATHS.apiUsageMonitor.slice(1)}
+          element={
+            <AdminRoute>
+              <ApiUsageMonitorPage />
+            </AdminRoute>
+          }
+        />
         <Route
           path={`${PATHS.vendorMonitor.slice(1)}/:tab?`}
           element={
@@ -84,6 +103,8 @@ export function AppRoutes() {
             </BetaRoute>
           }
         />
+        <Route path={PATHS.firebase.slice(1)} element={<FirebaseExplorerPage />} />
+        <Route path={PATHS.bidManagement.slice(1)} element={<BidManagementPage />} />
         <Route path={`${PATHS.settings.slice(1)}/:tab?`} element={<SettingsPage />} />
         <Route path="*" element={<Navigate to={PATHS.dashboard} replace />} />
       </Route>

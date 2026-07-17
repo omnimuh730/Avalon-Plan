@@ -27,3 +27,7 @@ token.json
 *.sln
 *.sw?
 .env
+# Firebase / cloud credentials (never commit)
+secrets/
+*-service-account.json
+firebase-service-account.json

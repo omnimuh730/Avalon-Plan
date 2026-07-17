@@ -6,6 +6,17 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+/** Match Settings CareerTimeline: most recent start date first. */
+function timelineSortKey(row: Record<string, unknown>) {
+  const y = parseInt(str(row.startYear), 10) || 0;
+  const m = parseInt(str(row.startMonth), 10) || 0;
+  return y * 12 + m;
+}
+
+function byNewestFirst(a: unknown, b: unknown) {
+  return timelineSortKey((b ?? {}) as Record<string, unknown>) - timelineSortKey((a ?? {}) as Record<string, unknown>);
+}
+
 export function isValidJson(text: string): boolean {
   try {
     JSON.parse(text);
@@ -18,7 +29,8 @@ export function isValidJson(text: string): boolean {
 export function identityFromProfile(profile: Record<string, unknown>): Identity {
   const location = [str(profile.city).trim(), str(profile.state).trim()].filter(Boolean).join(", ");
   const careersRaw = Array.isArray(profile.careers) ? profile.careers : [];
-  const careers: CareerEntry[] = careersRaw
+  const careers: CareerEntry[] = [...careersRaw]
+    .sort(byNewestFirst)
     .map((c) => {
       const row = (c ?? {}) as Record<string, unknown>;
       const start = [str(row.startYear), str(row.startMonth)].filter(Boolean).join(".");
@@ -33,7 +45,8 @@ export function identityFromProfile(profile: Record<string, unknown>): Identity 
     : Array.isArray(profile.education)
       ? profile.education
       : [];
-  const education: EducationEntry[] = eduRaw
+  const education: EducationEntry[] = [...eduRaw]
+    .sort(byNewestFirst)
     .map((e) => {
       const row = (e ?? {}) as Record<string, unknown>;
       const start = [str(row.startYear), str(row.startMonth)].filter(Boolean).join(".");

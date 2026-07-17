@@ -8,6 +8,11 @@ import {
 } from '@nextoffer/shared/pricing';
 import { createLogger } from '@nextoffer/shared/terminal-log';
 import { DEEPSEEK_MODELS, isDeepSeekModel, listOpenAiModels } from '@nextoffer/shared/models';
+import {
+  LLM_PRIORITY,
+  llmAdmissionPool,
+  llmPriorityFromFeature,
+} from '../../utils/concurrency.js';
 
 const log = createLogger('athens');
 
@@ -185,6 +190,8 @@ export async function chatCompletion({
   const promptChars = messages.reduce((sum, m) => sum + String(m?.content || '').length, 0);
   const startedAt = Date.now();
   const reqId = requestId || randomUUID();
+  const priorityKey = llmPriorityFromFeature(feature);
+  const priority = LLM_PRIORITY[priorityKey] ?? LLM_PRIORITY.other;
   if (process.env.LLM_LOG !== 'off') {
     log.llm({
       msg: 'chat started',
@@ -197,76 +204,111 @@ export async function chatCompletion({
       messageCount: messages.length,
       promptChars,
       jsonMode: jsonMode || undefined,
+      priority: priorityKey,
     });
   }
 
-  const response = await fetchRetry(
-    `${AI_BASE}/v1/chat/completions`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        'x-request-id': reqId,
-        ...(runId ? { 'x-run-id': runId } : {}),
-        ...(applierName ? { 'x-applier-name': applierName } : {}),
-        ...(jobId ? { 'x-job-id': jobId } : {}),
-        'x-feature': feature,
-      },
-      body: JSON.stringify(body),
+  return llmAdmissionPool.run(
+    priority,
+    async () => {
+      const admittedAt = Date.now();
+      const queueWaitMs = admittedAt - startedAt;
+      if (queueWaitMs > 50 && process.env.LLM_LOG !== 'off') {
+        log.llm({
+          msg: 'chat admitted after queue wait',
+          requestId: reqId,
+          feature,
+          priority: priorityKey,
+          queueWaitMs,
+          llmPending: llmAdmissionPool.pending,
+          llmActive: llmAdmissionPool.active,
+        });
+      }
+
+      const response = await fetchRetry(
+        `${AI_BASE}/v1/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+            'x-request-id': reqId,
+            ...(runId ? { 'x-run-id': runId } : {}),
+            ...(applierName ? { 'x-applier-name': applierName } : {}),
+            ...(jobId ? { 'x-job-id': jobId } : {}),
+            'x-feature': feature,
+          },
+          body: JSON.stringify(body),
+        },
+        { timeoutMs, signal },
+      );
+
+      const data = await response.json().catch(() => ({}));
+      const elapsedMs = Date.now() - startedAt;
+      if (!response.ok) {
+        const err = new Error(data?.error?.message || `${p.label} request failed (${response.status})`);
+        err.status = response.status;
+        err.provider = p.id;
+        log.error('llm', 'chat failed', {
+          requestId: reqId,
+          feature,
+          provider: p.id,
+          requestedModel: model,
+          durationMs: elapsedMs,
+          queueWaitMs,
+          httpStatus: response.status,
+          error: err.message,
+        });
+        throw err;
+      }
+      const content = data?.choices?.[0]?.message?.content;
+      if (content == null) {
+        log.error('llm', 'empty response', {
+          requestId: reqId,
+          feature,
+          provider: p.id,
+          requestedModel: model,
+          durationMs: elapsedMs,
+        });
+        throw new Error(`${p.label} returned an empty response.`);
+      }
+      const billedModel = data?.model ?? model;
+      const usage = summarizeUsage(data?.usage, billedModel);
+      if (process.env.LLM_LOG !== 'off') {
+        log.llm({
+          msg: 'chat completed',
+          requestId: reqId,
+          feature,
+          provider: p.id,
+          requestedModel: model,
+          billedModel,
+          inputTokens: usage.inputTokens,
+          cachedInputTokens: usage.cachedTokens,
+          outputTokens: usage.outputTokens,
+          costUsd: usage.cost,
+          durationMs: elapsedMs,
+          queueWaitMs,
+          runId,
+          applierName,
+          modelMismatch: model !== billedModel,
+        });
+      }
+      return { content, usage };
     },
-    { timeoutMs, signal },
+    {
+      onQueued: (pending) => {
+        if (process.env.LLM_LOG !== 'off') {
+          log.llm({
+            msg: 'chat queued for LLM admission',
+            requestId: reqId,
+            feature,
+            priority: priorityKey,
+            pending,
+          });
+        }
+      },
+    },
   );
-
-  const data = await response.json().catch(() => ({}));
-  const elapsedMs = Date.now() - startedAt;
-  if (!response.ok) {
-    const err = new Error(data?.error?.message || `${p.label} request failed (${response.status})`);
-    err.status = response.status;
-    err.provider = p.id;
-    log.error('llm', 'chat failed', {
-      requestId: reqId,
-      feature,
-      provider: p.id,
-      requestedModel: model,
-      durationMs: elapsedMs,
-      httpStatus: response.status,
-      error: err.message,
-    });
-    throw err;
-  }
-  const content = data?.choices?.[0]?.message?.content;
-  if (content == null) {
-    log.error('llm', 'empty response', {
-      requestId: reqId,
-      feature,
-      provider: p.id,
-      requestedModel: model,
-      durationMs: elapsedMs,
-    });
-    throw new Error(`${p.label} returned an empty response.`);
-  }
-  const billedModel = data?.model ?? model;
-  const usage = summarizeUsage(data?.usage, billedModel);
-  if (process.env.LLM_LOG !== 'off') {
-    log.llm({
-      msg: 'chat completed',
-      requestId: reqId,
-      feature,
-      provider: p.id,
-      requestedModel: model,
-      billedModel,
-      inputTokens: usage.inputTokens,
-      cachedInputTokens: usage.cachedTokens,
-      outputTokens: usage.outputTokens,
-      costUsd: usage.cost,
-      durationMs: elapsedMs,
-      runId,
-      applierName,
-      modelMismatch: model !== billedModel,
-    });
-  }
-  return { content, usage };
 }
 
 const modelCache = new Map();

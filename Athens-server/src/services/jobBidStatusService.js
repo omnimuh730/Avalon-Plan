@@ -68,8 +68,14 @@ export async function upsertJobBidStatus(
 
 	const entry = findStatusEntry(existing, applierId);
 	const $set = {};
-	if (bidReady && !entry?.bidReadyDate) $set['status.$[elem].bidReadyDate'] = now;
-	if (bidCompleted && !entry?.bidCompletedDate) $set['status.$[elem].bidCompletedDate'] = now;
+	// Preserve the original bid-ready day so Bid Management folders stay stable
+	// across Apply / submit / reject. Only stamp when missing.
+	if (bidReady && !entry?.bidReadyDate) {
+		$set['status.$[elem].bidReadyDate'] = now;
+	}
+	if (bidCompleted && !entry?.bidCompletedDate) {
+		$set['status.$[elem].bidCompletedDate'] = now;
+	}
 	if (!Object.keys($set).length) return true;
 
 	await jobsCollection.updateOne(
@@ -78,6 +84,23 @@ export async function upsertJobBidStatus(
 		{ arrayFilters: [{ 'elem.applier': applierId }] },
 	);
 	return true;
+}
+
+/** Original bid-ready timestamp for stable Bid Management dayKey folders. */
+export async function getJobBidReadyDate(applierName, jobId) {
+	if (!jobsCollection || !applierName || !jobId) return null;
+	const objectId = toObjectId(jobId);
+	const applierId = await resolveApplierId(applierName);
+	if (!objectId || !applierId) return null;
+	const job = await jobsCollection.findOne(
+		{ _id: objectId, 'status.applier': applierId },
+		{ projection: { status: 1 } },
+	);
+	const entry = findStatusEntry(job, applierId);
+	const raw = entry?.bidReadyDate ?? null;
+	if (!raw) return null;
+	if (raw instanceof Date) return raw.toISOString();
+	return String(raw);
 }
 
 /**

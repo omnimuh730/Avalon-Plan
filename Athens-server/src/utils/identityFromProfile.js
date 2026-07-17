@@ -4,10 +4,22 @@ function str(v) {
   return typeof v === "string" ? v : "";
 }
 
+/** Match Settings CareerTimeline: most recent start date first. */
+function timelineSortKey(row) {
+  const y = parseInt(str(row?.startYear), 10) || 0;
+  const m = parseInt(str(row?.startMonth), 10) || 0;
+  return y * 12 + m;
+}
+
+function byNewestFirst(a, b) {
+  return timelineSortKey(b) - timelineSortKey(a);
+}
+
 export function identityFromProfile(profile) {
   const location = [str(profile.city).trim(), str(profile.state).trim()].filter(Boolean).join(", ");
   const careersRaw = Array.isArray(profile.careers) ? profile.careers : [];
-  const careers = careersRaw
+  const careers = [...careersRaw]
+    .sort(byNewestFirst)
     .map((c) => {
       const row = c ?? {};
       const start = [str(row.startYear), str(row.startMonth)].filter(Boolean).join(".");
@@ -22,7 +34,8 @@ export function identityFromProfile(profile) {
     : Array.isArray(profile.education)
       ? profile.education
       : [];
-  const education = eduRaw
+  const education = [...eduRaw]
+    .sort(byNewestFirst)
     .map((e) => {
       const row = e ?? {};
       const start = [str(row.startYear), str(row.startMonth)].filter(Boolean).join(".");

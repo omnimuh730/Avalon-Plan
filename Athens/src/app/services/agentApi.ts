@@ -123,13 +123,19 @@ export async function fetchAvalonHealth(sessionId = DEFAULT_SESSION_ID): Promise
     if (!res.ok) return { ok: false, extension: false };
     const data = (await res.json()) as {
       ok?: boolean;
-      active?: Array<{ id: string; peers?: { extension?: boolean } }>;
+      active?: Array<{
+        id?: string;
+        sessionId?: string;
+        peers?: { extension?: boolean };
+      }>;
     };
-    const session = data.active?.find((s) => s.id === sessionId) ?? data.active?.[0];
+    const session =
+      data.active?.find((s) => (s.sessionId ?? s.id) === sessionId) ?? data.active?.[0];
+    const resolvedId = session?.sessionId ?? session?.id ?? sessionId;
     return {
       ok: Boolean(data.ok),
       extension: Boolean(session?.peers?.extension),
-      sessionId: session?.id ?? sessionId,
+      sessionId: resolvedId,
     };
   } catch {
     return { ok: false, extension: false };

@@ -62,7 +62,7 @@ export function createOpenAiCompatibleProvider(
       const body: ChatCompletionCreateParamsNonStreaming = {
         model: params.model,
         messages: structured.messages,
-        temperature: params.temperature,
+        ...(params.temperature != null ? { temperature: params.temperature } : {}),
         max_tokens: params.maxTokens,
         top_p: params.topP,
         stop: params.stop,

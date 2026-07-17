@@ -57,6 +57,18 @@ export function useVendorTaskPool() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const onFocus = () => {
+      void load();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [load]);
+
   const addJobs = useCallback(
     async (jobs: Job[]) => {
       if (!profileName || !jobs.length) return { addedCount: 0, skippedCount: 0 };

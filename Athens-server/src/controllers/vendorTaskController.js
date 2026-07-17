@@ -29,21 +29,38 @@ function toObjectId(value) {
 	}
 }
 
-function serializeTask(doc, sessionMatch = null) {
+export function serializeTask(doc, sessionMatch = null) {
 	const applyUrl = doc.applyUrl ?? null;
 	const jobSource = detectJobSource(applyUrl);
 	let progress = "idle";
-	if (doc.status === "done") progress = "completed";
+	if (doc.status === "done" || doc.recordingPath) progress = "completed";
 	else if (doc.status === "skipped") progress = "skipped";
 	else if (sessionMatch?.completed) progress = "completed";
-	else if (sessionMatch) progress = "active";
+	else if (doc.bidderInProcess || sessionMatch) progress = "active";
+
+	const recording = doc.recordingPath
+		? {
+				storagePath: String(doc.recordingPath),
+				contentType: doc.recordingContentType || "video/webm",
+				sizeBytes: Number(doc.recordingSize || 0),
+				sessionId: doc.bidSessionId || null,
+			}
+		: null;
+
+	const companyRaw = doc.company;
+	const company =
+		typeof companyRaw === "string"
+			? companyRaw
+			: companyRaw && typeof companyRaw === "object" && typeof companyRaw.name === "string"
+				? companyRaw.name
+				: "";
 
 	return {
 		id: String(doc._id),
 		applierName: doc.applierName ?? null,
 		jobId: doc.jobId ?? null,
 		title: doc.title ?? "Untitled role",
-		company: doc.company ?? "",
+		company,
 		applyUrl,
 		source: doc.source ?? jobSource?.label ?? "",
 		location: doc.location ?? "",
@@ -65,6 +82,65 @@ function serializeTask(doc, sessionMatch = null) {
 			doc.completedAt instanceof Date
 				? doc.completedAt.toISOString()
 				: doc.completedAt ?? null,
+		bidReadyDate:
+			doc.bidReadyDate instanceof Date
+				? doc.bidReadyDate.toISOString()
+				: doc.bidReadyDate ?? null,
+		recording,
+		reviewStatus: doc.reviewStatus || null,
+		bidderName: doc.bidderName || null,
+		bidderInProcess: Boolean(doc.bidderInProcess),
+		bidderInProcessAt:
+			doc.bidderInProcessAt instanceof Date
+				? doc.bidderInProcessAt.toISOString()
+				: doc.bidderInProcessAt ?? null,
+		recordingDurationSec:
+			typeof doc.recordingDurationSec === "number" ? doc.recordingDurationSec : null,
+		biddingDurationSec:
+			typeof doc.biddingDurationSec === "number" ? doc.biddingDurationSec : null,
+		flags: doc.flags && typeof doc.flags === "object" ? doc.flags : null,
+		analysisSummary:
+			typeof doc.analysisSummary === "string" ? doc.analysisSummary : null,
+		rejectReason: typeof doc.rejectReason === "string" ? doc.rejectReason : null,
+		rejectSource:
+			doc.rejectSource === "submitted" || doc.rejectSource === "skipped"
+				? doc.rejectSource
+				: null,
+		rejectCount: Number(doc.rejectCount || 0) || 0,
+		resubmitCount: Number(doc.resubmitCount || 0) || 0,
+		lastRejectedAt:
+			doc.lastRejectedAt instanceof Date
+				? doc.lastRejectedAt.toISOString()
+				: doc.lastRejectedAt ?? null,
+		lastResubmittedAt:
+			doc.lastResubmittedAt instanceof Date
+				? doc.lastResubmittedAt.toISOString()
+				: doc.lastResubmittedAt ?? null,
+		resumeOriginalName:
+			typeof doc.resumeOriginalName === "string" ? doc.resumeOriginalName : null,
+		resumeExpectedName:
+			typeof doc.resumeExpectedName === "string" ? doc.resumeExpectedName : null,
+		resumeCleanedName:
+			typeof doc.resumeCleanedName === "string" ? doc.resumeCleanedName : null,
+		resumeRenamed: Boolean(doc.resumeRenamed),
+		resumeMismatch: Boolean(doc.resumeMismatch),
+		recommendedResumeStack:
+			typeof doc.recommendedResumeStack === "string" ? doc.recommendedResumeStack : null,
+		recommendedResumeReason:
+			typeof doc.recommendedResumeReason === "string" ? doc.recommendedResumeReason : null,
+		useCustomizedResume: Boolean(doc.useCustomizedResume),
+		recommendWarning:
+			typeof doc.recommendWarning === "string" ? doc.recommendWarning : null,
+		recommendedAt:
+			doc.recommendedAt instanceof Date
+				? doc.recommendedAt.toISOString()
+				: doc.recommendedAt ?? null,
+		resumeStackMatch:
+			doc.resumeStackMatch === "match" ||
+			doc.resumeStackMatch === "mismatch" ||
+			doc.resumeStackMatch === "unknown"
+				? doc.resumeStackMatch
+				: null,
 	};
 }
 
@@ -76,7 +152,7 @@ function resolveVendorTasks() {
 	return { collection, error: null };
 }
 
-async function buildSessionMatchMap(applierName) {
+export async function buildSessionMatchMap(applierName) {
 	const { collection, error } = getBidRecordsCollection();
 	if (error || !collection) return new Map();
 
@@ -112,7 +188,7 @@ async function buildSessionMatchMap(applierName) {
 	return map;
 }
 
-function findSessionMatch(applyUrl, matchMap) {
+export function findSessionMatch(applyUrl, matchMap) {
 	const key = normalizeUrlKey(applyUrl);
 	if (!key) return null;
 	if (matchMap.has(key)) return matchMap.get(key);
@@ -154,27 +230,45 @@ export async function listVendorTasks(req, res) {
 		const tasks = queueJobs.map((job) => {
 			const doc = taskByJobId.get(job.jobId);
 			const sessionMatch = findSessionMatch(job.applyUrl, matchMap);
+			// Prefer bidReadyDate for folder day grouping in Bid Management.
+			const bidReadyAt = job.bidReadyDate || null;
 			const base = doc
-				? serializeTask(doc, sessionMatch)
-				: serializeTask(
-						{
-							_id: job.jobId,
-							applierName,
-							jobId: job.jobId,
-							title: job.title,
-							company: job.company,
-							applyUrl: job.applyUrl,
-							source: job.source,
-							location: "",
-							workMode: "",
-							matchScore: null,
-							status: job.completed ? "done" : "pending",
-							addedAt: job.bidReadyDate,
-							updatedAt: job.bidCompletedDate || job.bidReadyDate,
-							completedAt: job.bidCompletedDate,
-						},
-						sessionMatch,
-					);
+				? {
+						...serializeTask(doc, sessionMatch),
+						addedAt:
+							bidReadyAt instanceof Date
+								? bidReadyAt.toISOString()
+								: bidReadyAt ||
+									(doc.addedAt instanceof Date ? doc.addedAt.toISOString() : doc.addedAt ?? null),
+						bidReadyDate:
+							bidReadyAt instanceof Date
+								? bidReadyAt.toISOString()
+								: bidReadyAt ||
+									(doc.addedAt instanceof Date ? doc.addedAt.toISOString() : doc.addedAt ?? null),
+					}
+				: {
+						...serializeTask(
+							{
+								_id: job.jobId,
+								applierName,
+								jobId: job.jobId,
+								title: job.title,
+								company: job.company,
+								applyUrl: job.applyUrl,
+								source: job.source,
+								location: "",
+								workMode: "",
+								matchScore: null,
+								status: job.completed ? "done" : "pending",
+								addedAt: bidReadyAt,
+								updatedAt: job.bidCompletedDate || bidReadyAt,
+								completedAt: job.bidCompletedDate,
+							},
+							sessionMatch,
+						),
+						bidReadyDate:
+							bidReadyAt instanceof Date ? bidReadyAt.toISOString() : bidReadyAt,
+					};
 
 			if (job.completed && base.progress !== "completed") {
 				return { ...base, status: "done", progress: "completed" };

@@ -1,17 +1,67 @@
 # Docker usage
 
-## Push to Docker Hub
+## CI/CD (GitHub Actions)
+
+Workflow: [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)
+
+| Event | Build & push to Docker Hub | Deploy to VPS |
+|-------|----------------------------|---------------|
+| PR opened/updated → `master` | Yes (`:pr-N`, `:pr-N-<sha>`) | No |
+| Push / merge to `master` | Yes (`:latest`, `:sha-<sha>`, …) | Yes (immutable `:sha-<sha>`) |
+| Manual `workflow_dispatch` | Yes (same as master) | Yes |
+
+Deploy SSHs into the VPS, syncs [`docker/deploy-remote.sh`](docker/deploy-remote.sh) → `/opt/nextoffer/deploy.sh`, pulls the image, recreates container `nextoffer`, and waits for `http://127.0.0.1:9030/avalon/health`.
+
+### Required GitHub secrets
+
+Repo **Settings → Secrets and variables → Actions**:
+
+| Secret | Purpose |
+|--------|---------|
+| `DOCKERHUB_USERNAME` | Docker Hub user (e.g. `omnimuh730`) |
+| `DOCKERHUB_TOKEN` | Docker Hub access token |
+| `VPS_HOST` | VPS IP / hostname |
+| `VPS_USER` | SSH user (e.g. `root`) |
+| `VPS_SSH_KEY` | Private ed25519 key authorized on the VPS |
+
+Optional: `VPS_SSH_PORT` (default `22`), repo variable `DOCKER_IMAGE` (default `omnimuh730/nextoffer`).
+
+App secrets (Mongo, encryption key, Firebase) live only on the VPS in `/opt/nextoffer/deploy.env` — see [`docker/deploy.env.example`](docker/deploy.env.example). Do not put them in GitHub Actions.
+
+### Rollback
+
+On the VPS (or via SSH):
+
+```bash
+/opt/nextoffer/deploy.sh sha-<oldshortsha>
+```
+
+Or re-run a previous successful **Docker publish** workflow from the Actions UI (`workflow_dispatch`).
+
+---
+
+## Push to Docker Hub (manual)
 
 ```bash
 cd /Users/robin/Desktop/Utils/NextOffer
 ./docker/publish.sh 1.0.13 --amd64
 ```
 
-## Run on VPS
+## Run on VPS (manual)
+
+Prefer the deploy script (same command CI uses):
 
 ```bash
-docker pull omnimuh730/nextoffer:latest
+/opt/nextoffer/deploy.sh latest
+# or
+/opt/nextoffer/deploy.sh sha-<shortsha>
+```
+
+Equivalent one-liner (env from `/opt/nextoffer/deploy.env`):
+
+```bash
 docker stop nextoffer && docker rm nextoffer
+
 docker run -d \
   --name nextoffer \
   --restart unless-stopped \
@@ -23,10 +73,14 @@ docker run -d \
   -p 3848:3848 \
   -p 3847:3847 \
   -v nextoffer-puppeteer:/data/puppeteer \
+  -v /opt/nextoffer/secrets/firebase-service-account.json:/run/secrets/firebase-service-account.json:ro \
   -e EMBEDDED_MONGO=false \
   -e 'MONGO_URL=mongodb://admin:Test.1234%21@host.docker.internal:27017/?authSource=admin' \
   -e MONGO_DB=AthensDB \
   -e API_KEYS_ENCRYPTION_KEY=3b4bd0112a6ec1514860a961e3da66b577e5638abcbe44caf017f9fe87e574bd \
+  -e FIREBASE_PROJECT_ID=drwretail-bm \
+  -e FIREBASE_STORAGE_BUCKET=drwretail-bm.firebasestorage.app \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json \
   omnimuh730/nextoffer:latest
 ```
 

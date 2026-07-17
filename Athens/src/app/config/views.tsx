@@ -11,7 +11,10 @@ import { CalendarPage } from "../features/calendar/CalendarPage";
 import { InterviewPrepPage } from "../features/interview-prep/InterviewPrepPage";
 import { AnalyticsPage } from "../features/analytics/AnalyticsPage";
 import { AiUsagePage } from "../features/ai-usage/AiUsagePage";
+import { ApiUsageMonitorPage } from "../features/api-usage-monitor/ApiUsageMonitorPage";
 import { VendorMonitorPage } from "../features/vendor-monitor/VendorMonitorPage";
+import { FirebaseExplorerPage } from "../features/firebase-explorer/FirebaseExplorerPage";
+import { BidManagementPage } from "../features/bid-management/BidManagementPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 
 export const VIEW_COMPONENTS: Record<View, ComponentType> = {
@@ -26,6 +29,9 @@ export const VIEW_COMPONENTS: Record<View, ComponentType> = {
   interviews: InterviewPrepPage,
   reports: AnalyticsPage,
   "ai-usage": AiUsagePage,
+  "api-usage-monitor": ApiUsageMonitorPage,
   "vendor-monitor": VendorMonitorPage,
+  firebase: FirebaseExplorerPage,
+  "bid-management": BidManagementPage,
   settings: SettingsPage,
 };

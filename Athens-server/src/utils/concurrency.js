@@ -1,12 +1,30 @@
 /**
  * In-process async concurrency limiters with FIFO queuing (no 429 rejections).
  * Env knobs are read at factory-call time so tests can override process.env first.
+ *
+ * Env knobs:
+ *   RESUME_GEN_GLOBAL_CONCURRENCY (default 16)
+ *   RESUME_GEN_PER_USER_CONCURRENCY (default 6)
+ *   PDF_RENDER_CONCURRENCY (default 16)
+ *   LLM_GLOBAL_CONCURRENCY (default 24)
+ *   MAIL_AI_LABEL_CONCURRENCY (default 8)
  */
 
-export const DEFAULT_RESUME_GEN_GLOBAL_CONCURRENCY = 4;
-export const DEFAULT_RESUME_GEN_PER_USER_CONCURRENCY = 2;
-/** High default for bulk identity refresh — press CPU for speed. Override via PDF_RENDER_CONCURRENCY. */
-export const DEFAULT_PDF_RENDER_CONCURRENCY = 12;
+export const DEFAULT_RESUME_GEN_GLOBAL_CONCURRENCY = 16;
+export const DEFAULT_RESUME_GEN_PER_USER_CONCURRENCY = 6;
+/** Match resume throughput — override via PDF_RENDER_CONCURRENCY. */
+export const DEFAULT_PDF_RENDER_CONCURRENCY = 16;
+export const DEFAULT_LLM_GLOBAL_CONCURRENCY = 24;
+export const DEFAULT_MAIL_AI_LABEL_CONCURRENCY = 8;
+
+/** Lower number = higher priority for LLM admission. */
+export const LLM_PRIORITY = {
+	agent: 0,
+	resume: 1,
+	mail: 2,
+	skill: 3,
+	other: 4,
+};
 
 function envInt(name, fallback) {
 	const n = Number.parseInt(String(process.env[name] ?? ''), 10);
@@ -23,6 +41,28 @@ export function getResumeGenPerUserConcurrency() {
 
 export function getPdfRenderConcurrency() {
 	return envInt('PDF_RENDER_CONCURRENCY', DEFAULT_PDF_RENDER_CONCURRENCY);
+}
+
+export function getLlmGlobalConcurrency() {
+	return envInt('LLM_GLOBAL_CONCURRENCY', DEFAULT_LLM_GLOBAL_CONCURRENCY);
+}
+
+export function getMailAiLabelConcurrency() {
+	return envInt('MAIL_AI_LABEL_CONCURRENCY', DEFAULT_MAIL_AI_LABEL_CONCURRENCY);
+}
+
+/**
+ * Map an LLM `feature` string to an admission priority band.
+ * @param {string} [feature]
+ * @returns {keyof typeof LLM_PRIORITY}
+ */
+export function llmPriorityFromFeature(feature) {
+	const f = String(feature || '').toLowerCase();
+	if (/^agent|otp|verification|avalon|form-analyz|injection|recover|verify/.test(f)) return 'agent';
+	if (/resume/.test(f)) return 'resume';
+	if (/mail|label|ai-write|ai-label/.test(f)) return 'mail';
+	if (/skill|extract|match-score|embedding/.test(f)) return 'skill';
+	return 'other';
 }
 
 /**
@@ -82,7 +122,9 @@ export function createLimiter({ concurrency }) {
 
 /**
  * Fair limiter: a waiter needs both a global slot and a per-key slot.
- * The FIFO queue never skips ahead — head blocks until it can take both.
+ * When the queue head cannot be granted (per-key saturated), later waiters
+ * that *can* be granted are served — but a key never jumps ahead of its own
+ * earlier waiter.
  */
 export function createFairLimiter({ globalConcurrency, perKeyConcurrency }) {
 	const globalMax = Math.max(1, globalConcurrency);
@@ -124,20 +166,34 @@ export function createFairLimiter({ globalConcurrency, perKeyConcurrency }) {
 		};
 	}
 
+	/**
+	 * Keys that already have an earlier waiter still ahead in the queue must
+	 * not be granted — preserves per-key FIFO while allowing cross-key skip.
+	 */
 	function tryDrain() {
-		while (waiters.length > 0) {
-			const head = waiters[0];
-			if (!canGrant(head.key)) break;
-			waiters.shift();
-			grant(head.key);
-			head.resolve(makeRelease(head.key));
+		const blockedKeys = new Set();
+		let i = 0;
+		while (i < waiters.length && globalActive < globalMax) {
+			const waiter = waiters[i];
+			if (blockedKeys.has(waiter.key)) {
+				i += 1;
+				continue;
+			}
+			if (!canGrant(waiter.key)) {
+				blockedKeys.add(waiter.key);
+				i += 1;
+				continue;
+			}
+			waiters.splice(i, 1);
+			grant(waiter.key);
+			waiter.resolve(makeRelease(waiter.key));
+			// Do not increment i — next item shifted into this index.
 		}
 	}
 
 	function acquire(key) {
 		const normalizedKey = String(key ?? '');
 		return new Promise((resolve) => {
-			// Strict FIFO: never skip ahead of an existing waiter, even if a slot is free.
 			if (waiters.length === 0 && canGrant(normalizedKey)) {
 				grant(normalizedKey);
 				resolve(makeRelease(normalizedKey));
@@ -180,6 +236,109 @@ export function createFairLimiter({ globalConcurrency, perKeyConcurrency }) {
 	};
 }
 
+/**
+ * Priority admission pool: lower priority number is served first.
+ * Within the same priority, FIFO.
+ *
+ * @param {{ concurrency: number }} opts
+ */
+export function createPriorityLimiter({ concurrency }) {
+	const max = Math.max(1, concurrency);
+	let active = 0;
+	/** @type {Array<{ priority: number, seq: number, resolve: () => void }>} */
+	const waiters = [];
+	let seq = 0;
+
+	function sortWaiters() {
+		waiters.sort((a, b) => a.priority - b.priority || a.seq - b.seq);
+	}
+
+	function tryDrain() {
+		sortWaiters();
+		while (active < max && waiters.length > 0) {
+			active++;
+			const { resolve } = waiters.shift();
+			resolve();
+		}
+	}
+
+	function acquire(priority = LLM_PRIORITY.other) {
+		const p = Number.isFinite(priority) ? priority : LLM_PRIORITY.other;
+		return new Promise((resolve) => {
+			if (active < max && waiters.length === 0) {
+				active++;
+				resolve();
+			} else {
+				waiters.push({ priority: p, seq: seq++, resolve });
+				tryDrain();
+			}
+		});
+	}
+
+	function release() {
+		if (active <= 0) return;
+		active--;
+		tryDrain();
+	}
+
+	/**
+	 * @param {number} priority
+	 * @param {() => Promise<unknown>} fn
+	 * @param {{ onQueued?: (pending: number) => void | Promise<void> }} [opts]
+	 */
+	async function run(priority, fn, opts = {}) {
+		const needsWait = active >= max || waiters.length > 0;
+		if (needsWait && opts.onQueued) await opts.onQueued(waiters.length + 1);
+		await acquire(priority);
+		try {
+			return await fn();
+		} finally {
+			release();
+		}
+	}
+
+	return {
+		acquire,
+		release,
+		run,
+		get active() {
+			return active;
+		},
+		get pending() {
+			return waiters.length;
+		},
+	};
+}
+
+/**
+ * Run `fn` over `items` with at most `concurrency` in flight.
+ * Results preserve input order.
+ *
+ * @template T, R
+ * @param {T[]} items
+ * @param {number} concurrency
+ * @param {(item: T, index: number) => Promise<R>} fn
+ * @returns {Promise<R[]>}
+ */
+export async function mapPool(items, concurrency, fn) {
+	const list = Array.isArray(items) ? items : [];
+	const max = Math.max(1, concurrency | 0);
+	const results = new Array(list.length);
+	let next = 0;
+
+	async function worker() {
+		while (true) {
+			const i = next++;
+			if (i >= list.length) return;
+			results[i] = await fn(list[i], i);
+		}
+	}
+
+	const workers = Array.from({ length: Math.min(max, list.length || 1) }, () => worker());
+	await Promise.all(workers);
+	return results;
+}
+
 export function createResumeGenFairLimiter() {
 	return createFairLimiter({
 		globalConcurrency: getResumeGenGlobalConcurrency(),
@@ -193,6 +352,13 @@ export function createPdfRenderLimiter() {
 	});
 }
 
-/** Shared process-wide limiters used by resume gen + PDF render paths. */
+export function createLlmAdmissionPool() {
+	return createPriorityLimiter({
+		concurrency: getLlmGlobalConcurrency(),
+	});
+}
+
+/** Shared process-wide limiters used by resume gen + PDF render + LLM paths. */
 export const resumeGenLimiter = createResumeGenFairLimiter();
 export const pdfRenderLimiter = createPdfRenderLimiter();
+export const llmAdmissionPool = createLlmAdmissionPool();

@@ -76,6 +76,8 @@ type QueryParams = {
   applierName?: string;
   feature?: string;
   limit?: number;
+  /** Signed-in account name — required for admin-gated AI usage APIs */
+  requesterName?: string;
 };
 
 function buildQuery(params: QueryParams): string {
@@ -89,6 +91,11 @@ function buildQuery(params: QueryParams): string {
   return s ? `?${s}` : "";
 }
 
+function adminHeaders(requesterName?: string): HeadersInit {
+  const name = String(requesterName || "").trim();
+  return name ? { "x-applier-name": name } : {};
+}
+
 async function parseJson<T>(res: Response): Promise<T> {
   const data = (await res.json()) as T & { error?: string };
   if (!res.ok) {
@@ -98,11 +105,89 @@ async function parseJson<T>(res: Response): Promise<T> {
 }
 
 export async function fetchAiUsageSummary(params: QueryParams): Promise<AiUsageSummaryResponse> {
-  const res = await fetch(`${API_BASE}/ai-usage/summary${buildQuery(params)}`);
+  const res = await fetch(`${API_BASE}/ai-usage/summary${buildQuery(params)}`, {
+    headers: adminHeaders(params.requesterName),
+  });
   return parseJson(res);
 }
 
 export async function fetchAiUsageRows(params: QueryParams): Promise<AiUsageRowsResponse> {
-  const res = await fetch(`${API_BASE}/ai-usage${buildQuery({ ...params, limit: params.limit ?? 100 })}`);
+  const res = await fetch(`${API_BASE}/ai-usage${buildQuery({ ...params, limit: params.limit ?? 100 })}`, {
+    headers: adminHeaders(params.requesterName),
+  });
+  return parseJson(res);
+}
+
+export type AiUsageMonitorKey = {
+  provider: string;
+  configured: boolean;
+  masked: string | null;
+};
+
+export type AiUsageMonitorProviderRow = {
+  provider: string;
+  billedModel: string;
+  calls: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number;
+};
+
+export type AiUsageMonitorFeatureRow = {
+  feature: string;
+  calls: number;
+  costUsd: number;
+  totalTokens: number;
+};
+
+export type AiUsageMonitorUserUsage = AiUsageTotals & {
+  lastCallAt: string | null;
+  byProvider: AiUsageMonitorProviderRow[];
+  byFeature: AiUsageMonitorFeatureRow[];
+};
+
+export type AiUsageMonitorUser = {
+  name: string;
+  tier: string | null;
+  vendorAllowed: boolean;
+  fullName: string | null;
+  email: string | null;
+  defaultProvider: string | null;
+  defaultModel: string | null;
+  profileUpdatedAt: string | null;
+  keys: AiUsageMonitorKey[];
+  usage: AiUsageMonitorUserUsage;
+};
+
+export type AiUsageMonitorApiKey = {
+  provider: string;
+  masked: string | null;
+  fingerprint: string;
+  users: string[];
+  calls: number;
+  costUsd: number;
+  totalTokens: number;
+};
+
+export type AiUsageMonitorResponse = {
+  totals: AiUsageTotals & {
+    registeredUsers: number;
+    usersWithKeys: number;
+    usersWithUsage: number;
+    configuredKeys: number;
+  };
+  users: AiUsageMonitorUser[];
+  apiKeys: AiUsageMonitorApiKey[];
+  unassigned: { name: string; usage: AiUsageMonitorUserUsage }[];
+};
+
+export async function fetchAiUsageMonitor(
+  params: Pick<QueryParams, "since" | "until" | "requesterName"> = {},
+): Promise<AiUsageMonitorResponse> {
+  const res = await fetch(`${API_BASE}/ai-usage/monitor${buildQuery(params)}`, {
+    headers: adminHeaders(params.requesterName),
+  });
   return parseJson(res);
 }

@@ -5,9 +5,9 @@ import { useAgentSessions, type AgentSessionMeta, type AgentSessionStatus } from
 
 /**
  * Tab per Avalon session — each is an independent relay bound to its own
- * `sessionId` (Chrome extension pairing), running concurrently in the background
- * (AgentSessionsContext mounts one headless engine per session). Switching tabs
- * only changes which one is portaled into view; the others keep running.
+ * unique `sessionId` (Chrome extension pairing). Within a session, Apply-all
+ * runs jobs one at a time (parallel tabs interrupt each other); engines stay
+ * mounted so leaving the Agents page does not tear down a running pipeline.
  */
 
 function statusDotClass(status?: AgentSessionStatus): string {

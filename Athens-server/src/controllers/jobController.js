@@ -607,38 +607,64 @@ export async function updateJobBidStatus(req, res) {
 			const tasks = getVendorTasksCollection();
 			if (tasks) await tasks.deleteMany({ applierName, jobId: id });
 		} else if (status === 'BidReady') {
-			await upsertJobBidStatus(applierName, id, { bidReady: true });
 			const tasks = getVendorTasksCollection();
-			if (tasks) {
-				const existing = await tasks.findOne({ applierName, jobId: id }, { projection: { _id: 1 } });
-				if (!existing) {
-					const now = new Date();
-					const company =
-						job.company && typeof job.company === 'object'
-							? String(job.company.name || '')
-							: String(job.companyName || '');
-					await tasks.insertOne({
-						applierName,
-						jobId: id,
-						title: String(job.title || 'Untitled role'),
-						company,
-						applyUrl: String(job.applyLink || job.jobLink || '') || null,
-						source: String(job.source || ''),
-						location: String(job.details?.position || ''),
-						workMode: String(job.details?.remote || ''),
-						matchScore: null,
-						status: 'pending',
-						addedAt: now,
-						updatedAt: now,
-						completedAt: null,
-					});
-				}
-			}
+			const now = new Date();
+			const company =
+				job.company && typeof job.company === 'object'
+					? String(job.company.name || '')
+					: String(job.companyName || '');
+			const vendorPayload = {
+				applierName,
+				jobId: id,
+				title: String(job.title || 'Untitled role'),
+				company,
+				applyUrl: String(job.applyLink || job.jobLink || '') || null,
+				source: String(job.source || ''),
+				location: String(job.details?.position || ''),
+				workMode: String(job.details?.remote || ''),
+				matchScore: null,
+				status: 'pending',
+				addedAt: now,
+				updatedAt: now,
+				completedAt: null,
+			};
+			// Run job_market + vendor_tasks writes together (was sequential).
+			await Promise.all([
+				upsertJobBidStatus(applierName, id, { bidReady: true }),
+				tasks
+					? tasks.updateOne(
+							{ applierName, jobId: id },
+							{
+								$set: {
+									title: vendorPayload.title,
+									company: vendorPayload.company,
+									applyUrl: vendorPayload.applyUrl,
+									source: vendorPayload.source,
+									location: vendorPayload.location,
+									workMode: vendorPayload.workMode,
+									status: 'pending',
+									addedAt: now,
+									updatedAt: now,
+									completedAt: null,
+									applierName,
+									jobId: id,
+								},
+								$setOnInsert: {
+									matchScore: null,
+								},
+							},
+							{ upsert: true },
+						)
+					: Promise.resolve(),
+			]);
 		} else {
 			await upsertJobBidStatus(applierName, id, { bidReady: true, bidCompleted: true });
 		}
 
-		const updatedJob = await jobsCollection.findOne({ _id: objectId });
+		const updatedJob = await jobsCollection.findOne(
+			{ _id: objectId },
+			{ projection: JOB_DETAIL_PROJECTION },
+		);
 		return res.json({ success: true, data: updatedJob });
 	} catch (err) {
 		console.error('POST /api/jobs/:id/bid-status error', err);

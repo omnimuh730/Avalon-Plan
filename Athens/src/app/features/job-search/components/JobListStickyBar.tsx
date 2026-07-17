@@ -49,7 +49,7 @@ export function JobListStickyBar({
   total,
   onPageChange,
   onPageSizeChange,
-  pageSizeOptions = [10, 25, 50, 100, 250, 500],
+  pageSizeOptions = [10, 25, 50, 100],
   showGrid,
   onToggleGrid,
   className,

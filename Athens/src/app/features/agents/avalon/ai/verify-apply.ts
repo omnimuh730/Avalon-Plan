@@ -138,7 +138,6 @@ export async function verifyApplyOutcome(
       },
     ],
     responseSchema: APPLY_VERIFY_SCHEMA,
-    temperature: 0,
     signal,
   });
 

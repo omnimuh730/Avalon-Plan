@@ -132,6 +132,12 @@ async function resolveTabId(action: RemoteAction): Promise<number | undefined> {
   return active[0]?.id;
 }
 
+/**
+ * Bring a tab (and its window) to the foreground.
+ * Used only for open_tab when grant-focus is on, and for screenshots (capture
+ * requires a visible tab). Routine actions must not call this — they work in
+ * the background without stealing focus on every step.
+ */
 async function focusTab(tabId: number): Promise<void> {
   const tab = await browser.tabs.get(tabId);
   if (tab.windowId != null) {
@@ -164,19 +170,32 @@ function waitForTabComplete(tabId: number, timeoutMs = 45000): Promise<void> {
 }
 
 async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
+  // Sleep in the extension service worker so Athens-tab background throttling
+  // does not stall OTP / verify waits (orchestration awaits this socket reply).
+  if (action.action === 'wait') {
+    const ms = Math.min(Math.max(0, Number(action.payload?.ms ?? 500)), 120_000);
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return { actionId: action.id, success: true, data: { waitedMs: ms } };
+  }
+
   // open_tab creates its own tab, so it runs before the existing-tab guard.
   if (action.action === 'open_tab') {
     const url = String(action.payload?.url ?? '');
     if (!url) return { actionId: action.id, success: false, error: 'open_tab requires payload.url' };
-    const tab = await browser.tabs.create({ url, active: true });
+    // Grant focus on → activate tab + bring window forward once at open.
+    // Grant focus off → background tab; never steal the window.
+    // Later scan/fill/verify actions never call focusTab.
+    const allowFocus = action.allowWindowFocus !== false;
+    const active = allowFocus ? action.payload?.active !== false : false;
+    const tab = await browser.tabs.create({ url, active });
     if (typeof tab.id !== 'number') {
       return { actionId: action.id, success: false, error: 'Failed to create tab' };
     }
+    if (allowFocus) {
+      await focusTab(tab.id);
+    }
     emitApplyProgress({ phase: 'navigating', message: `Opening ${url}…` });
     await waitForTabComplete(tab.id);
-    // `complete` is only the browser load event — an SPA job page (Ashby, etc.)
-    // is still fetching data behind a spinner at this point. Gate "opened" on the
-    // network going quiet AND real content having rendered.
     emitApplyProgress({ phase: 'navigating', message: 'Waiting for the page to finish loading…' });
     await waitForPageReady(tab.id);
     const page = await readPageContext(tab.id);
@@ -191,14 +210,12 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   }
 
   if (action.action === 'navigate') {
-    await focusTab(tabId);
     const url = String(action.payload?.url ?? '');
     await browser.tabs.update(tabId, { url });
     return { actionId: action.id, success: true, data: { url } };
   }
 
   if (action.action === 'reload') {
-    await focusTab(tabId);
     await browser.tabs.reload(tabId);
     return { actionId: action.id, success: true, data: { reloaded: true } };
   }
@@ -213,6 +230,7 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   }
 
   if (action.action === 'screenshot') {
+    // captureVisibleTab requires the tab to be visible in a focused window.
     await focusTab(tabId);
     const dataUrl = await browser.tabs.captureVisibleTab(undefined, { format: 'png' });
     return { actionId: action.id, success: true, data: { dataUrl } };
@@ -223,7 +241,6 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   // chrome.scripting.executeScript injects the serialized function at the
   // browser level, which also bypasses the page's CSP 'unsafe-eval' restriction.
   if (action.action === 'execute_script') {
-    await focusTab(tabId);
     const source = String(action.payload?.source ?? 'true');
     let fn: Function;
     try {
@@ -259,7 +276,6 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   // via chrome.scripting.executeScript, so it works on pages that block
   // 'unsafe-eval' in their CSP (e.g. Greenhouse).
   if (action.action === 'read_page_state') {
-    await focusTab(tabId);
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId },
@@ -308,7 +324,6 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   // boxes, or a single code field — using the React-safe native setter, then clicks
   // the submit/verify control. Generic DOM heuristics only (no vendor strings).
   if (action.action === 'fill_verification_code') {
-    await focusTab(tabId);
     const code = String(action.payload?.code ?? '').trim();
     const platform = String(action.payload?.platform ?? '').toLowerCase();
     if (!code) return { actionId: action.id, success: false, error: 'code is required' };
@@ -454,7 +469,6 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
   }
 
   if (action.action === 'fetch_actionable_tree') {
-    await focusTab(tabId);
     const result = await runActionInTab(tabId, action);
     if (!result.success) return result;
 
@@ -472,7 +486,6 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
     const payload = (action.payload ?? {}) as ApplyInjectionPlanPayload;
     const planTabId = payload.page?.tabId ?? tabId;
 
-    await focusTab(planTabId);
     await ensureContentScript(planTabId);
 
     const current = await readPageContext(planTabId);
@@ -501,7 +514,6 @@ async function handleRemoteAction(action: RemoteAction): Promise<ActionResult> {
     }
   }
 
-  await focusTab(tabId);
   return runActionInTab(tabId, action);
 }
 

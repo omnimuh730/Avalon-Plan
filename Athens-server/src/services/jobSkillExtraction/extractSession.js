@@ -12,7 +12,7 @@ import {
   recordExtractionFailure,
 } from './aiExtractService.js';
 
-const CONCURRENCY = Math.max(1, Number(process.env.JOB_SKILL_EXTRACT_CONCURRENCY || 100));
+const CONCURRENCY = Math.max(1, Number(process.env.JOB_SKILL_EXTRACT_CONCURRENCY || 16));
 const PENDING_QUERY = { aiSkillStatus: 'pending' };
 
 const MARKET_CLAIM_PROJECTION = { title: 1, description: 1, jobDescription: 1, aiSkillAttempts: 1 };

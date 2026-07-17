@@ -1,4 +1,4 @@
-import { AI_BFF_URL, AI_MODEL, ANALYZE_TEMPERATURE } from './config.js';
+import { AI_BFF_URL, AI_MODEL } from './config.js';
 import type { ChatRequest, ChatResponse } from './chat-types.js';
 
 export async function chatCompletion(request: ChatRequest): Promise<ChatResponse> {
@@ -10,7 +10,7 @@ export async function chatCompletion(request: ChatRequest): Promise<ChatResponse
       ...(model ? { model } : {}),
       system: request.system,
       messages: request.messages,
-      temperature: request.temperature ?? ANALYZE_TEMPERATURE,
+      ...(request.temperature != null ? { temperature: request.temperature } : {}),
       ...(request.maxTokens != null ? { maxTokens: request.maxTokens } : {}),
       responseSchema: request.responseSchema,
     }),

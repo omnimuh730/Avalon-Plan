@@ -26,6 +26,7 @@ import { useSessionRelay } from "../context/AgentSessionsContext";
 import type { JobPipelineState, useAvalonRelay } from "../hooks/useAvalonRelay";
 import { ApplyStatusPanel } from "./ApplyStatusPanel";
 import { DEFAULT_JOB_BUDGET_USD } from "../lib/agentBudget";
+import { isBetaTier } from "../../../lib/beta";
 import { AgentResumePdfPreview, agentJobResumePdfUrl } from "./AgentResumePdfPreview";
 import { resolveProfileDefaultModel } from "../avalon/ai/model";
 import { formatAgentRate, resolveAgentModelPricing, type AgentPricingRates } from "../avalon/ai/pricing";
@@ -255,6 +256,7 @@ export function AvalonControllerView({
   const budgetRatio = budgetLimit > 0 ? budgetSpent / budgetLimit : 0;
   const budgetNearLimit = budgetRatio >= 0.8 && budgetRatio <= 1;
   const budgetOverLimit = budgetSpent > budgetLimit;
+  const isBeta = isBetaTier(applier?.tier);
 
   const copyScript = async () => {
     if (!relay.displayedScript.trim()) return;
@@ -331,12 +333,15 @@ export function AvalonControllerView({
               placeholder="Relay URL"
               className="flex-1 min-w-[160px] rounded-xl border border-border bg-background px-3 py-2 text-xs"
             />
-            <input
-              value={relay.sessionId}
-              onChange={(e) => relay.setSessionId(e.target.value)}
-              placeholder="Session ID (optional)"
-              className="w-40 rounded-xl border border-border bg-background px-3 py-2 text-xs"
-            />
+            <label className="flex flex-col gap-1 shrink-0 min-w-[160px]">
+              <span className="text-[10px] font-semibold text-muted-foreground">Avalon session ID</span>
+              <input
+                value={relay.sessionId}
+                readOnly
+                className="w-full rounded-xl border border-border bg-secondary/40 px-3 py-2 text-xs font-mono text-muted-foreground"
+                title="Assigned automatically — pick this session in the Avalon extension"
+              />
+            </label>
             <label className="flex flex-col gap-1 shrink-0">
               <span className="text-[10px] font-semibold text-muted-foreground">AI budget / job (USD)</span>
               <input
@@ -349,6 +354,27 @@ export function AvalonControllerView({
                 className="w-24 rounded-xl border border-border bg-background px-3 py-2 text-xs"
               />
             </label>
+            {isBeta && (
+              <label
+                className="flex items-start gap-2 shrink-0 max-w-[220px] cursor-pointer select-none rounded-xl border border-border bg-background px-3 py-2"
+                title="When on, Chrome is focused only when a job tab opens. When off, Avalon never steals focus."
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-border"
+                  checked={relay.allowWindowFocus}
+                  onChange={(e) => relay.setAllowWindowFocus(e.target.checked)}
+                />
+                <span className="text-[10px] leading-snug">
+                  <span className="font-semibold text-foreground">Grant window focus</span>
+                  <span className="block text-muted-foreground">
+                    {relay.allowWindowFocus
+                      ? "Focus Chrome only when opening a job tab"
+                      : "Won’t steal focus — safer for multitasking"}
+                  </span>
+                </span>
+              </label>
+            )}
             <button
               type="button"
               onClick={relay.connect}

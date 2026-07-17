@@ -108,8 +108,32 @@ function newSessionKey(): string {
   return `sess_${Date.now().toString(36)}_${sessionSeq}`;
 }
 
-function defaultSession(name = "Session 1", sessionId = ""): AgentSessionMeta {
-  return { id: newSessionKey(), name, sessionId, createdAt: Date.now() };
+/** Non-empty Avalon relay id — empty/default collapses sessions onto one extension slot. */
+function newAvalonSessionId(): string {
+  return `avalon_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function ensureUniqueAvalonSessionId(
+  requested: string | undefined,
+  existing: AgentSessionMeta[],
+): string {
+  const used = new Set(
+    existing.map((s) => s.sessionId?.trim()).filter((id): id is string => Boolean(id)),
+  );
+  let base = requested?.trim() || newAvalonSessionId();
+  if (!used.has(base)) return base;
+  let n = 2;
+  while (used.has(`${base}_${n}`)) n += 1;
+  return `${base}_${n}`;
+}
+
+function defaultSession(name = "Session 1", sessionId?: string): AgentSessionMeta {
+  return {
+    id: newSessionKey(),
+    name,
+    sessionId: sessionId?.trim() || newAvalonSessionId(),
+    createdAt: Date.now(),
+  };
 }
 
 function loadSessions(): AgentSessionMeta[] {
@@ -117,12 +141,25 @@ function loadSessions(): AgentSessionMeta[] {
     const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as AgentSessionMeta[];
-      if (Array.isArray(parsed) && parsed.length && parsed.every((s) => s?.id)) return parsed;
+      if (Array.isArray(parsed) && parsed.length && parsed.every((s) => s?.id)) {
+        const seen = new Set<string>();
+        return parsed.map((s) => {
+          let sid = s.sessionId?.trim() || "";
+          if (!sid || seen.has(sid)) {
+            do {
+              sid = newAvalonSessionId();
+            } while (seen.has(sid));
+          }
+          seen.add(sid);
+          return { ...s, sessionId: sid };
+        });
+      }
     }
   } catch {
     /* fall through to a fresh default */
   }
-  return [defaultSession("Session 1", storedAvalonSessionId())];
+  const stored = storedAvalonSessionId()?.trim();
+  return [defaultSession("Session 1", stored || newAvalonSessionId())];
 }
 
 export function AgentSessionsProvider({ children }: { children: ReactNode }) {
@@ -196,11 +233,23 @@ export function AgentSessionsProvider({ children }: { children: ReactNode }) {
   const createSession = useCallback(
     (opts?: { name?: string; sessionId?: string; jobs?: QueuedJob[] }) => {
       const trimmedName = opts?.name?.trim();
-      const meta = defaultSession(trimmedName || "New session", opts?.sessionId?.trim() ?? "");
-      if (opts?.jobs?.length) pendingJobsRef.current.set(meta.id, opts.jobs);
-      setSessions((prev) => [...prev, { ...meta, name: trimmedName || `Session ${prev.length + 1}` }]);
-      setActiveSessionId(meta.id);
-      return meta.id;
+      const id = newSessionKey();
+      const requestedSessionId = opts?.sessionId?.trim() || newAvalonSessionId();
+      setSessions((prev) => {
+        // Idempotent under React Strict Mode double-invoke of updaters.
+        if (prev.some((s) => s.id === id)) return prev;
+        const sessionId = ensureUniqueAvalonSessionId(requestedSessionId, prev);
+        const meta: AgentSessionMeta = {
+          id,
+          name: trimmedName || `Session ${prev.length + 1}`,
+          sessionId,
+          createdAt: Date.now(),
+        };
+        if (opts?.jobs?.length) pendingJobsRef.current.set(meta.id, opts.jobs);
+        return [...prev, meta];
+      });
+      setActiveSessionId(id);
+      return id;
     },
     [],
   );
@@ -349,6 +398,7 @@ function AgentSessionEngine({
 }) {
   const relay = useAvalonRelay(applicantContext, applierName, {
     sessionId: meta.sessionId,
+    sessionLabel: meta.name,
     persist: false,
     persistKey: meta.id,
     accountTier,

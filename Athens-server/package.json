@@ -31,6 +31,7 @@
 		"docx": "^9.7.1",
 		"dotenv": "^17.2.1",
 		"express": "^5.1.0",
+		"firebase-admin": "^13.10.0",
 		"googleapis": "^155.0.0",
 		"html-to-docx": "^1.8.0",
 		"imapflow": "^1.4.2",

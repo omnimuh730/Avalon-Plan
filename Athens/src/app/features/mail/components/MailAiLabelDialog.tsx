@@ -194,20 +194,23 @@ export function MailAiLabelDialog({
     void loadThreads();
   }, [open, applierName, loadThreads]);
 
+  // Reset when opening — never while closing. Clearing state during Radix's
+  // exit animation causes React insertBefore crashes (lucide icons in the footer).
   useEffect(() => {
-    if (!open) {
-      setSelectedIds(new Set());
-      setMailboxById({});
-      setRowStatus({});
-      setRowResults({});
-      setSummary(null);
-      setRunError(null);
-      setPage(1);
-      setDefinitionsSaved(false);
-      setDefinitionsOpen(false);
-      setDefinitions({});
-      setDefinitionsDirty(false);
-    }
+    if (!open) return;
+    setSelectedIds(new Set());
+    setMailboxById({});
+    setRowStatus({});
+    setRowResults({});
+    setSummary(null);
+    setRunError(null);
+    setLoadError(null);
+    setPage(1);
+    setDefinitionsSaved(false);
+    setDefinitionsOpen(false);
+    setDefinitions({});
+    setDefinitionsDirty(false);
+    setRunning(false);
   }, [open]);
 
   const handleDefinitionChange = (label: MailLabel, value: string) => {
@@ -425,7 +428,9 @@ export function MailAiLabelDialog({
 
             {loading ? (
               <div className="flex items-center justify-center py-12 text-muted-foreground gap-2">
-                <Loader2 className="w-5 h-5 animate-spin" />
+                <span className="inline-flex size-5 shrink-0 items-center justify-center" aria-hidden>
+                  <Loader2 className="size-5 animate-spin" />
+                </span>
                 Loading unlabeled emails…
               </div>
             ) : threads.length === 0 ? (
@@ -480,10 +485,14 @@ export function MailAiLabelDialog({
                           </p>
                         )}
                       </div>
-                      <div className="w-5 flex-shrink-0 flex justify-center">
-                        {status === "running" && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
-                        {status === "done" && <Check className="w-4 h-4 text-emerald-600" />}
-                        {status === "error" && <X className="w-4 h-4 text-destructive" />}
+                      <div className="w-5 h-5 flex-shrink-0 flex items-center justify-center" aria-hidden>
+                        {status === "running" ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                        ) : status === "done" ? (
+                          <Check className="w-4 h-4 text-emerald-600" />
+                        ) : status === "error" ? (
+                          <X className="w-4 h-4 text-destructive" />
+                        ) : null}
                       </div>
                     </div>
                   );
@@ -530,19 +539,16 @@ export function MailAiLabelDialog({
             type="button"
             onClick={() => void handleRun()}
             disabled={running || totalSelected === 0 || labels.length === 0}
-            className="px-4 py-2 rounded-xl text-sm font-bold bg-primary text-white hover:bg-primary/90 min-h-10 disabled:opacity-50 flex items-center gap-2"
+            className="px-4 py-2 rounded-xl text-sm font-bold bg-primary text-white hover:bg-primary/90 min-h-10 disabled:opacity-50 inline-flex items-center gap-2"
           >
-            {running ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Labeling…
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                Run AI Label ({totalSelected})
-              </>
-            )}
+            <span className="inline-flex size-4 shrink-0 items-center justify-center" aria-hidden>
+              {running ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
+            </span>
+            <span>{running ? "Labeling…" : `Run AI Label (${totalSelected})`}</span>
           </button>
         </DialogFooter>
       </DialogContent>

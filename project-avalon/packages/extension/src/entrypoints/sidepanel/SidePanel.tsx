@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { DEFAULT_SESSION_ID, type RegisteredPayload } from '@avalon/shared';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DEFAULT_SESSION_ID, type RegisteredPayload, type RelaySessionInfo } from '@avalon/shared';
 import {
   AVALON_SERVER_KEY,
   AVALON_SESSION_KEY,
@@ -18,6 +18,20 @@ type PanelNotification = {
   kind: 'error' | 'warning' | 'info';
 };
 
+type DiscoverableSession = RelaySessionInfo & { id?: string };
+
+function sessionKey(s: DiscoverableSession): string {
+  return s.sessionId || s.id || '';
+}
+
+function sessionDisplayLabel(s: DiscoverableSession): string {
+  const id = sessionKey(s);
+  const short = id.length > 12 ? `${id.slice(0, 12)}…` : id;
+  const name = s.label?.trim();
+  const controller = s.peers?.controller ? 'controller online' : 'waiting for Athens';
+  return name ? `${name} · ${short}` : `${short} · ${controller}`;
+}
+
 export default function SidePanel() {
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
   const [sessionId, setSessionId] = useState('');
@@ -32,6 +46,10 @@ export default function SidePanel() {
   const [signinPassword, setSigninPassword] = useState('');
   const [signinLoading, setSigninLoading] = useState(false);
   const [signinError, setSigninError] = useState<string | null>(null);
+
+  const [availableSessions, setAvailableSessions] = useState<DiscoverableSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
 
   const pushNotification = useCallback((notification: Omit<PanelNotification, 'id'>) => {
     const item = { ...notification, id: `${Date.now()}_${Math.random()}` };
@@ -70,6 +88,43 @@ export default function SidePanel() {
     }
   }, [pushNotification, serverUrl, sessionId, profileId]);
 
+  const refreshSessions = useCallback(async () => {
+    if (!profileId) {
+      setAvailableSessions([]);
+      return;
+    }
+    setSessionsLoading(true);
+    setSessionsError(null);
+    try {
+      const base = serverUrl.replace(/\/$/, '');
+      const url = `${base}/sessions?profileId=${encodeURIComponent(profileId)}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Relay returned ${res.status}`);
+      const data = (await res.json()) as { ok?: boolean; active?: DiscoverableSession[] };
+      const list = Array.isArray(data.active) ? data.active : [];
+      // Prefer rooms that have an Athens controller online (created sessions).
+      const withController = list.filter((s) => s.peers?.controller);
+      const ordered = (withController.length ? withController : list).slice().sort((a, b) => {
+        const la = (a.label || sessionKey(a)).localeCompare(b.label || sessionKey(b));
+        return la;
+      });
+      setAvailableSessions(ordered);
+
+      // Auto-select the first live controller session if none chosen yet.
+      setSessionId((prev) => {
+        if (prev && ordered.some((s) => sessionKey(s) === prev)) return prev;
+        const first = ordered[0];
+        return first ? sessionKey(first) : prev;
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not load sessions';
+      setSessionsError(message);
+      setAvailableSessions([]);
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, [profileId, serverUrl]);
+
   useEffect(() => {
     void browser.storage.local
       .get([AVALON_SERVER_KEY, AVALON_SESSION_KEY, AVALON_PROFILE_KEY])
@@ -95,9 +150,29 @@ export default function SidePanel() {
     };
   }, [refreshStatus]);
 
+  useEffect(() => {
+    if (!profileId) return;
+    void refreshSessions();
+    const timer = window.setInterval(() => void refreshSessions(), 4000);
+    return () => clearInterval(timer);
+  }, [profileId, refreshSessions]);
+
+  const selectedInList = useMemo(
+    () => availableSessions.some((s) => sessionKey(s) === sessionId),
+    [availableSessions, sessionId],
+  );
+
   const connect = async () => {
     if (!profileId) {
       pushNotification({ kind: 'error', title: 'Sign in required', message: 'Enter your Athens name + password.' });
+      return;
+    }
+    if (!sessionId.trim()) {
+      pushNotification({
+        kind: 'error',
+        title: 'No session selected',
+        message: 'Open Agents in Athens to create a session, then pick it here.',
+      });
       return;
     }
 
@@ -126,6 +201,7 @@ export default function SidePanel() {
         });
       }
       await refreshStatus();
+      await refreshSessions();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Connect failed';
       pushNotification({ kind: 'error', title: 'Connect failed', message });
@@ -172,6 +248,24 @@ export default function SidePanel() {
     } finally {
       setSigninLoading(false);
     }
+  };
+
+  const signOut = async () => {
+    try {
+      await browser.runtime.sendMessage({ type: EXTENSION_MESSAGES.RELAY_DISCONNECT });
+    } catch {
+      /* ignore */
+    }
+    await browser.storage.local.remove([AVALON_PROFILE_KEY]);
+    setProfileId('');
+    setConnected(false);
+    setRegistered(null);
+    setLastError(null);
+    setAvailableSessions([]);
+    setSigninName('');
+    setSigninPassword('');
+    setSigninError(null);
+    pushNotification({ kind: 'info', title: 'Signed out', message: 'Athens profile cleared from this extension.' });
   };
 
   const disconnect = async () => {
@@ -226,8 +320,7 @@ export default function SidePanel() {
 
       <div className="panel-card">
         <p className="hint">
-          Connect to the relay. Leave Session ID empty on both sides to use the shared default (
-          <code>{DEFAULT_SESSION_ID}</code>).
+          Sign in, open a session in Athens Agents, then select it here — no typing session IDs.
         </p>
 
         {!profileId && (
@@ -263,6 +356,20 @@ export default function SidePanel() {
           </div>
         )}
 
+        {profileId && (
+          <div className="status-card connected" style={{ marginBottom: 12 }}>
+            <div className="status-label">Signed in</div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>
+              Profile <code>{profileId.slice(0, 10)}…</code>
+            </div>
+            <div className="button-row" style={{ marginTop: 8 }}>
+              <button className="secondary" type="button" onClick={() => void signOut()}>
+                Sign out
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="field">
           <label htmlFor="relay-server">Relay server</label>
           <input
@@ -273,13 +380,52 @@ export default function SidePanel() {
         </div>
 
         <div className="field">
-          <label htmlFor="session-id">Session ID</label>
-          <input
-            id="session-id"
-            value={sessionId}
+          <label htmlFor="session-select">Athens session</label>
+          <div className="button-row" style={{ marginBottom: 6 }}>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => void refreshSessions()}
+              disabled={!profileId || sessionsLoading}
+            >
+              {sessionsLoading ? 'Refreshing…' : 'Refresh sessions'}
+            </button>
+          </div>
+          <select
+            id="session-select"
+            value={selectedInList ? sessionId : ''}
             onChange={(e) => setSessionId(e.target.value)}
-            placeholder={`Empty → "${DEFAULT_SESSION_ID}"`}
-          />
+            disabled={!profileId}
+          >
+            <option value="">
+              {availableSessions.length === 0
+                ? 'No Athens sessions online — open Agents'
+                : 'Select a session…'}
+            </option>
+            {availableSessions.map((s) => {
+              const id = sessionKey(s);
+              return (
+                <option key={id} value={id}>
+                  {sessionDisplayLabel(s)}
+                </option>
+              );
+            })}
+          </select>
+          {sessionsError && (
+            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--destructive, #b91c1c)' }}>
+              {sessionsError}
+            </div>
+          )}
+          {sessionId && (
+            <div style={{ marginTop: 6, fontSize: 11, opacity: 0.75 }}>
+              ID <code>{sessionId}</code>
+              {!selectedInList && ' (not in live list — refresh after opening Athens)'}
+            </div>
+          )}
+          <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
+            Fallback shared lane: <code>{DEFAULT_SESSION_ID}</code> only if Athens has no named
+            session open.
+          </p>
         </div>
 
         <div
@@ -297,7 +443,7 @@ export default function SidePanel() {
         </div>
 
         <div className="button-row">
-          <button type="button" onClick={() => void connect()} disabled={!profileId}>
+          <button type="button" onClick={() => void connect()} disabled={!profileId || !sessionId}>
             {connected ? 'Reconnect' : 'Connect'}
           </button>
           <button

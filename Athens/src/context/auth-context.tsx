@@ -3,7 +3,12 @@ import { useApi } from "@/api/useApi";
 import { invalidateCachedGet } from "@/api/cached-get";
 import { API_BASE } from "@/lib/api-base";
 
-export type AuthUser = { _id: unknown; name: string; tier?: string | null };
+export type AuthUser = {
+  _id: unknown;
+  name: string;
+  tier?: string | null;
+  permission?: string | null;
+};
 
 type AuthContextValue = {
   user: AuthUser | null;

@@ -1,4 +1,4 @@
-export const DEFAULT_JOB_BUDGET_USD = 0.05;
+export const DEFAULT_JOB_BUDGET_USD = 0.25;
 export const BUDGET_STORAGE_KEY = "athens-agent-job-budget-usd";
 
 const MIN_BUDGET_USD = 0.01;

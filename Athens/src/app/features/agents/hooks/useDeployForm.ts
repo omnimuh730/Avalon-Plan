@@ -12,7 +12,6 @@ export function useDeployForm(
   const asNewSession = Boolean(opts?.asNewSession);
 
   const [name, setName] = useState("");
-  const [avalonSessionId, setAvalonSessionId] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -71,17 +70,31 @@ export function useDeployForm(
   useEffect(() => {
     if (!applierName || !hasFilter) {
       setFetched([]);
+      setLoadingJobs(false);
       return;
     }
+    let cancelled = false;
     setLoadingJobs(true);
+    // Clear stale candidates immediately so the list doesn't keep showing the
+    // previous source/filter results while the next request is in flight.
+    setFetched([]);
     fetchCandidateJobs(applierName, source, 200, {
       titleQuery: debouncedTitle,
       postedFrom,
       postedTo,
     })
-      .then(setFetched)
-      .catch(() => setFetched([]))
-      .finally(() => setLoadingJobs(false));
+      .then((jobs) => {
+        if (!cancelled) setFetched(jobs);
+      })
+      .catch(() => {
+        if (!cancelled) setFetched([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingJobs(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [applierName, source, debouncedTitle, postedFrom, postedTo, hasFilter]);
 
   const queuedIds = new Set(queue.map((j) => j.id));
@@ -145,7 +158,7 @@ export function useDeployForm(
           url: j.url,
           source: j.source,
         })),
-        ...(asNewSession ? { createNewSession: true, avalonSessionId: avalonSessionId.trim() } : {}),
+        ...(asNewSession ? { createNewSession: true } : {}),
       });
     } catch (e: unknown) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -157,8 +170,6 @@ export function useDeployForm(
     name,
     setName,
     asNewSession,
-    avalonSessionId,
-    setAvalonSessionId,
     loading,
     err,
     profileName: applier?.name || "",

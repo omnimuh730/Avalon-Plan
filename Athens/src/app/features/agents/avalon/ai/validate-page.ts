@@ -91,7 +91,6 @@ export async function validateJobPage(
       },
     ],
     responseSchema: PAGE_VALIDITY_SCHEMA,
-    temperature: 0,
     signal,
   });
 
