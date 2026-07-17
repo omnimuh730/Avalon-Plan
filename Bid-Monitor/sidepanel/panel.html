@@ -7,36 +7,15 @@
     <link rel="stylesheet" href="panel.css" />
   </head>
   <body>
-    <header>
-      <h1>Bid Monitor</h1>
-      <p class="subtitle">Job pool application monitor</p>
-    </header>
-
-    <section id="applySessionView" class="apply-session hidden">
-      <h2>Current tab</h2>
-      <div id="applyJobCompany" class="apply-job-title">—</div>
-      <div id="applyJobTitle" class="apply-job-meta">—</div>
-      <div id="applyResumeFolder" class="apply-job-meta">—</div>
-      <p id="applySessionStatus" class="apply-status">Ready to record</p>
-      <p id="applySessionError" class="error hidden"></p>
-      <button id="startRecordingBtn" class="btn btn-start" type="button">Start Recording</button>
-      <div id="finishActions" class="finish-actions hidden">
-        <button id="submitRecordingBtn" class="btn btn-start" type="button">Submit</button>
-        <button id="skipRecordingBtn" class="btn btn-stop" type="button">Skip this Job</button>
-      </div>
-      <p class="hint finish-hint hidden" id="finishHint">Both options stop recording. Submit → Submitted · Skip → Skipped.</p>
-    </section>
-
-    <section id="recordingsView" class="recordings hidden">
-      <h2>Recording now</h2>
-      <ul id="recordingsList" class="item-list"></ul>
-    </section>
-
     <section id="loginView" class="view">
-      <form id="loginForm" class="form-section">
+      <header class="app-header">
+        <h1>Bid Monitor</h1>
+        <p class="subtitle">Video bid recording for Athens Bid Ready</p>
+      </header>
+      <form id="loginForm" class="form-section card">
         <label>
           Athens applier name
-          <input id="applierName" type="text" placeholder="e.g. David Moll" autocomplete="username" required />
+          <input id="applierName" type="text" placeholder="e.g. Eli Taylor" autocomplete="username" required />
         </label>
         <label>
           Athens API URL
@@ -44,53 +23,141 @@
         </label>
         <label>
           Bidder display name
-          <input id="username" type="text" placeholder="Same as applier, or demo" autocomplete="nickname" />
+          <input id="username" type="text" placeholder="Same as applier" autocomplete="nickname" />
         </label>
-        <label>
-          Password <span class="hint-inline">(bidder123)</span>
-          <input id="password" type="password" placeholder="bidder123" autocomplete="current-password" value="bidder123" />
+        <label class="hidden">
+          Password
+          <input id="password" type="password" value="bidder123" autocomplete="current-password" />
         </label>
-        <button id="signInBtn" class="btn btn-start" type="submit">Sign in</button>
+        <button id="signInBtn" class="btn btn-primary" type="submit">Sign in</button>
       </form>
       <p id="loginError" class="error hidden"></p>
-      <p class="hint mock-hint">
-        Loads live <strong>Bid Ready</strong> jobs from Athens.<br />
-        Use your Job Search profile name. Password <strong>bidder123</strong> for bidder role.
+      <p class="hint">
+        Loads live <strong>Bid Ready</strong> jobs from Athens. Use your Job Search profile name.
       </p>
     </section>
 
-    <section id="poolsView" class="view hidden">
-      <div class="profile-bar">
-        <div>
-          <div class="profile-label">Signed in as</div>
-          <div id="profileName" class="profile-name">—</div>
-          <div id="roleBadge" class="role-badge">Bidder</div>
+    <section id="workspaceView" class="view hidden">
+      <header class="sticky-header">
+        <div class="profile-bar compact">
+          <div>
+            <div class="profile-label">Bidder</div>
+            <div id="profileName" class="profile-name">—</div>
+            <div class="meta-row">
+              <span id="roleBadge" class="role-badge">Bidder</span>
+              <span id="bridgeBadge" class="bridge-badge unknown">Athens…</span>
+              <span id="completedToday" class="completed-pill">0 today</span>
+            </div>
+          </div>
+          <button id="signOutBtn" class="btn-link" type="button">Sign out</button>
         </div>
-        <button id="signOutBtn" class="btn-link" type="button">Sign out</button>
+
+        <div class="format-toggle compact-format">
+          <span class="format-toggle-label">Video format</span>
+          <div class="format-switch" role="group" aria-label="Video format">
+            <button type="button" class="format-option active" data-format="webm">WebM</button>
+            <button type="button" class="format-option" data-format="mp4">MP4</button>
+          </div>
+        </div>
+      </header>
+
+      <div id="statusStrip" class="status-strip idle">
+        <span class="status-dot"></span>
+        <span id="statusStripText">Select a Bid Ready job to apply</span>
       </div>
 
-      <div class="format-toggle compact-format">
-        <span class="format-toggle-label">Video format</span>
-        <div class="format-switch" role="group" aria-label="Video format">
-          <button type="button" class="format-option active" data-format="webm">WebM</button>
-          <button type="button" class="format-option" data-format="mp4">MP4</button>
+      <section id="applySessionView" class="apply-session card hidden">
+        <div class="apply-session-head">
+          <h2>Active job</h2>
+          <span id="applyModeBadge" class="mode-badge ready">Ready</span>
         </div>
-      </div>
+        <div id="applyJobCompany" class="apply-job-title">—</div>
+        <div id="applyJobTitle" class="apply-job-meta">—</div>
+        <div id="applyResumeFolder" class="apply-job-meta">—</div>
+        <p id="applySessionStatus" class="apply-status">Ready to record</p>
+        <p id="applySessionError" class="error hidden"></p>
 
-      <div class="section-header">
-        <h2>Job pools</h2>
-      </div>
-      <ul id="poolList" class="item-list"></ul>
+        <div id="applyResumeActions" class="resume-actions hidden">
+          <span class="resume-actions-label">Athens résumé</span>
+          <div class="resume-actions-btns">
+            <button id="applyViewResumeBtn" class="btn btn-secondary" type="button">View résumé</button>
+            <button id="applyDownloadResumeBtn" class="btn btn-secondary" type="button">Download</button>
+          </div>
+        </div>
+
+        <div id="startRecordBlock" class="start-record-block">
+          <p class="start-record-copy">
+            Click the <strong>Bid Monitor toolbar icon</strong> on this tab
+            (or right‑click → Start / Stop recording) to begin silent video capture.
+          </p>
+          <button id="startRecordingBtn" class="btn btn-secondary" type="button">How to start recording</button>
+        </div>
+
+        <div class="action-grid">
+          <button id="analyzeBtn" class="btn btn-secondary" type="button">Analyze</button>
+          <button id="openJobBtn" class="btn btn-secondary" type="button">Open job</button>
+        </div>
+
+        <div id="screeningPanel" class="screening-panel hidden">
+          <div class="lights-row">
+            <div class="traffic-light" data-light="jd">
+              <span class="light-dot unknown" id="lightJd"></span>
+              <span>JD</span>
+            </div>
+            <div class="traffic-light" data-light="remote">
+              <span class="light-dot unknown" id="lightRemote"></span>
+              <span>Remote</span>
+            </div>
+            <div class="traffic-light" data-light="clearance">
+              <span class="light-dot unknown" id="lightClearance"></span>
+              <span>No clearance</span>
+            </div>
+          </div>
+          <p id="analyzeStatus" class="analyze-status hidden"></p>
+          <details id="summaryDetails" class="summary-details hidden">
+            <summary>Page summary</summary>
+            <p id="analyzeSummary"></p>
+          </details>
+          <ul id="flagExplanations" class="flag-explanations"></ul>
+          <details id="formAnswersDetails" class="form-answers hidden" open>
+            <summary>Suggested answers <span id="formAnswersCount" class="form-answers-count"></span></summary>
+            <ul id="formAnswersList" class="form-answers-list"></ul>
+          </details>
+        </div>
+      </section>
+
+      <section id="recordingsView" class="recordings card hidden">
+        <h2>Recording now</h2>
+        <ul id="recordingsList" class="item-list"></ul>
+      </section>
+
+      <section id="queueSection" class="queue-section">
+        <div class="section-header">
+          <h2>Bid Ready</h2>
+          <button id="refreshQueueBtn" class="btn-link" type="button">Refresh</button>
+        </div>
+        <p id="queueHint" class="hint queue-hint">Open → record → Submit or Skip</p>
+        <ul id="jobList" class="item-list"></ul>
+      </section>
+
+      <footer id="finishFooter" class="sticky-footer hidden">
+        <p class="finish-hint" id="finishHint">
+          Submit → Submitted · Skip → Skipped. Stops recording when active.
+        </p>
+        <div class="finish-actions" id="finishActions">
+          <button id="submitRecordingBtn" class="btn btn-primary" type="button">Submit</button>
+          <button id="skipRecordingBtn" class="btn btn-muted" type="button">Skip this Job</button>
+        </div>
+      </footer>
     </section>
 
-    <section id="jobsView" class="view hidden">
-      <button id="backToPoolsBtn" class="btn-link back-btn" type="button">← Back to pools</button>
-      <div class="section-header">
-        <h2 id="jobsPoolTitle">Pool jobs</h2>
-        <span id="jobsPoolStatus" class="status-badge">active</span>
-      </div>
-      <ul id="jobList" class="item-list"></ul>
-    </section>
+    <!-- Legacy ids kept as aliases via JS if needed -->
+    <ul id="poolList" class="hidden"></ul>
+    <div id="poolsView" class="hidden"></div>
+    <div id="jobsView" class="hidden"></div>
+    <span id="jobsPoolTitle" class="hidden"></span>
+    <span id="jobsPoolStatus" class="hidden"></span>
+    <button id="backToPoolsBtn" class="hidden" type="button"></button>
 
     <script src="panel.js"></script>
   </body>

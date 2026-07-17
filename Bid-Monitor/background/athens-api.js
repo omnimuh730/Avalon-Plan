@@ -156,6 +156,65 @@ const AthensApi = (() => {
     });
   }
 
+  async function saveBidFlags(applierName, { jobId, flags, summary }) {
+    return fetchJson('/bid-results/flags', {
+      method: 'POST',
+      body: {
+        applierName,
+        jobId,
+        flags: flags || undefined,
+        summary: summary || undefined,
+      },
+    });
+  }
+
+  async function analyzeJobPage(applierName, { pageContext, sessionContext }) {
+    return fetchJson('/job-analyze/page', {
+      method: 'POST',
+      body: {
+        applierName,
+        pageContext,
+        sessionContext: sessionContext || undefined,
+      },
+    });
+  }
+
+  async function analyzeJobFlags(applierName, { pageContext, sessionContext, neededFlags }) {
+    return fetchJson('/job-analyze/flags', {
+      method: 'POST',
+      body: {
+        applierName,
+        pageContext,
+        sessionContext: sessionContext || undefined,
+        neededFlags: neededFlags || ['remote', 'clearance'],
+      },
+    });
+  }
+
+  async function checkAthensHealth() {
+    const settings = await getSettings();
+    const base = settings.apiUrl.replace(/\/$/, '').replace(/\/api$/, '');
+    try {
+      const response = await fetch(`${settings.apiUrl.replace(/\/$/, '')}/bid-results?applierName=${encodeURIComponent(settings.applierName || '_')}`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(4000),
+      });
+      return {
+        ok: response.status !== 0,
+        healthy: response.ok || response.status === 400 || response.status === 503,
+        apiUrl: settings.apiUrl,
+        status: response.status,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        healthy: false,
+        apiUrl: settings.apiUrl,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
   async function checkGeneratedResumes(applierName, jobIds) {
     const data = await fetchJson('/personal/agent-job-resumes/status', {
       method: 'POST',
@@ -213,6 +272,10 @@ const AthensApi = (() => {
     uploadRecording,
     completeBid,
     skipBid,
+    saveBidFlags,
+    analyzeJobPage,
+    analyzeJobFlags,
+    checkAthensHealth,
     checkGeneratedResumes,
     getResumePdfUrl,
     fetchResumePdf,

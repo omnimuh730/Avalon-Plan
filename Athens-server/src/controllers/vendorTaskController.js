@@ -92,6 +92,9 @@ export function serializeTask(doc, sessionMatch = null) {
 		bidderInProcess: Boolean(doc.bidderInProcess),
 		recordingDurationSec:
 			typeof doc.recordingDurationSec === "number" ? doc.recordingDurationSec : null,
+		flags: doc.flags && typeof doc.flags === "object" ? doc.flags : null,
+		analysisSummary:
+			typeof doc.analysisSummary === "string" ? doc.analysisSummary : null,
 	};
 }
 

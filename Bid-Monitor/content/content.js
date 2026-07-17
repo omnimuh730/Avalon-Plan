@@ -471,7 +471,7 @@
       : '';
 
     const readyLine = isReady
-      ? '<div class="panel-meta">Click <strong>Start Recording</strong> when you are ready to apply.</div>'
+      ? '<div class="panel-meta">Toolbar icon starts recording. Or Submit / Skip without video.</div>'
       : '';
 
     const profileLine = profileNameCache
@@ -489,6 +489,12 @@
         ? `<div class="panel-meta"><strong>Resume folder:</strong> ${activeSessionCache.resumeSetFolder}</div>`
         : '';
 
+    const finishActionsHtml = `
+      <div id="bid-monitor-finish-actions">
+        <button id="bid-monitor-submit-btn" type="button" ${isStarting ? 'disabled' : ''}>Submit</button>
+        <button id="bid-monitor-skip-btn" type="button" ${isStarting ? 'disabled' : ''}>Skip this Job</button>
+      </div>`;
+
     floatingBar.innerHTML = `
       <div class="panel-header">
         <span class="bid-monitor-dot"></span>
@@ -499,21 +505,24 @@
       ${readyLine}
       ${errorLine}
       ${isReady
-        ? '<button id="bid-monitor-start-btn" type="button">Start Recording</button>'
+        ? `<button id="bid-monitor-start-btn" type="button">How to start recording</button>${finishActionsHtml}`
         : isError
           ? '<button id="bid-monitor-retry-btn" type="button">Try Start Recording Again</button>'
           : isApplyFlow
-            ? `<div id="bid-monitor-finish-actions">
-                <button id="bid-monitor-submit-btn" type="button" ${isStarting ? 'disabled' : ''}>Submit</button>
-                <button id="bid-monitor-skip-btn" type="button" ${isStarting ? 'disabled' : ''}>Skip this Job</button>
-              </div>`
+            ? finishActionsHtml
             : `<button id="bid-monitor-stop-btn" type="button" ${isStarting ? 'disabled' : ''}>Stop Recording</button>`}
     `;
 
     if (isReady) {
-      floatingBar.querySelector('#bid-monitor-start-btn').addEventListener('click', handleStartClick);
+      floatingBar.querySelector('#bid-monitor-start-btn')?.addEventListener('click', handleStartClick);
+      floatingBar
+        .querySelector('#bid-monitor-submit-btn')
+        ?.addEventListener('click', () => handleStopClick('submit'));
+      floatingBar
+        .querySelector('#bid-monitor-skip-btn')
+        ?.addEventListener('click', () => handleStopClick('skip'));
     } else if (isError) {
-      floatingBar.querySelector('#bid-monitor-retry-btn').addEventListener('click', handleStartClick);
+      floatingBar.querySelector('#bid-monitor-retry-btn')?.addEventListener('click', handleStartClick);
     } else if (isApplyFlow) {
       floatingBar
         .querySelector('#bid-monitor-submit-btn')

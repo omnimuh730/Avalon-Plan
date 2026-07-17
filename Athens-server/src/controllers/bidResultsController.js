@@ -103,7 +103,21 @@ function mapTaskToBidResult(task) {
 		submittedAt: task.completedAt || (status !== "pending" && status !== "in_process" ? task.updatedAt : null),
 		durationSec: typeof task.recordingDurationSec === "number" ? task.recordingDurationSec : null,
 		matchScore: task.matchScore,
-		flags: { remote: null, clearance: null },
+		flags: {
+			remote:
+				task.flags?.remote?.status === "green" || task.flags?.remote?.status === "red"
+					? task.flags.remote.status
+					: task.flags?.remote === "green" || task.flags?.remote === "red"
+						? task.flags.remote
+						: null,
+			clearance:
+				task.flags?.clearance?.status === "green" || task.flags?.clearance?.status === "red"
+					? task.flags.clearance.status
+					: task.flags?.clearance === "green" || task.flags?.clearance === "red"
+						? task.flags.clearance
+						: null,
+		},
+		analysisSummary: task.analysisSummary || null,
 		jobDetail: null,
 		recommendedResume: null,
 		submissionResume: null,
@@ -489,6 +503,53 @@ export async function completeBidResult(req, res) {
 		return res.status(500).json({
 			success: false,
 			error: err.message || "Failed to complete bid.",
+		});
+	}
+}
+
+/**
+ * POST /bid-results/flags
+ * Persist Remote / Clearance screening from Bid-Monitor Analyze.
+ * body: { applierName, jobId, flags?, summary? }
+ */
+export async function saveBidResultFlags(req, res) {
+	try {
+		const applierName = String(req.body?.applierName ?? "").trim();
+		const jobId = String(req.body?.jobId ?? "").trim();
+		if (!applierName || !jobId) {
+			return res
+				.status(400)
+				.json({ success: false, error: "applierName and jobId are required." });
+		}
+
+		const flagsIn = req.body?.flags && typeof req.body.flags === "object" ? req.body.flags : {};
+		const normalizeVerdict = (v) => {
+			if (!v || typeof v !== "object") return null;
+			const status = v.status === "red" || v.status === "green" ? v.status : null;
+			if (!status) return null;
+			return {
+				status,
+				explanation: typeof v.explanation === "string" ? v.explanation : "",
+			};
+		};
+		const flags = {
+			remote: normalizeVerdict(flagsIn.remote),
+			clearance: normalizeVerdict(flagsIn.clearance),
+		};
+		const summary =
+			typeof req.body?.summary === "string" ? req.body.summary.trim().slice(0, 4000) : undefined;
+
+		const fields = { flags };
+		if (summary !== undefined) fields.analysisSummary = summary || null;
+
+		const doc = await upsertVendorTaskRecording(applierName, jobId, fields);
+		const task = serializeTask(doc);
+		return res.json({ success: true, task, result: mapTaskToBidResult(task) });
+	} catch (err) {
+		console.error("[bid-results] flags failed", err);
+		return res.status(500).json({
+			success: false,
+			error: err.message || "Failed to save flags.",
 		});
 	}
 }

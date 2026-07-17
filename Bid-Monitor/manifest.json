@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bid Monitor",
-  "version": "2.10.1",
-  "description": "Monitor job pool applications — sign in, apply to jobs, record sessions, and track resume usage.",
+  "version": "2.12.0",
+  "description": "Athens Bid Ready video recording — Apply, Analyze via Athens, Submit or Skip.",
   "permissions": [
     "activeTab",
     "storage",

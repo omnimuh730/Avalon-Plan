@@ -5,6 +5,7 @@ importScripts(
   'athens-api.js',
   'mock-api.js',
   'zip-utils.js',
+  'page-context.js',
 );
 
 const STORAGE_KEY = 'bidMonitorSessions';
@@ -596,10 +597,12 @@ async function openApplyOnTab(tabId, poolId, jobId, streamId = null) {
   const { auth, pool, job } = await resolveApplyJob({ poolId, jobId });
   const jobPayload = {
     id: job.id,
+    athensJobId: job.athensJobId || job.id,
     companyName: job.companyName,
     title: job.title,
     jdUrl: job.jdUrl,
     resumeFolderName: job.resumeFolderName,
+    hasGeneratedResume: Boolean(job.hasGeneratedResume),
   };
 
   await cleanupOrphanRecordingSessions();
@@ -1146,6 +1149,71 @@ async function beginRecordingSession({
   };
 }
 
+async function finishPendingApplyWithoutRecording({
+  tabId,
+  closeApplyTab = false,
+  finishAction = 'submit',
+} = {}) {
+  const action = finishAction === 'skip' ? 'skip' : 'submit';
+  const pendingAll = await getPendingApplyTabs();
+  const pending = pendingAll[tabId];
+  const job = pending?.job;
+  if (!job?.id) {
+    return { ok: false, error: 'No recording for this tab.' };
+  }
+
+  let jobOutcome = null;
+  let statusError = null;
+  try {
+    const auth = await MockApi.getAuth();
+    const settings = await AthensApi.getSettings();
+    const applierName = settings.applierName || auth?.applierName || auth?.displayName;
+    if (!applierName) throw new Error('Athens applier name is required.');
+
+    if (action === 'skip') {
+      await AthensApi.skipBid(applierName, {
+        jobId: job.id,
+        bidderName: auth?.displayName,
+      });
+      jobOutcome = 'skipped';
+    } else {
+      await AthensApi.completeBid(applierName, {
+        jobId: job.id,
+        bidderName: auth?.displayName,
+      });
+      jobOutcome = 'submitted';
+    }
+  } catch (err) {
+    statusError = err instanceof Error ? err.message : String(err);
+  }
+
+  if (closeApplyTab) {
+    chrome.tabs.remove(tabId).catch(() => {});
+  }
+  await clearPendingApply(tabId);
+  await updateRecordingBadge();
+  broadcastApplySessionUpdate(tabId);
+  await notifyTab(tabId, { isRecording: false });
+
+  if (statusError) {
+    return { ok: false, error: statusError, finishAction: action };
+  }
+
+  return {
+    ok: true,
+    session: null,
+    downloaded: false,
+    finishAction: action,
+    jobOutcome,
+    jobMarkedApplied: jobOutcome === 'submitted',
+    uploaded: false,
+    uploadError: null,
+    statusError: null,
+    recordingPath: null,
+    withoutRecording: true,
+  };
+}
+
 async function completeRecordingSession({
   tabId,
   closeApplyTab = false,
@@ -1160,7 +1228,7 @@ async function completeRecordingSession({
   const action = finishAction === 'skip' ? 'skip' : 'submit';
   const session = await getSessionForTab(tabId);
   if (!session) {
-    return { ok: false, error: 'No recording for this tab.' };
+    return finishPendingApplyWithoutRecording({ tabId, closeApplyTab, finishAction: action });
   }
 
   const folder = `bid-monitor/${sanitizeFileName(session.bidderName)}-${session.id}`;
@@ -1382,8 +1450,22 @@ chrome.action.onClicked.addListener((tab) => {
 async function handleRecordingGesture(tab, streamId) {
   const existing = await getSessionForTab(tab.id);
   if (existing) {
-    // Already recording this tab → the gesture stops it.
-    await completeRecordingSession({ tabId: tab.id, closeApplyTab: false });
+    // Apply-flow: open the panel so the bidder picks Submit vs Skip.
+    // Non-apply recordings still stop on toggle.
+    if (existing.applyFlow) {
+      if (tab?.windowId != null) {
+        chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+      }
+      chrome.runtime
+        .sendMessage({ type: 'PANEL_HIGHLIGHT_FINISH', tabId: tab.id })
+        .catch(() => {});
+      return;
+    }
+    await completeRecordingSession({
+      tabId: tab.id,
+      closeApplyTab: false,
+      finishAction: 'submit',
+    });
     return;
   }
   if (!streamId) return; // Not capturable (e.g. chrome:// page).
@@ -1504,6 +1586,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     switch (message.type) {
       case 'SIGN_IN': {
+        if (message.apiUrl || message.applierName) {
+          await AthensApi.saveSettings({
+            applierName: message.applierName || message.username,
+            apiUrl: message.apiUrl,
+          });
+        }
         const result = await MockApi.signIn(message.username, message.password, {
           applierName: message.applierName || message.username,
           apiUrl: message.apiUrl,
@@ -1531,6 +1619,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'DOWNLOAD_POOL': {
         await downloadPoolZip(message.poolId);
         sendResponse({ ok: true });
+        break;
+      }
+
+      case 'CHECK_JOB_RESUME': {
+        try {
+          const settings = await AthensApi.getSettings();
+          const auth = await MockApi.getAuth();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          const jobId = String(message.jobId || '').trim();
+          if (!applierName || !jobId) {
+            sendResponse({ ok: true, hasResume: false });
+            break;
+          }
+          const withResume = await AthensApi.checkGeneratedResumes(applierName, [jobId]);
+          sendResponse({ ok: true, hasResume: withResume.has(jobId) });
+        } catch (err) {
+          sendResponse({ ok: false, hasResume: false, error: err.message });
+        }
         break;
       }
 
@@ -1862,6 +1969,110 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           finishAction: message.finishAction === 'skip' ? 'skip' : 'submit',
         });
         sendResponse(result);
+        break;
+      }
+
+      case 'CHECK_BRIDGE':
+      case 'CHECK_ATHENS': {
+        try {
+          const health = await AthensApi.checkAthensHealth();
+          sendResponse({
+            ok: true,
+            healthy: Boolean(health.healthy),
+            apiUrl: health.apiUrl,
+            error: health.error || null,
+          });
+        } catch (err) {
+          sendResponse({ ok: false, healthy: false, error: err.message });
+        }
+        break;
+      }
+
+      case 'ANALYZE_JOB_TAB': {
+        try {
+          const tabId = message.tabId ?? sender.tab?.id;
+          if (!tabId) {
+            sendResponse({ ok: false, error: 'No tab to analyze.' });
+            break;
+          }
+          const pageContext = await PageContext.extractFromTab(tabId);
+          if (!pageContext?.visibleText) {
+            sendResponse({
+              ok: false,
+              error: 'Could not read page text from this tab (try the job application page).',
+            });
+            break;
+          }
+
+          const auth = await MockApi.getAuth();
+          const settings = await AthensApi.getSettings();
+          const applierName =
+            settings.applierName || auth?.applierName || auth?.displayName || '';
+          const sessionContext = {
+            companyName: message.companyName || '',
+            jobTitle: message.jobTitle || '',
+            applyUrl: message.applyUrl || pageContext.url,
+          };
+
+          const [pageRes, flagsRes] = await Promise.all([
+            AthensApi.analyzeJobPage(applierName, {
+              pageContext,
+              sessionContext,
+            }).catch((err) => ({ error: err.message })),
+            AthensApi.analyzeJobFlags(applierName, {
+              pageContext,
+              sessionContext,
+              neededFlags: ['remote', 'clearance'],
+            }).catch((err) => ({ error: err.message })),
+          ]);
+
+          if (pageRes?.error && flagsRes?.error) {
+            sendResponse({
+              ok: false,
+              error:
+                pageRes.error ||
+                flagsRes.error ||
+                'Analyze failed. Is Athens-server running?',
+            });
+            break;
+          }
+
+          const page = pageRes?.result || null;
+          const flagPartial = flagsRes?.result || {};
+          const flags = {
+            remote: flagPartial.remote ?? null,
+            clearance: flagPartial.clearance ?? null,
+          };
+          const summary = page?.summary || null;
+          const jdAnalyzed = Boolean(page?.isJobPage || summary || flags.remote || flags.clearance);
+          const mode = pageRes?.mode || flagsRes?.mode || null;
+
+          const jobId = message.jobId || null;
+          if (applierName && jobId && (flags.remote || flags.clearance || summary)) {
+            try {
+              await AthensApi.saveBidFlags(applierName, { jobId, flags, summary });
+            } catch (err) {
+              console.warn('Bid Monitor: save flags failed', err);
+            }
+          }
+
+          sendResponse({
+            ok: true,
+            jdAnalyzed,
+            summary,
+            page,
+            formAnswers: Array.isArray(page?.formAnswers) ? page.formAnswers : [],
+            flags,
+            mode,
+            pageUrl: pageContext.url,
+            pageTitle: pageContext.title,
+            charCount: pageContext.sourceMeta?.charCount ?? pageContext.visibleText.length,
+            pageError: pageRes?.error || null,
+            flagsError: flagsRes?.error || null,
+          });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Analyze failed.' });
+        }
         break;
       }
 
