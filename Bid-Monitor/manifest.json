@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bid Monitor",
-  "version": "2.12.0",
-  "description": "Athens Bid Ready video recording — Apply, Analyze via Athens, Submit or Skip.",
+  "version": "2.13.0",
+  "description": "Athens Bid Ready video recording — Apply, full-page Analyze via Athens, Submit or Skip.",
   "permissions": [
     "activeTab",
     "storage",

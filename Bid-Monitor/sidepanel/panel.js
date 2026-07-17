@@ -13,6 +13,7 @@ const completedTodayEl = document.getElementById('completedToday');
 const signOutBtn = document.getElementById('signOutBtn');
 const jobList = document.getElementById('jobList');
 const refreshQueueBtn = document.getElementById('refreshQueueBtn');
+const queueHint = document.getElementById('queueHint');
 const applySessionView = document.getElementById('applySessionView');
 const applyJobCompany = document.getElementById('applyJobCompany');
 const applyJobTitle = document.getElementById('applyJobTitle');
@@ -24,6 +25,7 @@ const startRecordBlock = document.getElementById('startRecordBlock');
 const startRecordingBtn = document.getElementById('startRecordingBtn');
 const analyzeBtn = document.getElementById('analyzeBtn');
 const openJobBtn = document.getElementById('openJobBtn');
+const reopenJobBtn = document.getElementById('reopenJobBtn');
 const screeningPanel = document.getElementById('screeningPanel');
 const lightJd = document.getElementById('lightJd');
 const lightRemote = document.getElementById('lightRemote');
@@ -39,7 +41,6 @@ const applyResumeActions = document.getElementById('applyResumeActions');
 const applyViewResumeBtn = document.getElementById('applyViewResumeBtn');
 const applyDownloadResumeBtn = document.getElementById('applyDownloadResumeBtn');
 const finishFooter = document.getElementById('finishFooter');
-const finishActions = document.getElementById('finishActions');
 const finishHint = document.getElementById('finishHint');
 const submitRecordingBtn = document.getElementById('submitRecordingBtn');
 const skipRecordingBtn = document.getElementById('skipRecordingBtn');
@@ -52,12 +53,14 @@ const formatOptions = [...document.querySelectorAll('.format-option')];
 let dashboardState = { auth: null, pools: [] };
 let currentTabId = null;
 let applyTabId = null;
+let activeJobId = null;
 let currentTabState = null;
 let recordingSessions = [];
-let analysisByTab = {};
+let persistedAnalysis = null;
 let completedTodayCount = 0;
 let applyResumeJobId = null;
 let applyResumeCheckToken = 0;
+let queueLoading = false;
 
 async function sendMessage(message) {
   return chrome.runtime.sendMessage(message);
@@ -112,8 +115,7 @@ function setLight(el, status) {
   else el.classList.add('unknown');
 }
 
-function renderAnalysis(tabId) {
-  const data = tabId ? analysisByTab[tabId] : null;
+function renderAnalysis(data) {
   if (!data) {
     screeningPanel?.classList.add('hidden');
     setLight(lightJd, 'unknown');
@@ -153,7 +155,9 @@ function renderAnalysis(tabId) {
   const answers = Array.isArray(data.formAnswers) ? data.formAnswers : [];
   if (answers.length) {
     formAnswersDetails?.classList.remove('hidden');
-    if (formAnswersCount) formAnswersCount.textContent = `(${answers.length})`;
+    if (formAnswersCount) {
+      formAnswersCount.textContent = `(${answers.length})`;
+    }
     if (formAnswersList) {
       formAnswersList.innerHTML = answers
         .map((a) => {
@@ -179,9 +183,14 @@ function renderAnalysis(tabId) {
       analyzeStatus.textContent = data.error;
       analyzeStatus.classList.remove('hidden');
     } else {
-      analyzeStatus.textContent = data.charCount
-        ? `Analyzed ${data.charCount.toLocaleString()} chars from page`
-        : 'Analysis complete';
+      const parts = [];
+      if (answers.length) {
+        parts.push(`${answers.length} suggested answers`);
+      }
+      if (data.charCount) {
+        parts.push(`${data.charCount.toLocaleString()} chars`);
+      }
+      analyzeStatus.textContent = parts.length ? parts.join(' · ') : 'Analysis complete';
       analyzeStatus.classList.remove('hidden');
     }
   }
@@ -196,7 +205,6 @@ async function refreshApplyResume(job) {
     return;
   }
 
-  // Optimistic show when we already know a résumé exists.
   if (job?.hasGeneratedResume) {
     applyResumeActions?.classList.remove('hidden');
   }
@@ -232,13 +240,19 @@ function renderApplySession(state) {
   const hasPending = Boolean(job) && !isRec;
   const finishable = isRec || hasPending;
   const hasCard = Boolean(job) || isRec;
+  const tabMissing = Boolean(state?.tabMissing);
 
   applyTabId = state?.tabId ?? (isRec ? state?.session?.tabId : null) ?? null;
+  activeJobId = state?.jobId || job?.id || job?.athensJobId || null;
+  persistedAnalysis = state?.analysis || persistedAnalysis;
+
   applySessionView.classList.toggle('hidden', !hasCard);
   if (!hasCard) {
     finishFooter?.classList.add('hidden');
     statusStrip.className = 'status-strip idle';
     statusStripText.textContent = 'Select a Bid Ready job to apply';
+    reopenJobBtn?.classList.add('hidden');
+    renderAnalysis(null);
     return;
   }
 
@@ -251,8 +265,10 @@ function renderApplySession(state) {
   refreshApplyResume(job);
 
   applySessionView.classList.toggle('recording', isRec);
-  applyModeBadge.textContent = isRec ? 'Recording' : 'Ready';
+  applyModeBadge.textContent = isRec ? 'Recording' : 'Ready to record';
   applyModeBadge.className = `mode-badge ${isRec ? 'recording' : 'ready'}`;
+
+  reopenJobBtn?.classList.toggle('hidden', !tabMissing && Boolean(applyTabId));
 
   if (isRec) {
     statusStrip.className = 'status-strip recording';
@@ -264,11 +280,17 @@ function renderApplySession(state) {
       finishHint.textContent =
         'Stops recording. Submit → Submitted · Skip → Skipped.';
     }
+  } else if (tabMissing) {
+    statusStrip.className = 'status-strip ready';
+    statusStripText.textContent = 'In process — reopen the job tab to continue';
+    applySessionStatus.textContent =
+      'Job tab was closed. Reopen the application page to record or Analyze.';
+    startRecordBlock?.classList.add('hidden');
   } else {
     statusStrip.className = 'status-strip ready';
-    statusStripText.textContent = 'Ready — start recording, or Submit / Skip without video';
+    statusStripText.textContent = 'Ready to record — or Submit / Skip without video';
     applySessionStatus.textContent =
-      'Job is In-Process. Start recording from the toolbar, or finish without video.';
+      'Job is In process. Start recording from the toolbar, or finish without video.';
     startRecordBlock?.classList.remove('hidden');
     if (finishHint) {
       finishHint.textContent =
@@ -287,7 +309,7 @@ function renderApplySession(state) {
     skipRecordingBtn.textContent = 'Skip this Job';
   }
 
-  renderAnalysis(applyTabId || state?.tabId);
+  renderAnalysis(persistedAnalysis);
 }
 
 function renderRecordingsList() {
@@ -320,15 +342,18 @@ function renderRecordingsList() {
 
 async function refreshApplySession() {
   currentTabId = await getCurrentTabId();
-  // Prefer SW resolution of pending/recording tab — side panel focus can steal
-  // activeTab away from the job page.
-  const [state, fullState] = await Promise.all([
-    sendMessage({ type: 'GET_ACTIVE_APPLY' }),
-    sendMessage({ type: 'GET_STATE' }),
-  ]);
-
+  const state = await sendMessage({ type: 'GET_ACTIVE_APPLY' });
   currentTabState = state?.ok ? state : null;
-  recordingSessions = fullState?.ok ? (fullState.recordingSessions ?? []) : [];
+  if (state?.ok && state.analysis) persistedAnalysis = state.analysis;
+
+  const ui = await sendMessage({ type: 'GET_UI_STATE' }).catch(() => null);
+  if (ui?.ok) {
+    recordingSessions = ui.recordingSessions ?? [];
+    if (ui.activeApply?.analysis) persistedAnalysis = ui.activeApply.analysis;
+  } else {
+    const fullState = await sendMessage({ type: 'GET_STATE' }).catch(() => null);
+    recordingSessions = fullState?.ok ? (fullState.recordingSessions ?? []) : [];
+  }
 
   renderApplySession(currentTabState);
   renderRecordingsList();
@@ -345,7 +370,12 @@ function showRecordingInstructions() {
 }
 
 async function finishApply(tabId, finishAction = 'submit', button) {
-  if (!tabId) {
+  let resolveTabId = tabId;
+  if (!resolveTabId && activeJobId) {
+    const reopen = await sendMessage({ type: 'REOPEN_APPLY_TAB', jobId: activeJobId });
+    resolveTabId = reopen?.tabId || null;
+  }
+  if (!resolveTabId) {
     alert('No active job tab. Open a Bid Ready job with Apply first.');
     return;
   }
@@ -362,7 +392,7 @@ async function finishApply(tabId, finishAction = 'submit', button) {
 
   const response = await sendMessage({
     type: 'STOP_CAPTURE',
-    tabId,
+    tabId: resolveTabId,
     closeApplyTab: true,
     finishAction: action,
   });
@@ -407,9 +437,10 @@ async function finishApply(tabId, finishAction = 'submit', button) {
     );
   }
 
-  delete analysisByTab[tabId];
+  persistedAnalysis = null;
+  activeJobId = null;
   await refreshApplySession();
-  await loadDashboard();
+  await loadDashboard({ force: true });
 }
 
 function updateCompletedPill() {
@@ -437,20 +468,54 @@ async function refreshBridgeBadge() {
   }
 }
 
-function getOpenJobs() {
+function getQueueJobs() {
   const pools = dashboardState.pools ?? [];
   const jobs = [];
   for (const pool of pools) {
     for (const job of pool.jobs ?? []) {
-      if (job.status === 'applied' || job.status === 'skipped') continue;
       jobs.push({ ...job, poolId: pool.id });
     }
   }
+  const rank = (status) => {
+    if (status === 'in_process') return 0;
+    if (status === 'not_applied' || !status) return 1;
+    if (status === 'applied' || status === 'skipped') return 2;
+    return 1;
+  };
+  jobs.sort((a, b) => rank(a.status) - rank(b.status));
   return jobs;
+}
+
+function statusBadgeFor(job) {
+  if (job.status === 'in_process') {
+    return { statusClass: 'status-active', statusLabel: 'In process' };
+  }
+  if (job.status === 'applied') {
+    return { statusClass: 'status-applied', statusLabel: 'Submitted' };
+  }
+  if (job.status === 'skipped') {
+    return { statusClass: 'status-skipped', statusLabel: 'Skipped' };
+  }
+  return { statusClass: 'status-open', statusLabel: 'Pending' };
+}
+
+function setQueueHint() {
+  if (!queueHint) return;
+  if (queueLoading) {
+    queueHint.textContent = 'Loading Bid Ready queue…';
+    return;
+  }
+  if (dashboardState.fromCache && dashboardState.refreshing) {
+    queueHint.textContent = 'Refreshing queue…';
+    return;
+  }
+  queueHint.textContent = 'Pending → Apply → In process → Submitted / Skipped';
 }
 
 function renderQueue() {
   jobList.innerHTML = '';
+  setQueueHint();
+
   if (dashboardState.athensError) {
     const errLi = document.createElement('li');
     errLi.className = 'empty';
@@ -458,7 +523,15 @@ function renderQueue() {
     jobList.appendChild(errLi);
   }
 
-  const jobs = getOpenJobs();
+  if (queueLoading && !getQueueJobs().length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'Loading Bid Ready jobs…';
+    jobList.appendChild(empty);
+    return;
+  }
+
+  const jobs = getQueueJobs();
   if (!jobs.length) {
     const empty = document.createElement('li');
     empty.className = 'empty';
@@ -470,9 +543,8 @@ function renderQueue() {
 
   for (const job of jobs) {
     const li = document.createElement('li');
-    const statusClass =
-      job.status === 'in_process' ? 'status-active' : 'status-open';
-    const statusLabel = job.status === 'in_process' ? 'In process' : 'Pending';
+    const { statusClass, statusLabel } = statusBadgeFor(job);
+    const isFinished = job.status === 'applied' || job.status === 'skipped';
     const resumeJobId = job.athensJobId || job.id;
     const resumeActions = job.hasGeneratedResume
       ? `
@@ -480,6 +552,9 @@ function renderQueue() {
         <button type="button" class="btn btn-secondary" data-download-resume="${escapeHtml(resumeJobId)}">Download</button>
       `
       : '';
+    const applyAction = isFinished
+      ? ''
+      : `<button type="button" class="btn btn-apply" data-apply-job="${job.id}" data-pool="${job.poolId}">Apply</button>`;
 
     li.innerHTML = `
       <strong>${escapeHtml(job.companyName)}</strong>
@@ -487,7 +562,7 @@ function renderQueue() {
       <span class="status-badge ${statusClass}">${statusLabel}</span>
       <div class="item-actions">
         ${resumeActions}
-        <button type="button" class="btn btn-apply" data-apply-job="${job.id}" data-pool="${job.poolId}">Apply</button>
+        ${applyAction}
       </div>
     `;
     jobList.appendChild(li);
@@ -541,11 +616,17 @@ function renderQueue() {
       button.disabled = true;
       button.textContent = 'Opening…';
 
+      // Optimistic In process badge.
+      job.status = 'in_process';
+      renderQueue();
+
       chrome.tabs.create({ url: job.jdUrl, active: true }, (tab) => {
         if (chrome.runtime.lastError || !tab?.id) {
           alert(chrome.runtime.lastError?.message || 'Failed to open job tab.');
+          job.status = 'not_applied';
           button.disabled = false;
           button.textContent = 'Apply';
+          renderQueue();
           return;
         }
 
@@ -558,12 +639,15 @@ function renderQueue() {
           .then(async (response) => {
             if (!response?.ok) {
               alert(response?.error || 'Failed to open job application.');
+              job.status = 'not_applied';
               button.disabled = false;
               button.textContent = 'Apply';
+              renderQueue();
               return;
             }
             button.disabled = false;
             button.textContent = 'Apply';
+            await loadDashboard({ preferCache: true });
             await refreshApplySession();
             applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             startRecordingBtn?.classList.add('pulse');
@@ -571,8 +655,10 @@ function renderQueue() {
           })
           .catch((err) => {
             alert(err.message || 'Failed to open job application.');
+            job.status = 'not_applied';
             button.disabled = false;
             button.textContent = 'Apply';
+            renderQueue();
           });
       });
     });
@@ -597,20 +683,29 @@ function renderDashboard() {
   refreshBridgeBadge().catch(() => {});
 }
 
-async function loadDashboard() {
-  const response = await sendMessage({ type: 'GET_DASHBOARD' });
+async function loadDashboard({ preferCache = true, force = false } = {}) {
+  const response = await sendMessage({
+    type: 'GET_DASHBOARD',
+    preferCache: force ? false : preferCache,
+  });
   if (response?.auth) {
     dashboardState = response;
+    queueLoading = false;
     renderDashboard();
     return;
   }
   dashboardState = { auth: null, pools: [] };
+  queueLoading = false;
   renderDashboard();
 }
 
 async function runAnalyze() {
-  const tabId = resolveFinishTabId() || currentTabId;
+  let tabId = resolveFinishTabId() || currentTabId;
   const job = currentTabState?.applyJob;
+  if (!tabId && activeJobId) {
+    const reopen = await sendMessage({ type: 'REOPEN_APPLY_TAB', jobId: activeJobId });
+    tabId = reopen?.tabId || null;
+  }
   if (!tabId) {
     alert('Open a job tab first.');
     return;
@@ -620,7 +715,7 @@ async function runAnalyze() {
   analyzeBtn.textContent = 'Analyzing…';
   screeningPanel?.classList.remove('hidden');
   if (analyzeStatus) {
-    analyzeStatus.textContent = 'Reading page…';
+    analyzeStatus.textContent = 'Reading full page (no length limit)…';
     analyzeStatus.classList.remove('hidden');
   }
 
@@ -628,35 +723,36 @@ async function runAnalyze() {
     const response = await sendMessage({
       type: 'ANALYZE_JOB_TAB',
       tabId,
-      jobId: job?.id || job?.athensJobId,
+      jobId: job?.id || job?.athensJobId || activeJobId,
       companyName: job?.companyName,
       jobTitle: job?.title,
       applyUrl: job?.jdUrl,
     });
 
     if (!response?.ok) {
-      analysisByTab[tabId] = {
+      persistedAnalysis = {
         jdAnalyzed: false,
         flags: { remote: null, clearance: null },
         error: response?.error || 'Analyze failed',
       };
-      renderAnalysis(tabId);
+      renderAnalysis(persistedAnalysis);
       alert(response?.error || 'Analyze failed. Is Athens-server running?');
       return;
     }
 
-    analysisByTab[tabId] = {
+    persistedAnalysis = response.analysis || {
       jdAnalyzed: response.jdAnalyzed,
       flags: response.flags || { remote: null, clearance: null },
       summary: response.summary,
       formAnswers: response.formAnswers || response.page?.formAnswers || [],
+      formCount: response.formCount,
       charCount: response.charCount,
       error:
         response.mode === 'heuristic'
           ? 'Analyzed with local heuristics (no LLM key or LLM unavailable)'
           : response.flagsError || response.pageError || null,
     };
-    renderAnalysis(tabId);
+    renderAnalysis(persistedAnalysis);
   } catch (err) {
     alert(err.message || 'Analyze failed.');
   } finally {
@@ -676,6 +772,20 @@ analyzeBtn?.addEventListener('click', () => {
 openJobBtn?.addEventListener('click', () => {
   const url = currentTabState?.applyJob?.jdUrl;
   if (url) chrome.tabs.create({ url, active: true });
+});
+
+reopenJobBtn?.addEventListener('click', async () => {
+  if (!activeJobId) return;
+  reopenJobBtn.disabled = true;
+  try {
+    const res = await sendMessage({ type: 'REOPEN_APPLY_TAB', jobId: activeJobId });
+    if (!res?.ok) alert(res?.error || 'Failed to reopen job.');
+    await refreshApplySession();
+  } catch (err) {
+    alert(err?.message || 'Failed to reopen job.');
+  } finally {
+    reopenJobBtn.disabled = false;
+  }
 });
 
 applyViewResumeBtn?.addEventListener('click', async () => {
@@ -720,7 +830,7 @@ skipRecordingBtn?.addEventListener('click', () => {
 });
 
 refreshQueueBtn?.addEventListener('click', () => {
-  loadDashboard().catch(() => {});
+  loadDashboard({ force: true }).catch(() => {});
 });
 
 loginForm.addEventListener('submit', async (event) => {
@@ -744,16 +854,29 @@ loginForm.addEventListener('submit', async (event) => {
     return;
   }
 
-  if (response.athensError) {
-    showLoginError(`Signed in, but Athens queue failed: ${response.athensError}`);
-  }
-
-  await loadDashboard();
+  // Unlock workspace immediately; queue loads in background.
+  dashboardState = {
+    auth: response.auth,
+    pools: [
+      {
+        id: 'athens-bid-ready',
+        name: 'Bid Ready',
+        status: 'active',
+        jobs: [],
+      },
+    ],
+    athensError: null,
+  };
+  queueLoading = true;
+  renderDashboard();
+  loadDashboard({ preferCache: false }).catch(() => {});
 });
 
 signOutBtn.addEventListener('click', async () => {
   await sendMessage({ type: 'SIGN_OUT' });
   dashboardState = { auth: null, pools: [] };
+  persistedAnalysis = null;
+  activeJobId = null;
   renderDashboard();
 });
 
@@ -763,16 +886,40 @@ formatOptions.forEach((button) => {
   });
 });
 
+let dashboardReloadTimer = null;
+function scheduleDashboardReload() {
+  if (dashboardReloadTimer) clearTimeout(dashboardReloadTimer);
+  dashboardReloadTimer = setTimeout(() => {
+    dashboardReloadTimer = null;
+    loadDashboard({ preferCache: true }).catch(() => {});
+  }, 400);
+}
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.jobPools || changes.pendingApplyTabs || changes.bidMonitorSessions) {
-    loadDashboard().catch(() => {});
+  if (
+    changes.bidReadyCache ||
+    changes.activeAppliesByJobId ||
+    changes.bidReadyFinishedJobs ||
+    changes.bidMonitorSessions ||
+    changes.pendingApplyTabs
+  ) {
+    if (
+      changes.bidReadyCache ||
+      changes.activeAppliesByJobId ||
+      changes.bidReadyFinishedJobs
+    ) {
+      scheduleDashboardReload();
+    }
     refreshApplySession().catch(() => {});
   }
 });
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'APPLY_SESSION_UPDATED') {
+  if (message.type === 'APPLY_SESSION_UPDATED' || message.type === 'QUEUE_ENRICHED') {
+    if (message.type === 'QUEUE_ENRICHED') {
+      scheduleDashboardReload();
+    }
     refreshApplySession().catch(() => {});
     return;
   }
@@ -830,7 +977,23 @@ chrome.windows.onFocusChanged.addListener(() => {
     usernameInput.value = athensSettings.applierName;
   }
 
-  await loadDashboard();
-  setInterval(() => refreshApplySession().catch(() => {}), 2000);
+  const ui = await sendMessage({ type: 'GET_UI_STATE' }).catch(() => null);
+  if (ui?.ok && ui.auth) {
+    dashboardState = {
+      auth: ui.auth,
+      pools: ui.pools || [],
+      athensError: ui.athensError || null,
+      fromCache: ui.fromCache,
+      refreshing: ui.refreshing,
+    };
+    if (ui.activeApply?.analysis) persistedAnalysis = ui.activeApply.analysis;
+    recordingSessions = ui.recordingSessions || [];
+    queueLoading = Boolean(ui.refreshing && !(ui.pools?.[0]?.jobs?.length));
+    renderDashboard();
+  } else {
+    await loadDashboard({ preferCache: true });
+  }
+
+  setInterval(() => refreshApplySession().catch(() => {}), 12000);
   setInterval(() => refreshBridgeBadge().catch(() => {}), 15000);
 })();

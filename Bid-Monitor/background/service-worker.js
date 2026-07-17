@@ -3,35 +3,44 @@ importScripts(
   'video-store.js',
   'session-recorder.js',
   'athens-api.js',
+  'auth-session.js',
+  'queue-sync.js',
+  'apply-lifecycle.js',
   'mock-api.js',
   'zip-utils.js',
   'page-context.js',
 );
 
 const STORAGE_KEY = 'bidMonitorSessions';
-const PENDING_APPLY_KEY = 'pendingApplyTabs';
 
+/** @deprecated Prefer ApplyLifecycle — kept as tab-shaped compatibility helpers. */
 async function getPendingApplyTabs() {
-  const { [PENDING_APPLY_KEY]: pending = {} } = await chrome.storage.local.get(PENDING_APPLY_KEY);
-  return pending;
+  return ApplyLifecycle.toPendingTabsShape();
 }
 
 async function setPendingApply(tabId, data) {
   if (!tabId) return;
-  const pending = await getPendingApplyTabs();
-  pending[tabId] = {
-    ...data,
-    updatedAt: new Date().toISOString(),
-  };
-  await chrome.storage.local.set({ [PENDING_APPLY_KEY]: pending });
+  await ApplyLifecycle.setPendingForTab(tabId, data);
 }
 
 async function clearPendingApply(tabId) {
   if (!tabId) return;
-  const pending = await getPendingApplyTabs();
-  if (!pending[tabId]) return;
-  delete pending[tabId];
-  await chrome.storage.local.set({ [PENDING_APPLY_KEY]: pending });
+  await ApplyLifecycle.clearPendingForTab(tabId);
+}
+
+async function clearApplySessionByJobId(jobId) {
+  if (!jobId) return;
+  await ApplyLifecycle.remove(jobId);
+}
+
+async function markApplyRecording(tabId, recorderStatus = 'recording') {
+  const apply = await ApplyLifecycle.getByTabId(tabId);
+  if (!apply) return;
+  await ApplyLifecycle.upsert(apply.jobId, {
+    recorderStatus,
+    error: null,
+    applyTabId: tabId,
+  });
 }
 
 async function getSessions() {
@@ -369,9 +378,19 @@ async function cleanupStoredSessionForClosedTab(tabId) {
   const session = await getSessionForTab(tabId);
   if (session) {
     await abandonStoredSession(session.id);
+    // Keep job-scoped apply session so analysis / In-process UI survive tab close.
+    if (session.jobId) {
+      await ApplyLifecycle.upsert(session.jobId, {
+        applyTabId: null,
+        recorderStatus: 'ready',
+      });
+    }
+  } else {
+    // Closing job tab (or résumé): only detach tab id — do not wipe apply state.
+    await ApplyLifecycle.clearApplyTabOnly(tabId);
   }
-  await clearPendingApply(tabId);
   await updateRecordingBadge();
+  broadcastApplySessionUpdate(tabId);
 }
 
 function isCapturableUrl(url) {
@@ -393,26 +412,16 @@ function formatTabCaptureError(message) {
   return text || 'Failed to start tab capture.';
 }
 
-async function resolvePendingApplyTabId(pendingAll = null) {
-  const pending = pendingAll ?? await getPendingApplyTabs();
-  const entries = Object.entries(pending)
-    .map(([id, data]) => ({ tabId: Number(id), data }))
-    .filter((entry) => Number.isFinite(entry.tabId) && entry.data?.job)
-    .sort((a, b) => {
-      const aTime = new Date(a.data.updatedAt || 0).getTime();
-      const bTime = new Date(b.data.updatedAt || 0).getTime();
-      return bTime - aTime;
-    });
-
-  for (const entry of entries) {
+async function resolvePendingApplyTabId(_pendingAll = null) {
+  const apply = await ApplyLifecycle.resolveActiveApply();
+  if (apply?.applyTabId != null) {
     try {
-      await chrome.tabs.get(entry.tabId);
-      return entry.tabId;
+      await chrome.tabs.get(apply.applyTabId);
+      return apply.applyTabId;
     } catch {
-      await clearPendingApply(entry.tabId);
+      await ApplyLifecycle.upsert(apply.jobId, { applyTabId: null });
     }
   }
-
   return null;
 }
 
@@ -607,30 +616,33 @@ async function openApplyOnTab(tabId, poolId, jobId, streamId = null) {
 
   await cleanupOrphanRecordingSessions();
 
-  // Mark Athens Bid Ready job as in-process for Bid Management.
+  // Mark Athens Bid Ready job as in-process — fail Apply if this fails.
   if (pool.source === 'athens' || pool.id === 'athens-bid-ready') {
-    try {
-      const settings = await AthensApi.getSettings();
-      const applierName = settings.applierName || auth.applierName || auth.displayName;
-      if (applierName && job.id) {
-        await AthensApi.startBid(applierName, {
-          jobId: job.athensJobId || job.id,
-          bidderName: auth.displayName,
-          applyUrl: job.jdUrl,
-        });
-      }
-    } catch (err) {
-      console.warn('Bid Monitor: failed to mark bid in-process', err);
+    const settings = await AthensApi.getSettings();
+    const applierName = settings.applierName || auth.applierName || auth.displayName;
+    if (!applierName || !job.id) {
+      throw new Error('Athens applier name and job id are required to start a bid.');
     }
+    await AthensApi.startBid(applierName, {
+      jobId: job.athensJobId || job.id,
+      bidderName: auth.displayName,
+      applyUrl: job.jdUrl,
+    });
+    await QueueSync.patchJobStatus(job.athensJobId || job.id, 'in_process');
   }
 
-  await setPendingApply(tabId, {
-    profileName: auth.displayName,
-    recorderStatus: 'ready',
+  await ApplyLifecycle.upsert(job.id, {
+    athensJobId: jobPayload.athensJobId,
     poolId: pool.id,
     job: jobPayload,
+    bidderName: auth.displayName,
+    profileName: auth.displayName,
+    athensStatus: 'in_process',
+    recorderStatus: 'ready',
+    applyTabId: tabId,
     streamId,
     streamIdCapturedAt: streamId ? new Date().toISOString() : null,
+    error: null,
   });
 
   await notifyApplyPanel(tabId, {
@@ -656,7 +668,7 @@ async function openApplyOnTab(tabId, poolId, jobId, streamId = null) {
     console.warn('Bid Monitor: could not open side panel', err);
   }
 
-  chrome.runtime.sendMessage({ type: 'APPLY_SESSION_UPDATED', tabId }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'APPLY_SESSION_UPDATED', tabId, jobId: job.id }).catch(() => {});
 
   return { ok: true, tabId, job: jobPayload, recorderStatus: 'ready' };
 }
@@ -976,15 +988,24 @@ async function resolveApplyJob(message) {
     throw new Error('Only bidders can apply to jobs.');
   }
 
-  const dashboard = await MockApi.getDashboardState();
-  const pools = dashboard.pools || [];
-  const pool = MockApi.findPool(pools, message.poolId);
-  const job = MockApi.findJob(pool, message.jobId);
+  let dashboard = await MockApi.getDashboardState({ preferCache: true });
+  let pools = dashboard.pools || [];
+  let pool = MockApi.findPool(pools, message.poolId);
+  let job = MockApi.findJob(pool, message.jobId);
+  if (!pool || !job) {
+    dashboard = await MockApi.getDashboardState({ preferCache: false, enrichResumes: false });
+    pools = dashboard.pools || [];
+    pool = MockApi.findPool(pools, message.poolId);
+    job = MockApi.findJob(pool, message.jobId);
+  }
   if (!pool || !job) {
     throw new Error('Job not found.');
   }
   if (job.status === 'applied') {
     throw new Error('This job is already submitted.');
+  }
+  if (job.status === 'skipped') {
+    throw new Error('This job was skipped.');
   }
 
   return { auth, pool, job };
@@ -1041,7 +1062,7 @@ async function registerSidePanelRecording(tabId, { mimeType, videoFormat, fallba
   const sessions = await getSessions();
   sessions.unshift(session);
   await saveSessions(sessions);
-  await clearPendingApply(tab.id);
+  await markApplyRecording(tab.id, 'recording');
   await updateRecordingBadge();
   await syncStoredRecorderStatuses(tab.windowId, tab.id);
   await notifyTab(tab.id, {
@@ -1135,7 +1156,10 @@ async function beginRecordingSession({
   }
 
   await updateRecordingBadge();
-  await clearPendingApply(tab.id);
+  await markApplyRecording(
+    tab.id,
+    recording.startedPaused ? 'paused' : 'recording',
+  );
   await syncStoredRecorderStatuses(tab.windowId, tab.id);
   await notifyTab(tab.id, {
     isRecording: true,
@@ -1155,9 +1179,10 @@ async function finishPendingApplyWithoutRecording({
   finishAction = 'submit',
 } = {}) {
   const action = finishAction === 'skip' ? 'skip' : 'submit';
-  const pendingAll = await getPendingApplyTabs();
-  const pending = pendingAll[tabId];
-  const job = pending?.job;
+  const apply =
+    (tabId != null ? await ApplyLifecycle.getByTabId(tabId) : null) ||
+    (await ApplyLifecycle.resolveActiveApply());
+  const job = apply?.job;
   if (!job?.id) {
     return { ok: false, error: 'No recording for this tab.' };
   }
@@ -1190,7 +1215,15 @@ async function finishPendingApplyWithoutRecording({
   if (closeApplyTab) {
     chrome.tabs.remove(tabId).catch(() => {});
   }
-  await clearPendingApply(tabId);
+  const finishedJobId = job.athensJobId || job.id;
+  if (jobOutcome === 'submitted' || jobOutcome === 'skipped') {
+    await QueueSync.markJobFinished(
+      finishedJobId,
+      jobOutcome === 'skipped' ? 'skipped' : 'applied',
+      job,
+    );
+  }
+  await clearApplySessionByJobId(job.id);
   await updateRecordingBadge();
   broadcastApplySessionUpdate(tabId);
   await notifyTab(tabId, { isRecording: false });
@@ -1270,7 +1303,10 @@ async function completeRecordingSession({
     chrome.tabs.remove(tabId).catch(() => {});
   }
 
-  await clearPendingApply(tabId);
+  // Keep queue row until Athens finish succeeds — then mark Submitted/Skipped.
+  if (!session.jobId) {
+    await clearPendingApply(tabId);
+  }
   await updateRecordingBadge();
   broadcastApplySessionUpdate(tabId);
   await notifyTab(tabId, { isRecording: false });
@@ -1357,6 +1393,25 @@ async function completeRecordingSession({
       else statusError = message;
       console.error('Bid Monitor: Athens finish failed', err);
     }
+  }
+
+  if (session.jobId && (jobOutcome === 'submitted' || jobOutcome === 'skipped')) {
+    const apply = await ApplyLifecycle.getByJobId(session.jobId);
+    const finishedJob = apply?.job || {
+      id: session.jobId,
+      athensJobId: apply?.athensJobId || session.jobId,
+      companyName: session.companyName || 'Job',
+      title: session.jobTitle || '',
+      jdUrl: session.jdUrl || '',
+    };
+    await QueueSync.markJobFinished(
+      session.jobId,
+      jobOutcome === 'skipped' ? 'skipped' : 'applied',
+      finishedJob,
+    );
+  }
+  if (session.jobId) {
+    await clearApplySessionByJobId(session.jobId);
   }
 
   return {
@@ -1549,19 +1604,18 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== 'complete' && !changeInfo.url) return;
 
   (async () => {
-    const pendingAll = await getPendingApplyTabs();
-    const pending = pendingAll[tabId];
-    if (!pending?.job || pending.recorderStatus !== 'ready') return;
+    const apply = await ApplyLifecycle.getByTabId(tabId);
+    if (!apply?.job || apply.recorderStatus !== 'ready') return;
 
     await notifyApplyPanel(tabId, {
-      profileName: pending.profileName,
+      profileName: apply.bidderName || apply.profileName || '',
       recorderStatus: 'ready',
       session: {
-        resumeSetFolder: pending.job.resumeFolderName,
+        resumeSetFolder: apply.job.resumeFolderName,
         applyFlow: true,
         pending: true,
       },
-      job: pending.job,
+      job: apply.job,
     });
   })().catch(console.error);
 });
@@ -1597,17 +1651,116 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           apiUrl: message.apiUrl,
           displayName: message.displayName || message.applierName || message.username,
         });
+        // Queue loads in the background after UI unlocks.
+        if (result?.ok) {
+          QueueSync.fetchDashboardState({ useCache: true, enrichResumes: true })
+            .then(() => {
+              chrome.runtime.sendMessage({ type: 'QUEUE_ENRICHED' }).catch(() => {});
+            })
+            .catch(() => {});
+        }
         sendResponse(result);
         break;
       }
 
       case 'SIGN_OUT': {
+        const applies = await ApplyLifecycle.getAll();
+        for (const jobId of Object.keys(applies)) {
+          await ApplyLifecycle.remove(jobId);
+        }
         sendResponse(await MockApi.signOut());
         break;
       }
 
       case 'GET_DASHBOARD': {
-        sendResponse(await MockApi.getDashboardState());
+        const preferCache = Boolean(message.preferCache);
+        sendResponse(
+          preferCache
+            ? await MockApi.getDashboardState({ preferCache: true })
+            : await MockApi.getDashboardState({ preferCache: false }),
+        );
+        break;
+      }
+
+      case 'GET_UI_STATE': {
+        const auth = await MockApi.getAuth();
+        const dashboard = auth
+          ? await MockApi.getDashboardState({ preferCache: true })
+          : { auth: null, pools: [], athensError: null };
+        const activeApply = await ApplyLifecycle.resolveActiveApply();
+        let session = null;
+        if (activeApply?.applyTabId != null) {
+          session = await getSessionForTab(activeApply.applyTabId);
+        }
+        if (!session && activeApply?.jobId) {
+          const sessions = await getSessions();
+          session =
+            sessions.find(
+              (s) =>
+                s.applyFlow &&
+                s.status === 'recording' &&
+                String(s.jobId) === String(activeApply.jobId),
+            ) || null;
+        }
+        const health = await AthensApi.checkAthensHealth().catch(() => ({
+          healthy: false,
+        }));
+        sendResponse({
+          ok: true,
+          auth: dashboard.auth || auth,
+          pools: dashboard.pools || [],
+          athensError: dashboard.athensError || null,
+          fromCache: Boolean(dashboard.fromCache),
+          refreshing: Boolean(dashboard.refreshing),
+          activeApply,
+          session,
+          isRecording: Boolean(session),
+          athensHealthy: Boolean(health.healthy),
+          recordingSessions: await getRecordingSessions(),
+        });
+        break;
+      }
+
+      case 'REOPEN_APPLY_TAB': {
+        try {
+          const jobId = String(message.jobId || '').trim();
+          const apply = jobId
+            ? await ApplyLifecycle.getByJobId(jobId)
+            : await ApplyLifecycle.resolveActiveApply();
+          if (!apply?.job?.jdUrl) {
+            sendResponse({ ok: false, error: 'No active apply session to reopen.' });
+            break;
+          }
+          if (apply.applyTabId != null) {
+            try {
+              const existing = await chrome.tabs.get(apply.applyTabId);
+              await chrome.tabs.update(existing.id, { active: true });
+              sendResponse({ ok: true, tabId: existing.id, reused: true });
+              break;
+            } catch {
+              /* recreate */
+            }
+          }
+          const tab = await chrome.tabs.create({ url: apply.job.jdUrl, active: true });
+          await ApplyLifecycle.upsert(apply.jobId, {
+            applyTabId: tab.id,
+            recorderStatus: apply.recorderStatus === 'recording' ? 'ready' : apply.recorderStatus || 'ready',
+          });
+          await notifyApplyPanel(tab.id, {
+            profileName: apply.bidderName || apply.profileName || '',
+            recorderStatus: 'ready',
+            session: {
+              resumeSetFolder: apply.job.resumeFolderName,
+              applyFlow: true,
+              pending: true,
+            },
+            job: apply.job,
+          });
+          broadcastApplySessionUpdate(tab.id);
+          sendResponse({ ok: true, tabId: tab.id, reused: false });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message || 'Failed to reopen job tab.' });
+        }
         break;
       }
 
@@ -1841,22 +1994,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       case 'GET_PENDING_STREAM_ID': {
         const tabId = Number(message.tabId);
-        const pendingAll = await getPendingApplyTabs();
-        const pending = pendingAll[tabId];
+        const apply = await ApplyLifecycle.getByTabId(tabId);
         sendResponse({
           ok: true,
-          streamId: pending?.streamId ?? null,
+          streamId: apply?.streamId ?? null,
         });
         break;
       }
 
       case 'CONSUME_PENDING_STREAM_ID': {
         const tabId = Number(message.tabId);
-        const pendingAll = await getPendingApplyTabs();
-        const pending = pendingAll[tabId];
-        if (pending) {
-          await setPendingApply(tabId, {
-            ...pending,
+        const apply = await ApplyLifecycle.getByTabId(tabId);
+        if (apply) {
+          await ApplyLifecycle.upsert(apply.jobId, {
             streamId: null,
             streamIdCapturedAt: null,
           });
@@ -2056,19 +2206,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           }
 
+          const formAnswers = Array.isArray(page?.formAnswers) ? page.formAnswers : [];
+          // Count answers from page text (AI), not DOM label/name field count.
+          const formCount = page?.formCount ?? formAnswers.length;
+          const analysis = {
+            jdAnalyzed,
+            flags,
+            summary,
+            formAnswers,
+            formCount,
+            charCount: pageContext.sourceMeta?.charCount ?? pageContext.visibleText.length,
+            mode,
+            error:
+              mode === 'heuristic'
+                ? 'Analyzed with local heuristics (no LLM key or LLM unavailable)'
+                : pageRes?.error || flagsRes?.error || null,
+            pageUrl: pageContext.url,
+            pageTitle: pageContext.title,
+          };
+
+          if (jobId) {
+            const existing = await ApplyLifecycle.getByJobId(jobId);
+            if (existing) {
+              await ApplyLifecycle.setAnalysis(jobId, analysis);
+            } else {
+              // Persist analysis even if Apply was started under athensJobId.
+              const active = await ApplyLifecycle.resolveActiveApply();
+              if (active && (String(active.jobId) === String(jobId) || String(active.athensJobId) === String(jobId))) {
+                await ApplyLifecycle.setAnalysis(active.jobId, analysis);
+              }
+            }
+          }
+
           sendResponse({
             ok: true,
             jdAnalyzed,
             summary,
             page,
-            formAnswers: Array.isArray(page?.formAnswers) ? page.formAnswers : [],
+            formAnswers,
+            formCount,
             flags,
             mode,
             pageUrl: pageContext.url,
             pageTitle: pageContext.title,
-            charCount: pageContext.sourceMeta?.charCount ?? pageContext.visibleText.length,
+            charCount: analysis.charCount,
             pageError: pageRes?.error || null,
             flagsError: flagsRes?.error || null,
+            analysis,
           });
         } catch (err) {
           sendResponse({ ok: false, error: err.message || 'Analyze failed.' });
@@ -2091,52 +2275,92 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case 'GET_ACTIVE_APPLY': {
-        const pendingAll = await getPendingApplyTabs();
-        let tabId = message.tabId ?? await resolvePendingApplyTabId(pendingAll);
+        let apply = null;
+        if (message.tabId) {
+          apply = await ApplyLifecycle.getByTabId(message.tabId);
+        }
+        if (!apply) {
+          apply = await ApplyLifecycle.resolveActiveApply();
+        }
 
-        // Once recording starts the pending-apply entry is cleared, so also
-        // resolve the tab from an active recording session.
-        if (!tabId) {
+        let tabId = apply?.applyTabId ?? message.tabId ?? null;
+        let session = tabId ? await getSessionForTab(tabId) : null;
+
+        if (!session && apply?.jobId) {
           const sessions = await getSessions();
-          const active = sessions.find(
-            (s) => s.applyFlow && s.status === 'recording' && s.tabId != null,
-          );
-          if (active) {
+          session =
+            sessions.find(
+              (s) =>
+                s.applyFlow &&
+                s.status === 'recording' &&
+                String(s.jobId) === String(apply.jobId),
+            ) || null;
+          if (session?.tabId != null) {
             try {
-              await chrome.tabs.get(active.tabId);
-              tabId = active.tabId;
+              await chrome.tabs.get(session.tabId);
+              tabId = session.tabId;
             } catch {
-              // Tab no longer exists; leave tabId null.
+              /* keep apply without live tab */
             }
           }
         }
 
-        const pending = tabId ? pendingAll[tabId] : null;
-        const session = tabId ? await getSessionForTab(tabId) : null;
-        let applyJob = pending?.job ?? null;
-        let recorderStatus = pending?.recorderStatus ?? null;
-        let error = pending?.error ?? null;
+        if (!apply && !session) {
+          // Fallback: recording-only without lifecycle record.
+          const sessions = await getSessions();
+          session =
+            sessions.find((s) => s.applyFlow && s.status === 'recording' && s.tabId != null) ||
+            null;
+          if (session) {
+            try {
+              await chrome.tabs.get(session.tabId);
+              tabId = session.tabId;
+            } catch {
+              session = null;
+            }
+          }
+        }
+
+        let applyJob = apply?.job ?? null;
+        let recorderStatus = apply?.recorderStatus ?? null;
+        let error = apply?.error ?? null;
 
         if (session?.applyFlow) {
           applyJob = {
             id: session.jobId,
+            athensJobId: apply?.athensJobId || session.jobId,
             companyName: session.companyName,
             title: session.jobTitle,
             jdUrl: session.jdUrl,
             resumeFolderName: session.resumeSetFolder,
+            hasGeneratedResume: Boolean(apply?.job?.hasGeneratedResume),
           };
           recorderStatus = session.recorderStatus ?? 'recording';
         }
 
+        const pending = apply
+          ? {
+              profileName: apply.bidderName || apply.profileName,
+              recorderStatus: apply.recorderStatus,
+              poolId: apply.poolId,
+              job: apply.job,
+              error: apply.error,
+              updatedAt: apply.updatedAt,
+            }
+          : null;
+
         sendResponse({
           ok: true,
           tabId,
+          jobId: apply?.jobId || applyJob?.id || null,
           pending,
           session,
           isRecording: !!session,
           applyJob,
           recorderStatus,
           error,
+          analysis: apply?.analysis || null,
+          tabMissing: Boolean(apply?.job && apply.applyTabId == null && !session),
         });
         break;
       }
@@ -2157,16 +2381,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             resumeFolderName: session.resumeSetFolder,
           };
         } else if (tabId) {
-          const pending = await getPendingApplyTabs();
-          const pendingApply = pending[tabId];
-          if (pendingApply?.job) {
-            applyJob = pendingApply.job;
-            recorderStatus = pendingApply.recorderStatus ?? 'ready';
+          const apply = await ApplyLifecycle.getByTabId(tabId);
+          if (apply?.job) {
+            applyJob = apply.job;
+            recorderStatus = apply.recorderStatus ?? 'ready';
             session = {
-              resumeSetFolder: pendingApply.job.resumeFolderName,
+              resumeSetFolder: apply.job.resumeFolderName,
               applyFlow: true,
               pending: true,
-              error: pendingApply.error ?? null,
+              error: apply.error ?? null,
             };
           }
         }

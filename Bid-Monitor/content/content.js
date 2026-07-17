@@ -700,7 +700,13 @@
 
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return;
-      if (changes.bidMonitorSessions || changes.jobPools || changes.pendingApplyTabs) {
+      if (
+        changes.bidMonitorSessions ||
+        changes.jobPools ||
+        changes.pendingApplyTabs ||
+        changes.activeAppliesByJobId ||
+        changes.bidReadyCache
+      ) {
         if (!isExtensionContextValid()) {
           notifyContextInvalidated();
           return;

@@ -338,7 +338,7 @@ export function BidManagementPage() {
       .sort((a, b) => b.pooledAt.localeCompare(a.pooledAt));
   }, [periodResults, selectedDay, query]);
 
-  const selected = dayResults.find((r) => r.id === selectedId) ?? dayResults[0] ?? null;
+  const selected = dayResults.find((r) => r.id === selectedId) ?? null;
   const playingResult = playing ? selected : null;
   const activeFolder = folders.find((f) => f.dayKey === selectedDay) ?? null;
   const {
@@ -506,25 +506,30 @@ export function BidManagementPage() {
                   {viewMode === "kanban" ? (
                     <KanbanBoard
                       results={dayResults}
-                      selectedId={selected?.id ?? null}
+                      selectedId={selectedId}
                       onSelect={setSelectedId}
                       onMove={setStatus}
                     />
                   ) : (
                     <ListBoard
                       results={dayResults}
-                      selectedId={selected?.id ?? null}
+                      selectedId={selectedId}
                       onSelect={setSelectedId}
                       onChangeStatus={setStatus}
                     />
                   )}
                 </div>
-                <BidDetailPane
-                  result={selected}
-                  onWatch={() => setPlaying(true)}
-                  onChangeStatus={setStatus}
-                />
               </div>
+
+              <BidDetailPane
+                result={selected}
+                onClose={() => {
+                  setSelectedId(null);
+                  setPlaying(false);
+                }}
+                onWatch={() => setPlaying(true)}
+                onChangeStatus={setStatus}
+              />
             </motion.div>
           )}
         </AnimatePresence>

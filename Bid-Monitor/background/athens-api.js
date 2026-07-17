@@ -5,6 +5,9 @@
 const AthensApi = (() => {
   const SETTINGS_KEY = 'athensSettings';
   const DEFAULT_API_URL = 'http://127.0.0.1:8979/api';
+  const QUEUE_TIMEOUT_MS = 15000;
+  const UPLOAD_TIMEOUT_MS = 120000;
+  const ANALYZE_TIMEOUT_MS = 300000;
 
   async function getSettings() {
     const { [SETTINGS_KEY]: settings = {} } = await chrome.storage.local.get(SETTINGS_KEY);
@@ -24,7 +27,7 @@ const AthensApi = (() => {
     return next;
   }
 
-  async function fetchJson(path, { method = 'GET', body, apiUrl } = {}) {
+  async function fetchJson(path, { method = 'GET', body, apiUrl, timeoutMs } = {}) {
     const settings = await getSettings();
     const base = (apiUrl || settings.apiUrl || DEFAULT_API_URL).replace(/\/$/, '');
     const url = path.startsWith('http') ? path : `${base}${path.startsWith('/') ? '' : '/'}${path}`;
@@ -32,7 +35,7 @@ const AthensApi = (() => {
       method,
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(120000),
+      signal: AbortSignal.timeout(timeoutMs ?? QUEUE_TIMEOUT_MS),
     });
     let data = null;
     try {
@@ -50,7 +53,8 @@ const AthensApi = (() => {
     let status = 'not_applied';
     if (task.status === 'skipped' || task.progress === 'skipped') status = 'skipped';
     else if (task.progress === 'completed' || task.status === 'done') status = 'applied';
-    else if (task.progress === 'active' || task.bidderInProcess) status = 'in_process';
+    // In process when bidder started apply, or vendor session already active.
+    else if (task.bidderInProcess || task.progress === 'active') status = 'in_process';
 
     return {
       id: String(task.jobId || task.id),
@@ -66,37 +70,42 @@ const AthensApi = (() => {
       matchScore: task.matchScore ?? null,
       source: task.source || '',
       hasRecording: Boolean(task.recording?.storagePath),
+      hasGeneratedResume: false,
     };
   }
 
-  async function fetchBidReadyPools(applierName, apiUrl) {
+  async function fetchBidReadyPools(applierName, apiUrl, options = {}) {
     const name = String(applierName || '').trim();
     if (!name) throw new Error('Athens applier name is required.');
 
     const data = await fetchJson(`/vendor/tasks?applierName=${encodeURIComponent(name)}`, {
       apiUrl,
+      timeoutMs: options.timeoutMs ?? QUEUE_TIMEOUT_MS,
     });
     const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-    // Queue shows open + in-process only (submitted/skipped drop off the apply list).
     const open = tasks.filter(
       (t) => t.status !== 'skipped' && t.status !== 'done' && t.progress !== 'completed',
     );
     const jobs = open.map((t) => mapTaskToJob(t, name));
 
-    const resumeJobIds = [
-      ...new Set(jobs.map((j) => j.athensJobId || j.id).filter(Boolean)),
-    ];
-    let withResume = new Set();
-    if (resumeJobIds.length) {
-      try {
-        withResume = await checkGeneratedResumes(name, resumeJobIds);
-      } catch (err) {
-        console.warn('Bid Monitor: résumé status check failed', err);
+    if (options.includeResumeStatus) {
+      const resumeJobIds = [
+        ...new Set(jobs.map((j) => j.athensJobId || j.id).filter(Boolean)),
+      ];
+      let withResume = new Set();
+      if (resumeJobIds.length) {
+        try {
+          withResume = await checkGeneratedResumes(name, resumeJobIds, {
+            timeoutMs: options.timeoutMs ?? QUEUE_TIMEOUT_MS,
+          });
+        } catch (err) {
+          console.warn('Bid Monitor: résumé status check failed', err);
+        }
       }
-    }
-    for (const job of jobs) {
-      const rid = String(job.athensJobId || job.id);
-      job.hasGeneratedResume = withResume.has(rid);
+      for (const job of jobs) {
+        const rid = String(job.athensJobId || job.id);
+        job.hasGeneratedResume = withResume.has(rid);
+      }
     }
 
     return [
@@ -121,6 +130,7 @@ const AthensApi = (() => {
         bidderName: bidderName || undefined,
         applyUrl: applyUrl || undefined,
       },
+      timeoutMs: QUEUE_TIMEOUT_MS,
     });
   }
 
@@ -139,6 +149,7 @@ const AthensApi = (() => {
         durationSec: payload.durationSec ?? undefined,
         markCompleted: Boolean(payload.markCompleted),
       },
+      timeoutMs: UPLOAD_TIMEOUT_MS,
     });
   }
 
@@ -146,6 +157,7 @@ const AthensApi = (() => {
     return fetchJson('/bid-results/complete', {
       method: 'POST',
       body: { applierName, jobId, bidderName: bidderName || undefined },
+      timeoutMs: QUEUE_TIMEOUT_MS,
     });
   }
 
@@ -153,6 +165,7 @@ const AthensApi = (() => {
     return fetchJson('/bid-results/skip', {
       method: 'POST',
       body: { applierName, jobId, bidderName: bidderName || undefined },
+      timeoutMs: QUEUE_TIMEOUT_MS,
     });
   }
 
@@ -165,6 +178,7 @@ const AthensApi = (() => {
         flags: flags || undefined,
         summary: summary || undefined,
       },
+      timeoutMs: QUEUE_TIMEOUT_MS,
     });
   }
 
@@ -176,6 +190,7 @@ const AthensApi = (() => {
         pageContext,
         sessionContext: sessionContext || undefined,
       },
+      timeoutMs: ANALYZE_TIMEOUT_MS,
     });
   }
 
@@ -188,17 +203,20 @@ const AthensApi = (() => {
         sessionContext: sessionContext || undefined,
         neededFlags: neededFlags || ['remote', 'clearance'],
       },
+      timeoutMs: ANALYZE_TIMEOUT_MS,
     });
   }
 
   async function checkAthensHealth() {
     const settings = await getSettings();
-    const base = settings.apiUrl.replace(/\/$/, '').replace(/\/api$/, '');
     try {
-      const response = await fetch(`${settings.apiUrl.replace(/\/$/, '')}/bid-results?applierName=${encodeURIComponent(settings.applierName || '_')}`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(4000),
-      });
+      const response = await fetch(
+        `${settings.apiUrl.replace(/\/$/, '')}/bid-results?applierName=${encodeURIComponent(settings.applierName || '_')}`,
+        {
+          method: 'GET',
+          signal: AbortSignal.timeout(4000),
+        },
+      );
       return {
         ok: response.status !== 0,
         healthy: response.ok || response.status === 400 || response.status === 503,
@@ -215,10 +233,11 @@ const AthensApi = (() => {
     }
   }
 
-  async function checkGeneratedResumes(applierName, jobIds) {
+  async function checkGeneratedResumes(applierName, jobIds, options = {}) {
     const data = await fetchJson('/personal/agent-job-resumes/status', {
       method: 'POST',
       body: { applierName, jobIds },
+      timeoutMs: options.timeoutMs ?? QUEUE_TIMEOUT_MS,
     });
     return new Set(Array.isArray(data.jobIds) ? data.jobIds.map(String) : []);
   }
@@ -232,7 +251,7 @@ const AthensApi = (() => {
 
   async function fetchResumePdf(applierName, jobId) {
     const url = await getResumePdfUrl(applierName, jobId);
-    const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
+    const response = await fetch(url, { signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS) });
     if (!response.ok) {
       let message = `Draft PDF unavailable (${response.status})`;
       try {
@@ -265,6 +284,9 @@ const AthensApi = (() => {
 
   return {
     DEFAULT_API_URL,
+    QUEUE_TIMEOUT_MS,
+    UPLOAD_TIMEOUT_MS,
+    ANALYZE_TIMEOUT_MS,
     getSettings,
     saveSettings,
     fetchBidReadyPools,
@@ -280,5 +302,6 @@ const AthensApi = (() => {
     getResumePdfUrl,
     fetchResumePdf,
     blobToBase64,
+    mapTaskToJob,
   };
 })();

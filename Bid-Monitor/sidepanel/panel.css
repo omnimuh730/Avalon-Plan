@@ -588,6 +588,11 @@ body {
   color: #1d4ed8;
 }
 
+.status-badge.status-skipped {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
 .status-badge.status-open {
   background: #fef3c7;
   color: #b45309;

@@ -160,7 +160,6 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
 
   const hasLoadedOnce = useRef(false);
-  const filterKeyRef = useRef("");
 
   const debouncedFilters = useDebouncedTextFilters(filters);
 
@@ -183,11 +182,6 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     [debouncedFilters, page, pageSize, applier?.name],
   );
 
-  const filterKey = useMemo(() => {
-    const { page: _p, limit: _l, ...rest } = listBody;
-    return JSON.stringify(rest);
-  }, [listBody]);
-
   const countsBody = useMemo(
     () => buildJobsCountsBody(debouncedFilters, applier?.name),
     [debouncedFilters, applier?.name],
@@ -197,9 +191,10 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     if (!applierReady) return;
     let cancelled = false;
     const isInitial = !hasLoadedOnce.current;
-    const pageOnly = hasLoadedOnce.current && filterKeyRef.current === filterKey;
+    // Always surface a loading state — including page / page-size changes —
+    // so the UI can swap to skeletons instead of leaving stale cards up.
     if (isInitial) setLoading(true);
-    else if (!pageOnly) setRefreshing(true);
+    else setRefreshing(true);
 
     (async () => {
       try {
@@ -213,7 +208,6 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
           setRecommendationWarming(Boolean(res.recommendationWarming));
           setCatalogTotal(typeof res.catalogTotal === "number" ? res.catalogTotal : null);
           hasLoadedOnce.current = true;
-          filterKeyRef.current = filterKey;
 
         } else if (isInitial) {
           setRawJobs([]);
@@ -241,7 +235,7 @@ export function useJobsList(filters: JobSearchFilterState, excludeIds: Set<strin
     return () => {
       cancelled = true;
     };
-  }, [listBody, post, applier, applierReady, filterKey, page, pageSize, debouncedFilters]);
+  }, [listBody, post, applier, applierReady]);
 
   useEffect(() => {
     if (!applierReady) return;

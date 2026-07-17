@@ -1,14 +1,12 @@
 /**
- * Page context extract + merge for Bid-Monitor Analyze.
- * Ported from bid-assistant (HTML text only — no screenshots).
+ * Page context extract + merge — same approach as bid-assistant:
+ * chrome.scripting.executeScript({ allFrames: true }) → body.innerText per frame
+ * → merge ATS iframes (Greenhouse, iCIMS, etc.).
+ * No character / field caps.
  */
 const PageContext = (() => {
-  const MAX_MERGED_TEXT_LENGTH = 15000;
-
   /** Injected via chrome.scripting.executeScript — must be self-contained. */
   function extractPageContext() {
-    const MAX_TEXT_LENGTH = 15000;
-
     const getMetaDescription = () => {
       const meta = document.querySelector('meta[name="description"]');
       return meta?.getAttribute('content')?.trim() ?? '';
@@ -36,6 +34,7 @@ const PageContext = (() => {
       return '';
     };
 
+    /** Lightweight form hints only — AI answers primarily from page innerText. */
     const extractFormFields = () => {
       const fields = [];
       const elements = document.querySelectorAll('input, textarea, select');
@@ -65,17 +64,16 @@ const PageContext = (() => {
           name,
           type,
           placeholder,
-          options: options.slice(0, 20),
+          options,
           required: Boolean(element.required),
         });
       }
-      return fields.slice(0, 50);
+      return fields;
     };
 
     const visibleText = (document.body?.innerText ?? '')
       .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, MAX_TEXT_LENGTH);
+      .trim();
 
     return {
       url: location.href,
@@ -96,9 +94,13 @@ const PageContext = (() => {
     if (url.startsWith('about:blank') || url.startsWith('javascript:')) {
       return (ctx.forms?.length ?? 0) > 0;
     }
-    return ctx.visibleText.length >= 40 || (ctx.forms?.length ?? 0) > 0;
+    return (ctx.visibleText?.length ?? 0) >= 40 || (ctx.forms?.length ?? 0) > 0;
   }
 
+  /**
+   * Merge per-frame results so ATS pages that host the form in an iframe
+   * (Greenhouse, iCIMS, Workday, …) still yield full context.
+   */
   function mergePageContexts(frames, topLevel) {
     const useful = frames.filter((frame) => frame && isUsefulFrame(frame));
     if (useful.length === 0) return null;
@@ -114,20 +116,17 @@ const PageContext = (() => {
         boost += 2000;
       }
       if (/\/job|\/jobs|\/application|\/apply/.test(url)) boost += 500;
-      return ctx.visibleText.length + boost;
+      return (ctx.visibleText?.length || 0) + boost;
     };
 
     const ranked = [...useful].sort((a, b) => scoreFrame(b) - scoreFrame(a));
     const primary = ranked[0];
     const textParts = [];
-    let remaining = MAX_MERGED_TEXT_LENGTH;
     for (const frame of ranked) {
-      const text = frame.visibleText.trim();
-      if (!text || remaining <= 0) continue;
+      const text = (frame.visibleText || '').trim();
+      if (!text) continue;
       if (textParts.some((part) => part.includes(text))) continue;
-      const chunk = text.slice(0, remaining);
-      textParts.push(chunk);
-      remaining -= chunk.length + 1;
+      textParts.push(text);
     }
 
     const seenForms = new Set();
@@ -138,14 +137,12 @@ const PageContext = (() => {
         if (seenForms.has(key)) continue;
         seenForms.add(key);
         forms.push(field);
-        if (forms.length >= 50) break;
       }
-      if (forms.length >= 50) break;
     }
 
     const topUrl = topLevel?.url?.trim() || '';
     const topTitle = topLevel?.title?.trim() || '';
-    const visibleText = textParts.join('\n\n').slice(0, MAX_MERGED_TEXT_LENGTH);
+    const visibleText = textParts.join('\n\n');
     const frameUrls = ranked
       .map((f) => f.frameUrl || f.url)
       .filter((u, i, arr) => Boolean(u) && arr.indexOf(u) === i);
@@ -161,8 +158,8 @@ const PageContext = (() => {
       forms,
       frameUrl: primary.frameUrl || primary.url,
       sourceMeta: {
-        visibleText,
         charCount: visibleText.length,
+        formCount: forms.length,
         frameCount: useful.length,
         frameUrls,
         primaryFrameUrl: primary.frameUrl || primary.url || null,
@@ -172,6 +169,7 @@ const PageContext = (() => {
 
   async function extractFromTab(tabId) {
     const tab = await chrome.tabs.get(tabId);
+    // allFrames: true — same as bid-assistant; form often lives in an iframe.
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       func: extractPageContext,

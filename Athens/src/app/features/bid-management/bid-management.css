@@ -202,8 +202,7 @@
   gap: 12px;
 }
 
-.bm-list,
-.bm-detail {
+.bm-list {
   border: 1px solid var(--bm-line);
   border-radius: 16px;
   background: var(--bm-panel);
@@ -383,24 +382,17 @@
 .bm-detail {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--bm-line);
-  border-radius: 16px;
-  background: var(--bm-panel);
-  backdrop-filter: blur(10px);
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
-.bm-detail.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  opacity: 0.55;
-  font-size: 0.9rem;
-  padding: 40px 24px;
+.bm-detail-sheet {
+  max-width: min(36rem, 100vw) !important;
 }
 
 .bm-detail-sticky {
@@ -1233,13 +1225,14 @@
 .bm-day-workspace {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.95fr);
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
 }
 
 .bm-day-board {
+  flex: 1;
   min-height: 0;
+  min-width: 0;
   border: 1px solid var(--bm-line);
   border-radius: 16px;
   background: var(--bm-panel);
@@ -1247,19 +1240,15 @@
   overflow: hidden;
 }
 
-.bm-day-workspace .bm-detail {
-  min-height: 0;
-  height: 100%;
-}
-
 /* Kanban */
 .bm-kanban {
   height: 100%;
   display: grid;
-  grid-template-columns: repeat(6, minmax(140px, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   padding: 10px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .bm-kanban-col {
@@ -1355,6 +1344,10 @@
   line-height: 1.25;
   letter-spacing: -0.01em;
   margin-bottom: 6px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .bm-ticket-foot {
@@ -1556,13 +1549,8 @@
 }
 
 @media (max-width: 1100px) {
-  .bm-workspace,
-  .bm-day-workspace {
+  .bm-workspace {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(240px, 1fr) minmax(280px, 1fr);
-  }
-
-  .bm-kanban {
-    grid-template-columns: repeat(6, minmax(160px, 1fr));
   }
 }
