@@ -5,10 +5,12 @@ import { useApplier } from "@/context/applier-context";
 import { ThemeToggle } from "../../../components/shared/ThemeToggle";
 import { emptyCareer, emptyEducation, emptyProfile, type UserProfile } from "../../../data/settings/profile";
 import {
+  clearVendorAccessPassword,
   fetchAutoBidProfile,
   refreshGeneratedResumesIdentityStream,
   type RefreshResumesProgress,
   saveAutoBidProfile,
+  setVendorAccessPassword,
   testLlmKey,
 } from "../../../services/profileApi";
 import { isBetaTier } from "../../../lib/beta";
@@ -26,6 +28,10 @@ export function ProfileTab() {
   const { applier, applierReady, setApplier } = useApplier();
   const [profile, setProfile] = useState<UserProfile>(() => emptyProfile());
   const [vendorAllowed, setVendorAllowed] = useState(false);
+  const [vendorPasswordSet, setVendorPasswordSet] = useState(false);
+  const [vendorPassword, setVendorPassword] = useState("");
+  const [vendorPasswordConfirm, setVendorPasswordConfirm] = useState("");
+  const [vendorPasswordSaving, setVendorPasswordSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshingResumes, setRefreshingResumes] = useState(false);
@@ -40,6 +46,7 @@ export function ProfileTab() {
     if (!applier?.name) {
       setProfile(emptyProfile());
       setVendorAllowed(false);
+      setVendorPasswordSet(false);
       setAccountMissing(false);
       setLoading(false);
       return;
@@ -49,6 +56,7 @@ export function ProfileTab() {
       const data = await fetchAutoBidProfile(applier.name);
       setProfile(data.profile);
       setVendorAllowed(data.vendorAllowed);
+      setVendorPasswordSet(data.vendorPasswordSet);
       setAccountMissing(!data.accountExists);
     } catch {
       toast.error("Could not load profile");
@@ -64,6 +72,57 @@ export function ProfileTab() {
   }, [applierReady, load]);
 
   const patch = (p: Partial<UserProfile>) => setProfile((prev) => ({ ...prev, ...p }));
+
+  const saveVendorPassword = async () => {
+    if (!applier?.name) {
+      toast.warning("Sign in to set a vendor access password");
+      return;
+    }
+    if (vendorPassword.length < 8) {
+      toast.error("Vendor access password must be at least 8 characters");
+      return;
+    }
+    if (vendorPassword !== vendorPasswordConfirm) {
+      toast.error("Passwords do not match");
+      return;
+    }
+    setVendorPasswordSaving(true);
+    try {
+      const res = await setVendorAccessPassword(applier.name, vendorPassword);
+      if (res.success) {
+        toast.success("Vendor access password saved");
+        setVendorPassword("");
+        setVendorPasswordConfirm("");
+        setVendorPasswordSet(true);
+      } else {
+        toast.error(res.message || "Could not save vendor access password");
+      }
+    } catch {
+      toast.error("Could not save vendor access password");
+    } finally {
+      setVendorPasswordSaving(false);
+    }
+  };
+
+  const clearVendorPassword = async () => {
+    if (!applier?.name) return;
+    setVendorPasswordSaving(true);
+    try {
+      const res = await clearVendorAccessPassword(applier.name);
+      if (res.success) {
+        toast.success("Vendor access password cleared");
+        setVendorPasswordSet(false);
+        setVendorPassword("");
+        setVendorPasswordConfirm("");
+      } else {
+        toast.error(res.message || "Could not clear vendor access password");
+      }
+    } catch {
+      toast.error("Could not clear vendor access password");
+    } finally {
+      setVendorPasswordSaving(false);
+    }
+  };
 
   const save = async () => {
     if (!applier?.name) {
@@ -279,7 +338,19 @@ export function ProfileTab() {
       ) : (
         <>
           <ProfileBanner profile={profile} tier={applier.tier} />
-          <VendorAccessRow enabled={vendorAllowed} onChange={setVendorAllowed} disabled={saving} />
+          <VendorAccessRow
+            enabled={vendorAllowed}
+            onChange={setVendorAllowed}
+            disabled={saving}
+            passwordSet={vendorPasswordSet}
+            password={vendorPassword}
+            confirmPassword={vendorPasswordConfirm}
+            onPasswordChange={setVendorPassword}
+            onConfirmPasswordChange={setVendorPasswordConfirm}
+            onSavePassword={() => void saveVendorPassword()}
+            onClearPassword={() => void clearVendorPassword()}
+            passwordSaving={vendorPasswordSaving}
+          />
 
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)] gap-4 items-start">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

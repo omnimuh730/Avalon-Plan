@@ -6,6 +6,8 @@ import {
 	removeAccountInfo,
 	signup,
 	signin,
+	bidderSignin,
+	setVendorPassword,
 } from "../controllers/accountInfoController.js";
 
 const router = express.Router();
@@ -18,5 +20,7 @@ router.delete("/account_info/:name", removeAccountInfo);
 // Auth routes
 router.post("/auth/signup", signup);
 router.post("/auth/signin", signin);
+router.post("/auth/bidder-signin", bidderSignin);
+router.post("/auth/vendor-password", setVendorPassword);
 
 export default router;

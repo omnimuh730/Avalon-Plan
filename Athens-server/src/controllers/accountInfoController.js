@@ -3,6 +3,7 @@ import { accountInfoCollection } from "../db/mongo.js";
 import {
 	deleteAccountInfoByName,
 	insertAccountInfo,
+	updateAccountInfoById,
 } from "../services/accountInfoStore.js";
 import { decryptAccountDoc } from "../services/autoBidProfileSecrets.js";
 
@@ -10,12 +11,29 @@ function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+async function findAccountByName(name) {
+	const trimmed = String(name ?? "").trim();
+	if (!trimmed || !accountInfoCollection) return null;
+	let acc = await accountInfoCollection.findOne({ name: trimmed });
+	if (acc) return acc;
+	return accountInfoCollection.findOne({
+		name: { $regex: new RegExp(`^${escapeRegExp(trimmed)}$`, "i") },
+	});
+}
+
+/** Strip secrets before returning account docs to clients. */
+function sanitizeAccount(doc) {
+	if (!doc) return doc;
+	const { password, vendorPassword, ...rest } = doc;
+	return decryptAccountDoc(rest);
+}
+
 export const getAccountInfo = async (req, res) => {
 	try {
 		console.log('GET /api/account_info - Fetching all account info');
 		const accountInfo = await accountInfoCollection.find({}).toArray();
-		// Don't return passwords
-		const sanitized = accountInfo.map(({ password, ...rest }) => decryptAccountDoc(rest));
+		// Don't return passwords (owner or vendor-purpose)
+		const sanitized = accountInfo.map((doc) => sanitizeAccount(doc));
 		res.status(200).json(sanitized);
 	} catch (error) {
 		console.error('Error in getAccountInfo:', error);
@@ -40,8 +58,7 @@ export const getAccountInfoByName = async (req, res) => {
 		if (!doc) {
 			return res.status(404).json({ success: false, message: "Account not found" });
 		}
-		const { password, ...rest } = doc;
-		res.status(200).json({ success: true, data: decryptAccountDoc(rest) });
+		res.status(200).json({ success: true, data: sanitizeAccount(doc) });
 	} catch (error) {
 		console.error("Error in getAccountInfoByName:", error);
 		res.status(500).json({ success: false, message: error.message });
@@ -131,6 +148,121 @@ export const signin = async (req, res) => {
 	} catch (error) {
 		console.error('Error in signin:', error);
 		res.status(500).json({ success: false, message: error.message });
+	}
+};
+
+/**
+ * Bid Monitor / vendor bidder login.
+ * Requires: vendorAllowed ON + vendorPassword set + name+password match.
+ * Does NOT accept the Athens owner account password.
+ */
+export const bidderSignin = async (req, res) => {
+	try {
+		const name = String(req.body?.name ?? "").trim();
+		const password = String(req.body?.password ?? "");
+		if (!name || !password) {
+			return res.status(400).json({
+				success: false,
+				code: "MISSING_CREDENTIALS",
+				message: "Profile name and vendor access password are required",
+			});
+		}
+
+		const user = await findAccountByName(name);
+		if (!user) {
+			return res.status(401).json({
+				success: false,
+				code: "INVALID_CREDENTIALS",
+				message: "Invalid profile name or password",
+			});
+		}
+
+		if (!user.vendorAllowed) {
+			return res.status(403).json({
+				success: false,
+				code: "VENDOR_ACCESS_OFF",
+				message:
+					"Vendor access is off for this profile. Turn it on in Athens → Settings → Profile.",
+			});
+		}
+
+		if (!user.vendorPassword) {
+			return res.status(403).json({
+				success: false,
+				code: "VENDOR_PASSWORD_UNSET",
+				message:
+					"Vendor access password is not set. Set it in Athens → Settings → Profile.",
+			});
+		}
+
+		const isValid = await bcrypt.compare(password, user.vendorPassword);
+		if (!isValid) {
+			return res.status(401).json({
+				success: false,
+				code: "INVALID_CREDENTIALS",
+				message: "Invalid profile name or password",
+			});
+		}
+
+		return res.status(200).json({
+			success: true,
+			message: "Signed in successfully",
+			user: { _id: user._id, name: user.name, tier: user.tier || null },
+		});
+	} catch (error) {
+		console.error("Error in bidderSignin:", error);
+		return res.status(500).json({ success: false, message: error.message });
+	}
+};
+
+/**
+ * Set or clear the vendor-purpose password used by Bid Monitor bidders.
+ * Body: { applierName, vendorPassword } or { applierName, clear: true }
+ */
+export const setVendorPassword = async (req, res) => {
+	try {
+		if (!accountInfoCollection) {
+			return res.status(503).json({ success: false, message: "Database not ready" });
+		}
+		const applierName = String(req.body?.applierName ?? req.body?.name ?? "").trim();
+		const clear = req.body?.clear === true || req.body?.clear === "true";
+		const vendorPassword = String(req.body?.vendorPassword ?? "");
+
+		if (!applierName) {
+			return res.status(400).json({ success: false, message: "applierName is required" });
+		}
+
+		const user = await findAccountByName(applierName);
+		if (!user) {
+			return res.status(404).json({ success: false, message: "Account not found" });
+		}
+
+		if (clear) {
+			await updateAccountInfoById(user._id, user.name, { $unset: { vendorPassword: "" } });
+			return res.json({
+				success: true,
+				vendorPasswordSet: false,
+				message: "Vendor access password cleared",
+			});
+		}
+
+		if (vendorPassword.length < 8) {
+			return res.status(400).json({
+				success: false,
+				message: "Vendor access password must be at least 8 characters",
+			});
+		}
+
+		const hashed = await bcrypt.hash(vendorPassword, 10);
+		await updateAccountInfoById(user._id, user.name, { $set: { vendorPassword: hashed } });
+		return res.json({
+			success: true,
+			vendorPasswordSet: true,
+			message: "Vendor access password updated",
+		});
+	} catch (error) {
+		console.error("Error in setVendorPassword:", error);
+		return res.status(500).json({ success: false, message: error.message });
 	}
 };
 

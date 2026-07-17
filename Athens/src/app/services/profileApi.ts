@@ -36,6 +36,7 @@ async function parseJson(res: Response) {
 export async function fetchAutoBidProfile(applierName: string): Promise<{
   profile: UserProfile;
   vendorAllowed: boolean;
+  vendorPasswordSet: boolean;
   accountExists: boolean;
 }> {
   const url = `${API_BASE.replace(/\/$/, "")}/personal/auto-bid-profile?applierName=${encodeURIComponent(applierName)}`;
@@ -44,6 +45,7 @@ export async function fetchAutoBidProfile(applierName: string): Promise<{
     success?: boolean;
     accountExists?: boolean;
     vendorAllowed?: boolean;
+    vendorPasswordSet?: boolean;
     profile?: Record<string, unknown>;
   } | null;
 
@@ -54,8 +56,36 @@ export async function fetchAutoBidProfile(applierName: string): Promise<{
   return {
     profile: mapProfileFromApi(data.profile),
     vendorAllowed: Boolean(data.vendorAllowed),
+    vendorPasswordSet: Boolean(data.vendorPasswordSet),
     accountExists: data.accountExists !== false,
   };
+}
+
+export async function setVendorAccessPassword(
+  applierName: string,
+  vendorPassword: string,
+): Promise<{ success: boolean; message?: string }> {
+  const url = `${API_BASE.replace(/\/$/, "")}/auth/vendor-password`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applierName, vendorPassword }),
+  });
+  const data = (await parseJson(res)) as { success?: boolean; message?: string } | null;
+  return { success: Boolean(data?.success), message: data?.message };
+}
+
+export async function clearVendorAccessPassword(
+  applierName: string,
+): Promise<{ success: boolean; message?: string }> {
+  const url = `${API_BASE.replace(/\/$/, "")}/auth/vendor-password`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applierName, clear: true }),
+  });
+  const data = (await parseJson(res)) as { success?: boolean; message?: string } | null;
+  return { success: Boolean(data?.success), message: data?.message };
 }
 
 export async function saveAutoBidProfile(

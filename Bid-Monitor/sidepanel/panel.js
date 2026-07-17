@@ -6,6 +6,7 @@ const passwordInput = document.getElementById('password');
 const applierNameInput = document.getElementById('applierName');
 const apiUrlInput = document.getElementById('apiUrl');
 const loginError = document.getElementById('loginError');
+const signInBtn = document.getElementById('signInBtn');
 const profileNameEl = document.getElementById('profileName');
 const roleBadgeEl = document.getElementById('roleBadge');
 const bridgeBadgeEl = document.getElementById('bridgeBadge');
@@ -842,15 +843,26 @@ loginForm.addEventListener('submit', async (event) => {
 
   const applierName = applierNameInput?.value?.trim() || '';
   const apiUrl = apiUrlInput?.value?.trim() || 'http://127.0.0.1:8979/api';
-  const username = usernameInput.value.trim() || applierName;
+  const password = passwordInput?.value || '';
+  if (!password) {
+    showLoginError('Vendor access password is required.');
+    return;
+  }
+
+  signInBtn.disabled = true;
+  const prevLabel = signInBtn.textContent;
+  signInBtn.textContent = 'Signing in…';
 
   const response = await sendMessage({
     type: 'SIGN_IN',
-    username,
-    password: passwordInput?.value || 'bidder123',
+    username: applierName,
+    password,
     applierName,
     apiUrl,
   });
+
+  signInBtn.disabled = false;
+  signInBtn.textContent = prevLabel || 'Sign in';
 
   if (!response?.ok) {
     showLoginError(response?.error || 'Sign in failed.');

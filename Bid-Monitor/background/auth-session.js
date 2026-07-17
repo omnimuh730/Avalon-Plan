@@ -1,5 +1,6 @@
 /**
- * Fast auth session — no Bid Ready queue load on sign-in.
+ * Bidder auth session — validates against Athens vendor access.
+ * Requires: vendorAllowed ON + vendorPassword set + name+password match.
  */
 const AuthSession = (() => {
   const AUTH_KEY = 'auth';
@@ -9,33 +10,47 @@ const AuthSession = (() => {
     return auth;
   }
 
-  async function signIn(_username, _password, options = {}) {
-    const applierName = String(options.applierName || '').trim();
+  async function signIn(_username, password, options = {}) {
+    const applierName = String(options.applierName || _username || '').trim();
     const apiUrl = String(options.apiUrl || '').trim();
-    const displayName =
-      String(options.displayName || _username || applierName).trim() || applierName;
+    const pwd = String(password || '');
 
     if (!applierName) {
       return {
         ok: false,
-        error: 'Athens applier name is required (your Job Search profile name).',
+        error: 'Profile name is required (your Athens Job Search profile name).',
+      };
+    }
+    if (!pwd) {
+      return {
+        ok: false,
+        error: 'Vendor access password is required.',
       };
     }
 
+    const resolvedApiUrl = apiUrl || AthensApi.DEFAULT_API_URL;
     await AthensApi.saveSettings({
       applierName,
-      apiUrl: apiUrl || AthensApi.DEFAULT_API_URL,
+      apiUrl: resolvedApiUrl,
     });
 
+    const result = await AthensApi.bidderSignIn(applierName, pwd, resolvedApiUrl);
+    if (!result.ok) {
+      return { ok: false, error: result.error || 'Sign in failed.', code: result.code };
+    }
+
+    const displayName = String(result.user?.name || applierName).trim() || applierName;
     const auth = {
-      profileName: applierName.toLowerCase().replace(/\s+/g, '-'),
+      profileName: displayName.toLowerCase().replace(/\s+/g, '-'),
       displayName,
-      applierName,
+      applierName: displayName,
+      accountId: result.user?._id ? String(result.user._id) : null,
       role: 'bidder',
       signedInAt: new Date().toISOString(),
       source: 'athens',
     };
     await chrome.storage.local.set({ [AUTH_KEY]: auth });
+    await AthensApi.saveSettings({ applierName: displayName, apiUrl: resolvedApiUrl });
 
     return { ok: true, auth, pools: null, athensError: null, deferredQueue: true };
   }

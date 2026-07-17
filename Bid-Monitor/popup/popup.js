@@ -226,10 +226,15 @@ loginForm.addEventListener('submit', async (event) => {
   showLoginError('');
 
   const applierName = usernameInput.value.trim();
+  const password = passwordInput?.value || '';
+  if (!password) {
+    showLoginError('Vendor access password is required.');
+    return;
+  }
   const response = await sendMessage({
     type: 'SIGN_IN',
     username: applierName,
-    password: passwordInput?.value || 'bidder123',
+    password,
     applierName,
     displayName: applierName,
   });

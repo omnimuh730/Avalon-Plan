@@ -9,31 +9,29 @@
   <body>
     <section id="loginView" class="view">
       <header class="app-header">
+        <p class="bm-eyebrow">Athens Bid Ready</p>
         <h1>Bid Monitor</h1>
-        <p class="subtitle">Video bid recording for Athens Bid Ready</p>
+        <p class="subtitle">Silent video bidding for your Bid Ready queue</p>
       </header>
       <form id="loginForm" class="form-section card">
         <label>
-          Athens applier name
+          Profile name
           <input id="applierName" type="text" placeholder="e.g. Eli Taylor" autocomplete="username" required />
+        </label>
+        <label>
+          Vendor access password
+          <input id="password" type="password" placeholder="Set in Athens → Profile" autocomplete="current-password" required />
         </label>
         <label>
           Athens API URL
           <input id="apiUrl" type="url" placeholder="http://127.0.0.1:8979/api" value="http://127.0.0.1:8979/api" />
         </label>
-        <label>
-          Bidder display name
-          <input id="username" type="text" placeholder="Same as applier" autocomplete="nickname" />
-        </label>
-        <label class="hidden">
-          Password
-          <input id="password" type="password" value="bidder123" autocomplete="current-password" />
-        </label>
+        <input id="username" type="hidden" value="" />
         <button id="signInBtn" class="btn btn-primary" type="submit">Sign in</button>
       </form>
       <p id="loginError" class="error hidden"></p>
       <p class="hint">
-        Loads live <strong>Bid Ready</strong> jobs from Athens. Use your Job Search profile name.
+        Requires <strong>Allow vendor access</strong> and a <strong>vendor access password</strong> in Athens → Settings → Profile.
       </p>
     </section>
 

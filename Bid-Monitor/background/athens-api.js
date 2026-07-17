@@ -207,6 +207,53 @@ const AthensApi = (() => {
     });
   }
 
+  /**
+   * Production bidder login against Athens.
+   * Requires vendorAllowed + vendorPassword on the profile.
+   */
+  async function bidderSignIn(name, password, apiUrl) {
+    const settings = await getSettings();
+    const base = String(apiUrl || settings.apiUrl || DEFAULT_API_URL).replace(/\/$/, '');
+    try {
+      const response = await fetch(`${base}/auth/bidder-signin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, password }),
+        signal: AbortSignal.timeout(QUEUE_TIMEOUT_MS),
+      });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
+      if (!response.ok || !data?.success) {
+        return {
+          ok: false,
+          error:
+            data?.message ||
+            data?.error ||
+            (response.status === 0
+              ? 'Cannot reach Athens. Check the API URL and that Athens-server is running.'
+              : `Sign in failed (${response.status})`),
+          code: data?.code || null,
+        };
+      }
+      return { ok: true, user: data.user || { name } };
+    } catch (err) {
+      return {
+        ok: false,
+        error:
+          err instanceof Error && err.name === 'TimeoutError'
+            ? 'Athens sign-in timed out. Is Athens-server running?'
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        code: 'NETWORK',
+      };
+    }
+  }
+
   async function checkAthensHealth() {
     const settings = await getSettings();
     const base = settings.apiUrl.replace(/\/$/, '');
@@ -289,6 +336,7 @@ const AthensApi = (() => {
     ANALYZE_TIMEOUT_MS,
     getSettings,
     saveSettings,
+    bidderSignIn,
     fetchBidReadyPools,
     startBid,
     uploadRecording,

@@ -20,11 +20,12 @@ Chrome extension for Athens **Bid Ready** apply work: silent **tab video** recor
 ## Bidder flow
 
 1. Start **Athens-server** (`http://127.0.0.1:8979`).
-2. Open the Bid Monitor **side panel** and sign in with your Athens Job Search profile name (queue loads in the background).
-3. Click **Apply** on a Bid Ready job → ticket becomes In process.
-4. On the job tab, click the **Bid Monitor toolbar icon** (or right-click → Start recording) to start silent capture.
-5. Optional: **Analyze** for suggested answers + Remote / Clearance lights (uses your Athens profile LLM key; falls back to heuristics if unavailable).
-6. **Submit** (→ Submitted + upload) or **Skip this Job** (→ Skipped). Both work after Apply even without a video.
+2. In Athens → Settings → Profile: turn on **Allow vendor access** and set a **vendor access password**.
+3. Open the Bid Monitor **side panel** and sign in with that profile name + vendor password (queue loads in the background).
+4. Click **Apply** on a Bid Ready job → ticket becomes In process.
+5. On the job tab, click the **Bid Monitor toolbar icon** (or right-click → Start recording) to start silent capture.
+6. Optional: **Analyze** for suggested answers + Remote / Clearance lights (uses your Athens profile LLM key; falls back to heuristics if unavailable).
+7. **Submit** (→ Submitted + upload) or **Skip this Job** (→ Skipped). Both work after Apply even without a video.
 
 While recording on an apply tab, clicking the toolbar icon again **opens the panel** so you can choose Submit vs Skip (it does not silently stop).
 
@@ -32,20 +33,21 @@ While recording on an apply tab, clicking the toolbar icon again **opens the pan
 
 Chrome `MediaRecorder` writes **WebM (VP9)** or optional **MP4** when selected. Cap is ~720p / 15 fps for smaller reviews.
 
+## UI
+
+Bid Monitor follows the Athens **Bid Ready** design language (ember/teal, Figtree / Bricolage Grotesque / JetBrains Mono). Tokens live in `sidepanel/tokens.css`. See `.cursor/rules/bid-monitor-ui.mdc`.
+
 ## Project structure
 
 ```
 Bid-Monitor/
 ├── manifest.json
-├── background/
-│   ├── service-worker.js    # Message router + recording glue
-│   ├── auth-session.js      # Fast sign-in (no queue wait)
-│   ├── queue-sync.js        # Bid Ready cache + résumé enrich
-│   ├── apply-lifecycle.js   # Job-scoped apply state
-│   ├── athens-api.js
-│   ├── page-context.js      # allFrames innerText scrape (bid-assistant style)
-│   └── session-recorder.js
-├── sidepanel/               # Primary UI
+├── background/              # SW, auth, queue, Athens API, page scrape
+├── sidepanel/
+│   ├── tokens.css           # Athens Bid Ready design tokens
+│   ├── panel.html / .css / .js
+│   └── …
+├── popup/                   # Compact login / queue view
 ├── offscreen/               # MediaRecorder (MV3)
 └── content/                 # Floating indicator + resume rename
 ```

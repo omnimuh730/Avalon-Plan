@@ -305,7 +305,7 @@ function buildAutoBidProfileResponse(p) {
 async function findAccountByApplierName(nameRaw, projection) {
 	const trimmed = String(nameRaw ?? "").trim();
 	if (!trimmed || !accountInfoCollection) return null;
-	const proj = projection || { name: 1, autoBidProfile: 1, vendorAllowed: 1 };
+	const proj = projection || { name: 1, autoBidProfile: 1, vendorAllowed: 1, vendorPassword: 1 };
 	let acc = await accountInfoCollection.findOne({ name: trimmed }, { projection: proj });
 	if (acc) return acc;
 	const esc = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -324,6 +324,7 @@ export async function getAutoBidProfile(req, res) {
 				success: true,
 				accountExists: false,
 				vendorAllowed: false,
+				vendorPasswordSet: false,
 				profile: buildAutoBidProfileResponse({}),
 			});
 		}
@@ -332,6 +333,7 @@ export async function getAutoBidProfile(req, res) {
 			success: true,
 			accountExists: true,
 			vendorAllowed: Boolean(acc.vendorAllowed),
+			vendorPasswordSet: Boolean(acc.vendorPassword),
 			profile: buildAutoBidProfileResponse(p),
 		});
 	} catch (err) {

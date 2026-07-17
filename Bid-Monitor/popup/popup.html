@@ -8,25 +8,26 @@
   </head>
   <body>
     <header>
+      <p class="bm-eyebrow">Athens Bid Ready</p>
       <h1>Bid Monitor</h1>
-      <p class="subtitle">Job pool application monitor</p>
+      <p class="subtitle">Prefer the side panel for Apply · Analyze · Submit</p>
     </header>
 
     <section id="loginView" class="view">
       <form id="loginForm" class="form-section">
         <label>
-          Athens applier name
-          <input id="username" type="text" placeholder="e.g. David Moll" autocomplete="username" required />
+          Profile name
+          <input id="username" type="text" placeholder="e.g. Eli Taylor" autocomplete="username" required />
         </label>
-        <label class="hidden">
-          Password
-          <input id="password" type="password" value="bidder123" autocomplete="current-password" />
+        <label>
+          Vendor access password
+          <input id="password" type="password" placeholder="Set in Athens → Profile" autocomplete="current-password" required />
         </label>
         <button id="signInBtn" class="btn btn-start" type="submit">Sign in</button>
       </form>
       <p id="loginError" class="error hidden"></p>
       <p class="hint">
-        Uses your Athens Job Search profile name. Prefer the <strong>side panel</strong> for full Bid Ready apply + Submit / Skip.
+        Requires vendor access + password in Athens Profile settings. Prefer the <strong>side panel</strong> for Apply / Submit.
       </p>
     </section>
 
