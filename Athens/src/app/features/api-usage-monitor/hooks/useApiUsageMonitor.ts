@@ -21,7 +21,7 @@ const EMPTY_TOTALS: AiUsageMonitorResponse["totals"] = {
   configuredKeys: 0,
 };
 
-export function useApiUsageMonitor(range: DateRange) {
+export function useApiUsageMonitor(range: DateRange, requesterName?: string | null) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [totals, setTotals] = useState(EMPTY_TOTALS);
@@ -29,12 +29,28 @@ export function useApiUsageMonitor(range: DateRange) {
   const [apiKeys, setApiKeys] = useState<AiUsageMonitorApiKey[]>([]);
   const [unassigned, setUnassigned] = useState<AiUsageMonitorResponse["unassigned"]>([]);
 
+  const requester = String(requesterName || "").trim() || undefined;
+
   const load = useCallback(async () => {
+    if (!requester) {
+      setLoading(false);
+      setError(null);
+      setTotals(EMPTY_TOTALS);
+      setUsers([]);
+      setApiKeys([]);
+      setUnassigned([]);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     const { startDate, endDate } = rangeToIsoDates(range);
     try {
-      const data = await fetchAiUsageMonitor({ since: startDate, until: endDate });
+      const data = await fetchAiUsageMonitor({
+        since: startDate,
+        until: endDate,
+        requesterName: requester,
+      });
       setTotals(data.totals ?? EMPTY_TOTALS);
       setUsers(data.users ?? []);
       setApiKeys(data.apiKeys ?? []);
@@ -48,7 +64,7 @@ export function useApiUsageMonitor(range: DateRange) {
     } finally {
       setLoading(false);
     }
-  }, [range]);
+  }, [range, requester]);
 
   useEffect(() => {
     void load();

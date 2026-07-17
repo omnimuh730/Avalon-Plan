@@ -6,6 +6,7 @@ import { VIEW_COMPONENTS } from "../config/views";
 import { AppLayout } from "./AppLayout";
 import { ProtectedRoute } from "./ProtectedRoute";
 import { BetaRoute } from "./BetaRoute";
+import { AdminRoute } from "./AdminRoute";
 
 const {
   dashboard: DashboardPage,
@@ -78,8 +79,22 @@ export function AppRoutes() {
             <AnalyticsPage />
           }
         />
-        <Route path={PATHS.aiUsage.slice(1)} element={<AiUsagePage />} />
-        <Route path={PATHS.apiUsageMonitor.slice(1)} element={<ApiUsageMonitorPage />} />
+        <Route
+          path={PATHS.aiUsage.slice(1)}
+          element={
+            <AdminRoute>
+              <AiUsagePage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path={PATHS.apiUsageMonitor.slice(1)}
+          element={
+            <AdminRoute>
+              <ApiUsageMonitorPage />
+            </AdminRoute>
+          }
+        />
         <Route
           path={`${PATHS.vendorMonitor.slice(1)}/:tab?`}
           element={

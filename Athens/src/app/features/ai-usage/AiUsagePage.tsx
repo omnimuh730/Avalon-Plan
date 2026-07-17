@@ -138,7 +138,7 @@ export function AiUsagePage() {
   );
 
   const { loading, error, ready, totals, byDay, byFeature, byProvider, recentRows, refetch } =
-    useAiUsageAnalytics(range, selectedUser || null);
+    useAiUsageAnalytics(range, selectedUser || null, applier?.name);
 
   const selectedLabel = useMemo(() => {
     return userOptions.find((o) => o.value === selectedUser)?.label || selectedUser || "user";

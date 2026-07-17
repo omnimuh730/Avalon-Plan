@@ -76,6 +76,8 @@ type QueryParams = {
   applierName?: string;
   feature?: string;
   limit?: number;
+  /** Signed-in account name — required for admin-gated AI usage APIs */
+  requesterName?: string;
 };
 
 function buildQuery(params: QueryParams): string {
@@ -89,6 +91,11 @@ function buildQuery(params: QueryParams): string {
   return s ? `?${s}` : "";
 }
 
+function adminHeaders(requesterName?: string): HeadersInit {
+  const name = String(requesterName || "").trim();
+  return name ? { "x-applier-name": name } : {};
+}
+
 async function parseJson<T>(res: Response): Promise<T> {
   const data = (await res.json()) as T & { error?: string };
   if (!res.ok) {
@@ -98,12 +105,16 @@ async function parseJson<T>(res: Response): Promise<T> {
 }
 
 export async function fetchAiUsageSummary(params: QueryParams): Promise<AiUsageSummaryResponse> {
-  const res = await fetch(`${API_BASE}/ai-usage/summary${buildQuery(params)}`);
+  const res = await fetch(`${API_BASE}/ai-usage/summary${buildQuery(params)}`, {
+    headers: adminHeaders(params.requesterName),
+  });
   return parseJson(res);
 }
 
 export async function fetchAiUsageRows(params: QueryParams): Promise<AiUsageRowsResponse> {
-  const res = await fetch(`${API_BASE}/ai-usage${buildQuery({ ...params, limit: params.limit ?? 100 })}`);
+  const res = await fetch(`${API_BASE}/ai-usage${buildQuery({ ...params, limit: params.limit ?? 100 })}`, {
+    headers: adminHeaders(params.requesterName),
+  });
   return parseJson(res);
 }
 
@@ -173,8 +184,10 @@ export type AiUsageMonitorResponse = {
 };
 
 export async function fetchAiUsageMonitor(
-  params: Pick<QueryParams, "since" | "until"> = {},
+  params: Pick<QueryParams, "since" | "until" | "requesterName"> = {},
 ): Promise<AiUsageMonitorResponse> {
-  const res = await fetch(`${API_BASE}/ai-usage/monitor${buildQuery(params)}`);
+  const res = await fetch(`${API_BASE}/ai-usage/monitor${buildQuery(params)}`, {
+    headers: adminHeaders(params.requesterName),
+  });
   return parseJson(res);
 }

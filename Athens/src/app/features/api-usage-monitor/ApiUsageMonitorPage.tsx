@@ -19,6 +19,7 @@ import { rangeLabel } from "../analytics/lib/rangeFilter";
 import { formatRunCost } from "../agents/lib/runUsage";
 import { mono } from "../../lib/utils";
 import type { AiUsageMonitorUser } from "../../api/aiUsage";
+import { useApplier } from "@/context/applier-context";
 import { useApiUsageMonitor } from "./hooks/useApiUsageMonitor";
 
 function formatTokens(n: number): string {
@@ -161,10 +162,14 @@ function UserDetail({ user }: { user: AiUsageMonitorUser }) {
 }
 
 export function ApiUsageMonitorPage() {
+  const { applier } = useApplier();
   const [range, setRange] = useState<DateRange>("30d");
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const { loading, error, totals, users, apiKeys, unassigned, refetch } = useApiUsageMonitor(range);
+  const { loading, error, totals, users, apiKeys, unassigned, refetch } = useApiUsageMonitor(
+    range,
+    applier?.name,
+  );
 
   const filteredUsers = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -5,6 +5,7 @@ import { useAuth } from "@/context/auth-context";
 import { useApplier } from "@/context/applier-context";
 import { cn, display } from "../../lib/utils";
 import { isBetaTier } from "../../lib/beta";
+import { isAdminPermission } from "../../lib/admin";
 import { pathForView, PATHS } from "../../config/routes";
 import { NAV_GROUPS, NAV_ITEMS } from "../../config/navigation";
 
@@ -23,6 +24,7 @@ export function Sidebar() {
   const navigate = useNavigate();
   const account = applier ?? user;
   const beta = isBetaTier(account?.tier);
+  const admin = isAdminPermission(applier?.permission ?? user?.permission);
 
   const handleSignOut = () => {
     signout();
@@ -55,7 +57,9 @@ export function Sidebar() {
               </p>
             )}
             <div className="space-y-1">
-              {NAV_ITEMS.filter((n) => g.ids.includes(n.id) && (beta || !n.beta)).map((item) => (
+              {NAV_ITEMS.filter(
+                (n) => g.ids.includes(n.id) && (beta || !n.beta) && (admin || !n.admin),
+              ).map((item) => (
                 <NavLink
                   key={item.id}
                   to={pathForView(item.id)}

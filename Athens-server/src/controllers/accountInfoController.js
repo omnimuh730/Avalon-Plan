@@ -100,7 +100,12 @@ export const addAccountInfo = async (req, res) => {
 		const createdUser = await accountInfoCollection.findOne({ _id: result.insertedId });
 		res.status(201).json({ 
 			success: true, 
-			user: { _id: result.insertedId, name, tier: createdUser ? createdUser.tier : null },
+			user: {
+				_id: result.insertedId,
+				name,
+				tier: createdUser ? createdUser.tier : null,
+				permission: createdUser?.permission || null,
+			},
 			message: "User created successfully" 
 		});
 	} catch (error) {
@@ -142,7 +147,12 @@ export const signin = async (req, res) => {
 		console.log('POST /api/auth/signin - User signed in successfully:', name);
 		res.status(200).json({
 		success: true,
-		user: { _id: user._id, name: user.name, tier: user.tier },
+		user: {
+			_id: user._id,
+			name: user.name,
+			tier: user.tier,
+			permission: user.permission || null,
+		},
 		message: "Signed in successfully"
 	});
 	} catch (error) {
@@ -314,7 +324,12 @@ export const signup = async (req, res) => {
 		const createdUser = await accountInfoCollection.findOne({ _id: result.insertedId });
 		res.status(201).json({
 			success: true,
-			user: { _id: result.insertedId, name, tier: createdUser ? createdUser.tier : null },
+			user: {
+				_id: result.insertedId,
+				name,
+				tier: createdUser ? createdUser.tier : null,
+				permission: createdUser?.permission || null,
+			},
 			message: "User created successfully",
 		});
 	} catch (error) {

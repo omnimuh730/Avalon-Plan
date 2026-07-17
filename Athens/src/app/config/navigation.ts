@@ -25,6 +25,8 @@ export type NavItem = {
   icon: ElementType;
   comingSoon?: boolean;
   beta?: boolean;
+  /** Only shown when account_info.permission === "admin" */
+  admin?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -41,8 +43,8 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "bid-management", label: "Bid Management", icon: Clapperboard },
   { id: "firebase", label: "Firebase Atlas", icon: Flame },
   { id: "reports", label: "Analytics", icon: BarChart2, comingSoon: true },
-  { id: "ai-usage", label: "AI API Usage", icon: Cpu },
-  { id: "api-usage-monitor", label: "API Usage Monitor", icon: Gauge },
+  { id: "ai-usage", label: "AI API Usage", icon: Cpu, admin: true },
+  { id: "api-usage-monitor", label: "API Usage Monitor", icon: Gauge, admin: true },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 

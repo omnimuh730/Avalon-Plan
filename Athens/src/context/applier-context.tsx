@@ -15,6 +15,7 @@ export type ApplierAccount = {
   _id: unknown;
   name: string;
   tier?: string | null;
+  permission?: string | null;
   autoBidProfile?: {
     deepseekApiKey?: string;
     [key: string]: unknown;
@@ -58,11 +59,23 @@ export function ApplierProvider({ children }: { children: ReactNode }) {
         if (data?.success && data.data) {
           setApplier(data.data);
         } else {
-          setApplier({ _id: user._id, name: user.name, tier: user.tier });
+          setApplier({
+            _id: user._id,
+            name: user.name,
+            tier: user.tier,
+            permission: user.permission,
+          });
         }
       } catch (e) {
         console.error("account profile fetch failed", e);
-        if (!cancelled) setApplier({ _id: user._id, name: user.name, tier: user.tier });
+        if (!cancelled) {
+          setApplier({
+            _id: user._id,
+            name: user.name,
+            tier: user.tier,
+            permission: user.permission,
+          });
+        }
       } finally {
         if (!cancelled) setApplierReady(true);
       }
@@ -71,7 +84,7 @@ export function ApplierProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated, user?._id, user?.name, user?.tier]);
+  }, [isAuthenticated, user?._id, user?.name, user?.tier, user?.permission]);
 
   const value = useMemo(() => ({ applier, setApplier, applierReady }), [applier, applierReady]);
   return <ApplierContext.Provider value={value}>{children}</ApplierContext.Provider>;
