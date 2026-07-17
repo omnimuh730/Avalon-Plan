@@ -4,7 +4,8 @@
  */
 const AthensApi = (() => {
   const SETTINGS_KEY = 'athensSettings';
-  const DEFAULT_API_URL = 'http://127.0.0.1:8979/api';
+  /** Fixed Athens API base — not user-configurable. */
+  const DEFAULT_API_URL = 'http://83.229.67.146/api';
   const QUEUE_TIMEOUT_MS = 15000;
   const UPLOAD_TIMEOUT_MS = 120000;
   const ANALYZE_TIMEOUT_MS = 300000;
@@ -12,7 +13,7 @@ const AthensApi = (() => {
   async function getSettings() {
     const { [SETTINGS_KEY]: settings = {} } = await chrome.storage.local.get(SETTINGS_KEY);
     return {
-      apiUrl: String(settings.apiUrl || DEFAULT_API_URL).replace(/\/$/, ''),
+      apiUrl: DEFAULT_API_URL,
       applierName: String(settings.applierName || '').trim(),
     };
   }
@@ -20,16 +21,15 @@ const AthensApi = (() => {
   async function saveSettings(partial) {
     const current = await getSettings();
     const next = {
-      apiUrl: String(partial.apiUrl ?? current.apiUrl).replace(/\/$/, '') || DEFAULT_API_URL,
+      apiUrl: DEFAULT_API_URL,
       applierName: String(partial.applierName ?? current.applierName).trim(),
     };
     await chrome.storage.local.set({ [SETTINGS_KEY]: next });
     return next;
   }
 
-  async function fetchJson(path, { method = 'GET', body, apiUrl, timeoutMs } = {}) {
-    const settings = await getSettings();
-    const base = (apiUrl || settings.apiUrl || DEFAULT_API_URL).replace(/\/$/, '');
+  async function fetchJson(path, { method = 'GET', body, apiUrl: _apiUrl, timeoutMs } = {}) {
+    const base = DEFAULT_API_URL;
     const url = path.startsWith('http') ? path : `${base}${path.startsWith('/') ? '' : '/'}${path}`;
     const response = await fetch(url, {
       method,
@@ -356,9 +356,8 @@ const AthensApi = (() => {
    * Production bidder login against Athens.
    * Requires vendorAllowed + vendorPassword on the profile.
    */
-  async function bidderSignIn(name, password, apiUrl) {
-    const settings = await getSettings();
-    const base = String(apiUrl || settings.apiUrl || DEFAULT_API_URL).replace(/\/$/, '');
+  async function bidderSignIn(name, password, _apiUrl) {
+    const base = DEFAULT_API_URL;
     try {
       const response = await fetch(`${base}/auth/bidder-signin`, {
         method: 'POST',
@@ -379,7 +378,7 @@ const AthensApi = (() => {
             data?.message ||
             data?.error ||
             (response.status === 0
-              ? 'Cannot reach Athens. Check the API URL and that Athens-server is running.'
+              ? 'Cannot reach Athens. Check that Athens-server is running.'
               : `Sign in failed (${response.status})`),
           code: data?.code || null,
         };

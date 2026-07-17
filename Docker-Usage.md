@@ -10,8 +10,8 @@ cd /Users/robin/Desktop/Utils/NextOffer
 ## Run on VPS
 
 ```bash
-docker pull omnimuh730/nextoffer:latest
 docker stop nextoffer && docker rm nextoffer
+
 docker run -d \
   --name nextoffer \
   --restart unless-stopped \
@@ -23,10 +23,14 @@ docker run -d \
   -p 3848:3848 \
   -p 3847:3847 \
   -v nextoffer-puppeteer:/data/puppeteer \
+  -v /opt/nextoffer/secrets/firebase-service-account.json:/run/secrets/firebase-service-account.json:ro \
   -e EMBEDDED_MONGO=false \
   -e 'MONGO_URL=mongodb://admin:Test.1234%21@host.docker.internal:27017/?authSource=admin' \
   -e MONGO_DB=AthensDB \
   -e API_KEYS_ENCRYPTION_KEY=3b4bd0112a6ec1514860a961e3da66b577e5638abcbe44caf017f9fe87e574bd \
+  -e FIREBASE_PROJECT_ID=drwretail-bm \
+  -e FIREBASE_STORAGE_BUCKET=drwretail-bm.firebasestorage.app \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json \
   omnimuh730/nextoffer:latest
 ```
 

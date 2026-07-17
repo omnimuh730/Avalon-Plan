@@ -12,7 +12,6 @@ const AuthSession = (() => {
 
   async function signIn(_username, password, options = {}) {
     const applierName = String(options.applierName || _username || '').trim();
-    const apiUrl = String(options.apiUrl || '').trim();
     const pwd = String(password || '');
 
     if (!applierName) {
@@ -28,7 +27,7 @@ const AuthSession = (() => {
       };
     }
 
-    const resolvedApiUrl = apiUrl || AthensApi.DEFAULT_API_URL;
+    const resolvedApiUrl = AthensApi.DEFAULT_API_URL;
     await AthensApi.saveSettings({
       applierName,
       apiUrl: resolvedApiUrl,

@@ -4,8 +4,9 @@ const loginForm = document.getElementById('loginForm');
 const usernameInput = document.getElementById('username');
 const passwordInput = document.getElementById('password');
 const applierNameInput = document.getElementById('applierName');
-const apiUrlInput = document.getElementById('apiUrl');
 const loginError = document.getElementById('loginError');
+/** Fixed Athens API base — matches background/athens-api.js */
+const ATHENS_API_URL = 'http://83.229.67.146/api';
 const signInBtn = document.getElementById('signInBtn');
 const profileNameEl = document.getElementById('profileName');
 const roleBadgeEl = document.getElementById('roleBadge');
@@ -613,14 +614,12 @@ async function refreshBridgeBadge() {
     if (res?.healthy) {
       bridgeBadgeEl.textContent = 'Athens OK';
       bridgeBadgeEl.className = 'bridge-badge ok';
-      bridgeBadgeEl.title = res.apiUrl || '';
+      bridgeBadgeEl.title = res.apiUrl || ATHENS_API_URL;
     } else {
       bridgeBadgeEl.textContent = 'Athens down';
       bridgeBadgeEl.className = 'bridge-badge down';
       bridgeBadgeEl.title =
-        res?.error ||
-        res?.apiUrl ||
-        'Start Athens-server and set API URL to http://127.0.0.1:8979/api';
+        res?.error || res?.apiUrl || `Cannot reach Athens at ${ATHENS_API_URL}`;
     }
   } catch {
     bridgeBadgeEl.textContent = 'Athens ?';
@@ -1245,7 +1244,6 @@ loginForm.addEventListener('submit', async (event) => {
   showLoginError('');
 
   const applierName = applierNameInput?.value?.trim() || '';
-  const apiUrl = apiUrlInput?.value?.trim() || 'http://127.0.0.1:8979/api';
   const password = passwordInput?.value || '';
   if (!password) {
     showLoginError('Vendor access password is required.');
@@ -1261,7 +1259,7 @@ loginForm.addEventListener('submit', async (event) => {
     username: applierName,
     password,
     applierName,
-    apiUrl,
+    apiUrl: ATHENS_API_URL,
   });
 
   signInBtn.disabled = false;
@@ -1387,9 +1385,6 @@ chrome.windows.onFocusChanged.addListener(() => {
 
   if (applierNameInput && athensSettings?.applierName) {
     applierNameInput.value = athensSettings.applierName;
-  }
-  if (apiUrlInput && athensSettings?.apiUrl) {
-    apiUrlInput.value = athensSettings.apiUrl;
   }
   if (usernameInput && athensSettings?.applierName && !usernameInput.value) {
     usernameInput.value = athensSettings.applierName;

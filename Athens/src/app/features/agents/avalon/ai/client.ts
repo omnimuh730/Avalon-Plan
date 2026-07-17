@@ -1,5 +1,5 @@
 import { API_BASE } from "@/lib/api-base";
-import { AI_BFF_URL, ANALYZE_TEMPERATURE } from "./config";
+import { AI_BFF_URL } from "./config";
 import type { ChatRequest, ChatResponse } from "./chat-types";
 import { getProfileApplierName, resolveChatModel } from "./model";
 import { getAgentRunContext } from "./run-context";
@@ -18,7 +18,7 @@ export async function chatCompletion(request: ChatRequest): Promise<ChatResponse
     ...(model ? { model } : {}),
     system: request.system,
     messages: request.messages,
-    temperature: request.temperature ?? ANALYZE_TEMPERATURE,
+    ...(request.temperature != null ? { temperature: request.temperature } : {}),
     ...(request.maxTokens != null ? { maxTokens: request.maxTokens } : {}),
     responseSchema: request.responseSchema,
     ...(runId ? { runId } : {}),
