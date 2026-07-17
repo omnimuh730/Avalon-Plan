@@ -209,19 +209,19 @@ const AthensApi = (() => {
 
   async function checkAthensHealth() {
     const settings = await getSettings();
+    const base = settings.apiUrl.replace(/\/$/, '');
+    // Lightweight ping — do NOT use /bid-results (slow, large payload → false "down").
     try {
-      const response = await fetch(
-        `${settings.apiUrl.replace(/\/$/, '')}/bid-results?applierName=${encodeURIComponent(settings.applierName || '_')}`,
-        {
-          method: 'GET',
-          signal: AbortSignal.timeout(4000),
-        },
-      );
+      const response = await fetch(`${base}/agents/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5000),
+      });
       return {
-        ok: response.status !== 0,
-        healthy: response.ok || response.status === 400 || response.status === 503,
+        ok: true,
+        healthy: response.ok,
         apiUrl: settings.apiUrl,
         status: response.status,
+        error: response.ok ? null : `HTTP ${response.status} from ${base}/agents/health`,
       };
     } catch (err) {
       return {

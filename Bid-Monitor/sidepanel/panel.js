@@ -460,7 +460,10 @@ async function refreshBridgeBadge() {
     } else {
       bridgeBadgeEl.textContent = 'Athens down';
       bridgeBadgeEl.className = 'bridge-badge down';
-      bridgeBadgeEl.title = res?.error || 'Start Athens-server on :8979';
+      bridgeBadgeEl.title =
+        res?.error ||
+        res?.apiUrl ||
+        'Start Athens-server and set API URL to http://127.0.0.1:8979/api';
     }
   } catch {
     bridgeBadgeEl.textContent = 'Athens ?';
