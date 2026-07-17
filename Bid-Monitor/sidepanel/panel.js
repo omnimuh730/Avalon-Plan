@@ -27,6 +27,9 @@ const applySessionView = document.getElementById('applySessionView');
 const applyJobCompany = document.getElementById('applyJobCompany');
 const applyJobTitle = document.getElementById('applyJobTitle');
 const applyResumeFolder = document.getElementById('applyResumeFolder');
+const applyResumeFileNameRow = document.getElementById('applyResumeFileNameRow');
+const applyResumeFileName = document.getElementById('applyResumeFileName');
+const applyCopyResumeNameBtn = document.getElementById('applyCopyResumeNameBtn');
 const applySessionStatus = document.getElementById('applySessionStatus');
 const applySessionError = document.getElementById('applySessionError');
 const applyModeBadge = document.getElementById('applyModeBadge');
@@ -86,6 +89,97 @@ function escapeHtml(value) {
     '"': '&quot;',
     "'": '&#39;',
   }[ch]));
+}
+
+/** Canonical upload name — same stem as bulk zip + .pdf */
+function resolveExpectedResumeFileName(job) {
+  const fromJob = String(job?.expectedResumeName || '').trim();
+  if (fromJob) return fromJob;
+
+  if (typeof CanonicalResumeName === 'undefined') return null;
+  const company = job?.companyName;
+  const title = job?.title;
+  const profile =
+    dashboardState?.auth?.displayName ||
+    dashboardState?.auth?.applierName ||
+    profileNameEl?.textContent?.trim();
+  const jobId = job?.athensJobId || job?.id;
+  if (!company || !title || !profile || !jobId || profile === '—') return null;
+  try {
+    return CanonicalResumeName.buildCanonicalResumeFileName(
+      company,
+      title,
+      profile,
+      jobId,
+      '.pdf',
+    );
+  } catch {
+    return null;
+  }
+}
+
+function resumeFileNameMarkup(fileName) {
+  if (!fileName) return '';
+  return `
+    <div class="resume-filename-row" title="${escapeHtml(fileName)}">
+      <span class="resume-filename-label">Upload as</span>
+      <code class="resume-filename mono">${escapeHtml(fileName)}</code>
+      <button type="button" class="btn-copy-filename" data-copy-filename="${escapeHtml(fileName)}" title="Copy filename">Copy</button>
+    </div>
+  `;
+}
+
+async function copyTextToClipboard(text) {
+  const value = String(text || '');
+  if (!value) return false;
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function bindCopyFilenameButtons(root) {
+  root?.querySelectorAll('[data-copy-filename]').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const name = button.dataset.copyFilename || '';
+      const ok = await copyTextToClipboard(name);
+      const prev = button.textContent;
+      button.textContent = ok ? 'Copied' : 'Failed';
+      setTimeout(() => {
+        button.textContent = prev;
+      }, 1200);
+    });
+  });
+}
+
+function setApplyResumeFileName(job) {
+  const fileName = resolveExpectedResumeFileName(job);
+  if (!applyResumeFileNameRow || !applyResumeFileName) return;
+  if (!fileName) {
+    applyResumeFileNameRow.classList.add('hidden');
+    applyResumeFileName.textContent = '';
+    applyResumeFileName.removeAttribute('title');
+    return;
+  }
+  applyResumeFileName.textContent = fileName;
+  applyResumeFileName.title = fileName;
+  applyResumeFileNameRow.classList.remove('hidden');
 }
 
 async function getCurrentTabId() {
@@ -273,6 +367,7 @@ function renderApplySession(state) {
   applyResumeFolder.textContent = job?.resumeFolderName
     ? `Resume: ${job.resumeFolderName}`
     : '';
+  setApplyResumeFileName(job);
 
   refreshApplyResume(job);
 
@@ -559,6 +654,7 @@ function renderQueue() {
     const { statusClass, statusLabel } = statusBadgeFor(job);
     const inProcess = job.status === 'in_process';
     const resumeJobId = job.athensJobId || job.id;
+    const expectedName = resolveExpectedResumeFileName(job);
     const resumeActions = job.hasGeneratedResume
       ? `
         <button type="button" class="btn btn-secondary" data-view-resume="${escapeHtml(resumeJobId)}">View résumé</button>
@@ -573,6 +669,7 @@ function renderQueue() {
     li.innerHTML = `
       <strong>${escapeHtml(job.companyName)}</strong>
       <span class="meta-line">${escapeHtml(job.title)}</span>
+      ${resumeFileNameMarkup(expectedName)}
       <span class="status-badge ${statusClass}">${statusLabel}</span>
       <div class="item-actions">
         ${resumeActions}
@@ -581,6 +678,8 @@ function renderQueue() {
     `;
     jobList.appendChild(li);
   }
+
+  bindCopyFilenameButtons(jobList);
 
   jobList.querySelectorAll('[data-view-resume]').forEach((button) => {
     button.addEventListener('click', async () => {
@@ -960,6 +1059,17 @@ applyDownloadResumeBtn?.addEventListener('click', async () => {
     applyDownloadResumeBtn.disabled = false;
     applyDownloadResumeBtn.textContent = prev;
   }
+});
+
+applyCopyResumeNameBtn?.addEventListener('click', async () => {
+  const name = applyResumeFileName?.textContent?.trim() || '';
+  if (!name) return;
+  const ok = await copyTextToClipboard(name);
+  const prev = applyCopyResumeNameBtn.textContent;
+  applyCopyResumeNameBtn.textContent = ok ? 'Copied' : 'Failed';
+  setTimeout(() => {
+    applyCopyResumeNameBtn.textContent = prev;
+  }, 1200);
 });
 
 submitRecordingBtn?.addEventListener('click', () => {

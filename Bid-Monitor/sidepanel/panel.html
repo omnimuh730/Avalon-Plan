@@ -72,6 +72,11 @@
         <div id="applyJobCompany" class="apply-job-title">—</div>
         <div id="applyJobTitle" class="apply-job-meta">—</div>
         <div id="applyResumeFolder" class="apply-job-meta">—</div>
+        <div id="applyResumeFileNameRow" class="resume-filename-row apply-resume-filename hidden">
+          <span class="resume-filename-label">Upload as</span>
+          <code id="applyResumeFileName" class="resume-filename mono" title=""></code>
+          <button id="applyCopyResumeNameBtn" class="btn-copy-filename" type="button" title="Copy filename">Copy</button>
+        </div>
         <p id="applySessionStatus" class="apply-status">Ready to record</p>
         <p id="applySessionError" class="error hidden"></p>
 
@@ -182,6 +187,7 @@
     <span id="jobsPoolStatus" class="hidden"></span>
     <button id="backToPoolsBtn" class="hidden" type="button"></button>
 
+    <script src="../background/canonical-resume-name.js"></script>
     <script src="panel.js"></script>
   </body>
 </html>

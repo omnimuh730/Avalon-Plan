@@ -366,7 +366,6 @@ export function BidManagementPage() {
 
   const periodResults = useMemo(() => filterByPeriod(allResults, period), [allResults, period]);
   const folders = useMemo(() => buildDateFolders(periodResults), [periodResults]);
-  const periodKpis = useMemo(() => computeKpis(periodResults), [periodResults]);
   const todayKey = useMemo(() => dayKeyFromIso(new Date().toISOString()), []);
   const pendingCount = useMemo(
     () => allResults.filter((r) => r.status === "pending").length,
@@ -389,6 +388,12 @@ export function BidManagementPage() {
       })
       .sort((a, b) => b.pooledAt.localeCompare(a.pooledAt));
   }, [periodResults, selectedDay, query]);
+
+  // Folder view: period KPIs. Day view: KPIs match that day's columns (ignore search filter).
+  const headerKpis = useMemo(() => {
+    if (!selectedDay) return computeKpis(periodResults);
+    return computeKpis(periodResults.filter((r) => r.dayKey === selectedDay));
+  }, [selectedDay, periodResults]);
 
   const selected = dayResults.find((r) => r.id === selectedId) ?? null;
   const playingResult = playing ? selected : null;
@@ -453,7 +458,7 @@ export function BidManagementPage() {
             <div className="bm-kpis compact">
               {BID_STATUSES.map((key) => (
                 <div key={key} className="bm-kpi static">
-                  <span className="bm-kpi-val">{periodKpis[key]}</span>
+                  <span className="bm-kpi-val">{headerKpis[key]}</span>
                   <span className="bm-kpi-label">{STATUS_LABELS[key]}</span>
                 </div>
               ))}

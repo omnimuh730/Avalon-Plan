@@ -1027,6 +1027,7 @@ export async function skipBidResult(req, res) {
 		}
 
 		const now = new Date();
+		const readyAt = await getJobBidReadyDate(applierName, jobId);
 		const doc = await upsertVendorTaskRecording(applierName, jobId, {
 			status: "skipped",
 			completedAt: now,
@@ -1034,6 +1035,7 @@ export async function skipBidResult(req, res) {
 			reviewStatus: null,
 			bidderName: bidderName || undefined,
 			biddingDurationSec: null,
+			...(readyAt ? { bidReadyDate: readyAt } : {}),
 		});
 
 		await appendBidReviewEvent({
@@ -1048,7 +1050,7 @@ export async function skipBidResult(req, res) {
 			meta: { biddingDurationSec: null },
 		});
 
-		const task = serializeTask(doc);
+		const task = await withStableBidReadyDate(serializeTask(doc), applierName);
 		return res.json({ success: true, task, result: mapTaskToBidResult(task) });
 	} catch (err) {
 		console.error("[bid-results] skip failed", err);

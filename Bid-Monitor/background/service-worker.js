@@ -612,6 +612,7 @@ async function openApplyOnTab(tabId, poolId, jobId, streamId = null) {
     title: job.title,
     jdUrl: job.jdUrl,
     resumeFolderName: job.resumeFolderName,
+    expectedResumeName: job.expectedResumeName || null,
     hasGeneratedResume: Boolean(job.hasGeneratedResume),
   };
 
@@ -2349,6 +2350,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             title: session.jobTitle,
             jdUrl: session.jdUrl,
             resumeFolderName: session.resumeSetFolder,
+            expectedResumeName:
+              session.expectedResumeName ||
+              apply?.job?.expectedResumeName ||
+              null,
             hasGeneratedResume: Boolean(apply?.job?.hasGeneratedResume),
           };
           recorderStatus = session.recorderStatus ?? 'recording';

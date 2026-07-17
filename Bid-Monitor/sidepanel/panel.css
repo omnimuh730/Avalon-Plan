@@ -672,6 +672,70 @@ body {
   line-height: 1.4;
 }
 
+.resume-filename-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.resume-filename-label {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bm-muted);
+}
+
+.resume-filename {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--bm-teal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.apply-resume-filename {
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  border-radius: var(--bm-radius-sm);
+  background: color-mix(in srgb, var(--bm-teal-glow) 70%, var(--bm-panel-solid));
+  border: 1px solid rgba(15, 118, 110, 0.2);
+}
+
+.apply-resume-filename .resume-filename {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.btn-copy-filename {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: var(--bm-body);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--bm-teal);
+  cursor: pointer;
+}
+
+.btn-copy-filename:hover {
+  text-decoration: underline;
+}
+
 .item-actions {
   display: flex;
   flex-wrap: wrap;
