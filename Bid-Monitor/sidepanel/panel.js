@@ -441,6 +441,7 @@ async function finishApply(tabId, finishAction = 'submit', button) {
   persistedAnalysis = null;
   activeJobId = null;
   await refreshApplySession();
+  // Pull Athens queue so Submitted/Skipped disappear and statuses match Bid Management.
   await loadDashboard({ force: true });
 }
 
@@ -477,15 +478,12 @@ function getQueueJobs() {
   const jobs = [];
   for (const pool of pools) {
     for (const job of pool.jobs ?? []) {
+      // Submitted / Skipped leave the monitor queue (Athens Bid Ready parity).
+      if (job.status === 'applied' || job.status === 'skipped') continue;
       jobs.push({ ...job, poolId: pool.id });
     }
   }
-  const rank = (status) => {
-    if (status === 'in_process') return 0;
-    if (status === 'not_applied' || !status) return 1;
-    if (status === 'applied' || status === 'skipped') return 2;
-    return 1;
-  };
+  const rank = (status) => (status === 'in_process' ? 0 : 1);
   jobs.sort((a, b) => rank(a.status) - rank(b.status));
   return jobs;
 }
@@ -493,12 +491,6 @@ function getQueueJobs() {
 function statusBadgeFor(job) {
   if (job.status === 'in_process') {
     return { statusClass: 'status-active', statusLabel: 'In process' };
-  }
-  if (job.status === 'applied') {
-    return { statusClass: 'status-applied', statusLabel: 'Submitted' };
-  }
-  if (job.status === 'skipped') {
-    return { statusClass: 'status-skipped', statusLabel: 'Skipped' };
   }
   return { statusClass: 'status-open', statusLabel: 'Pending' };
 }
@@ -513,7 +505,7 @@ function setQueueHint() {
     queueHint.textContent = 'Refreshing queue…';
     return;
   }
-  queueHint.textContent = 'Pending → Apply → In process → Submitted / Skipped';
+  queueHint.textContent = 'Pending until Apply → In process (same as Athens)';
 }
 
 function renderQueue() {
@@ -548,7 +540,7 @@ function renderQueue() {
   for (const job of jobs) {
     const li = document.createElement('li');
     const { statusClass, statusLabel } = statusBadgeFor(job);
-    const isFinished = job.status === 'applied' || job.status === 'skipped';
+    const inProcess = job.status === 'in_process';
     const resumeJobId = job.athensJobId || job.id;
     const resumeActions = job.hasGeneratedResume
       ? `
@@ -556,7 +548,8 @@ function renderQueue() {
         <button type="button" class="btn btn-secondary" data-download-resume="${escapeHtml(resumeJobId)}">Download</button>
       `
       : '';
-    const applyAction = isFinished
+    // Apply only while Pending; In process jobs are already started.
+    const applyAction = inProcess
       ? ''
       : `<button type="button" class="btn btn-apply" data-apply-job="${job.id}" data-pool="${job.poolId}">Apply</button>`;
 
@@ -627,7 +620,7 @@ function renderQueue() {
       chrome.tabs.create({ url: job.jdUrl, active: true }, (tab) => {
         if (chrome.runtime.lastError || !tab?.id) {
           alert(chrome.runtime.lastError?.message || 'Failed to open job tab.');
-          job.status = 'not_applied';
+          job.status = 'pending';
           button.disabled = false;
           button.textContent = 'Apply';
           renderQueue();
@@ -643,7 +636,7 @@ function renderQueue() {
           .then(async (response) => {
             if (!response?.ok) {
               alert(response?.error || 'Failed to open job application.');
-              job.status = 'not_applied';
+              job.status = 'pending';
               button.disabled = false;
               button.textContent = 'Apply';
               renderQueue();
@@ -651,7 +644,8 @@ function renderQueue() {
             }
             button.disabled = false;
             button.textContent = 'Apply';
-            await loadDashboard({ preferCache: true });
+            // Prefer fresh Athens status after startBid (bidderInProcess).
+            await loadDashboard({ force: true });
             await refreshApplySession();
             applySessionView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             startRecordingBtn?.classList.add('pulse');
@@ -659,7 +653,7 @@ function renderQueue() {
           })
           .catch((err) => {
             alert(err.message || 'Failed to open job application.');
-            job.status = 'not_applied';
+            job.status = 'pending';
             button.disabled = false;
             button.textContent = 'Apply';
             renderQueue();

@@ -529,6 +529,7 @@ export function BidManagementPage() {
                 }}
                 onWatch={() => setPlaying(true)}
                 onChangeStatus={setStatus}
+                lockDismiss={playing}
               />
             </motion.div>
           )}

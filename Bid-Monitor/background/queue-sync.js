@@ -49,9 +49,23 @@ const QueueSync = (() => {
     return ids;
   }
 
+  function isTerminalStatus(status) {
+    return status === 'applied' || status === 'skipped';
+  }
+
+  function isFinishedId(finished, job) {
+    for (const id of collectJobIds(job)) {
+      const entry = finished[id];
+      if (entry && isTerminalStatus(entry.status)) return true;
+    }
+    return false;
+  }
+
   /**
-   * Prefer local truth: active apply → In process; recent finish → Submitted/Skipped.
-   * Also re-appends finished jobs Athens no longer returns in the open queue.
+   * Align with Athens Bid Management:
+   * - Pending until Apply
+   * - Active apply session → In process (local override until Athens catches up)
+   * - Submitted / Skipped leave the Bid Monitor queue
    */
   async function mergeLocalOverrides(pools) {
     const applies =
@@ -68,65 +82,23 @@ const QueueSync = (() => {
       }
     }
 
-    const seen = new Set();
-    const poolsOut = (pools || []).map((pool) => ({
+    return (pools || []).map((pool) => ({
       ...pool,
-      jobs: (pool.jobs || []).map((job) => {
-        for (const id of collectJobIds(job)) seen.add(id);
-
-        let status = job.status;
-        const finishedEntry =
-          finished[String(job.athensJobId || '')] || finished[String(job.id)];
-        if (
-          finishedEntry &&
-          (finishedEntry.status === 'applied' || finishedEntry.status === 'skipped')
-        ) {
-          status = finishedEntry.status;
-        } else if (
-          status !== 'applied' &&
-          status !== 'skipped' &&
-          [...collectJobIds(job)].some((id) => inProcessIds.has(id))
-        ) {
-          status = 'in_process';
-        }
-        return status === job.status ? job : { ...job, status };
-      }),
+      jobs: (pool.jobs || [])
+        .filter((job) => !isTerminalStatus(job.status) && !isFinishedId(finished, job))
+        .map((job) => {
+          // Normalize legacy cache values.
+          let status = job.status === 'not_applied' || !job.status ? 'pending' : job.status;
+          const isActiveApply = [...collectJobIds(job)].some((id) => inProcessIds.has(id));
+          if (isActiveApply) {
+            status = 'in_process';
+          } else if (status === 'in_process' && !job.bidderInProcess) {
+            // Downgrade stale/false In process (e.g. old Avalon progress===active mapping).
+            status = 'pending';
+          }
+          return status === job.status ? job : { ...job, status };
+        }),
     }));
-
-    const orphanFinished = [];
-    for (const [id, entry] of Object.entries(finished)) {
-      if (seen.has(id)) continue;
-      if (!entry?.job || (entry.status !== 'applied' && entry.status !== 'skipped')) {
-        continue;
-      }
-      orphanFinished.push({
-        ...entry.job,
-        status: entry.status,
-        id: entry.job.id || id,
-        athensJobId: entry.job.athensJobId || id,
-      });
-      seen.add(id);
-      for (const jid of collectJobIds(entry.job)) seen.add(jid);
-    }
-
-    if (orphanFinished.length) {
-      if (!poolsOut.length) {
-        poolsOut.push({
-          id: 'athens-bid-ready',
-          name: 'Bid Ready',
-          status: 'active',
-          source: 'athens',
-          jobs: orphanFinished,
-        });
-      } else {
-        poolsOut[0] = {
-          ...poolsOut[0],
-          jobs: [...orphanFinished, ...(poolsOut[0].jobs || [])],
-        };
-      }
-    }
-
-    return poolsOut;
   }
 
   async function writeCache({ auth, pools, athensError, source }) {
@@ -160,9 +132,12 @@ const QueueSync = (() => {
     return writeCache({ ...cache, pools });
   }
 
-  /** Keep finished jobs visible with a clear Submitted/Skipped badge. */
+  /**
+   * After Submit/Skip: record terminal status and remove from Bid Monitor queue
+   * (same as Athens — ticket leaves Bid Ready / In process).
+   */
   async function markJobFinished(jobId, status, jobSnapshot = null) {
-    if (!jobId || (status !== 'applied' && status !== 'skipped')) return null;
+    if (!jobId || !isTerminalStatus(status)) return null;
     const id = String(jobId);
     const cache = await readCache();
     let snapshot = jobSnapshot;
@@ -181,9 +156,7 @@ const QueueSync = (() => {
     const entry = {
       status,
       at: new Date().toISOString(),
-      job: snapshot
-        ? { ...snapshot, status }
-        : { id, athensJobId: id, status, companyName: 'Job', title: '' },
+      job: snapshot ? { ...snapshot, status } : { id, athensJobId: id, status },
     };
     for (const jid of ids) finished[jid] = entry;
     await writeFinished(finished);
@@ -191,41 +164,21 @@ const QueueSync = (() => {
     if (!cache?.pools?.length) {
       return writeCache({
         auth: cache?.auth || null,
-        pools: [
-          {
-            id: 'athens-bid-ready',
-            name: 'Bid Ready',
-            status: 'active',
-            source: 'athens',
-            jobs: [entry.job],
-          },
-        ],
+        pools: [],
         athensError: cache?.athensError || null,
         source: cache?.source || 'athens',
       });
     }
 
-    let found = false;
     const pools = cache.pools.map((pool) => ({
       ...pool,
-      jobs: (pool.jobs || []).map((job) => {
-        if (!jobMatchesId(job, id) && ![...ids].some((jid) => jobMatchesId(job, jid))) {
-          return job;
-        }
-        found = true;
-        return { ...job, status };
-      }),
+      jobs: (pool.jobs || []).filter(
+        (job) => !jobMatchesId(job, id) && ![...ids].some((jid) => jobMatchesId(job, jid)),
+      ),
     }));
-    if (!found && pools[0]) {
-      pools[0] = {
-        ...pools[0],
-        jobs: [entry.job, ...(pools[0].jobs || [])],
-      };
-    }
     return writeCache({ ...cache, pools });
   }
 
-  /** @deprecated Prefer markJobFinished so Submitted/Skipped stay visible. */
   async function removeJobFromCache(jobId) {
     return markJobFinished(jobId, 'applied');
   }

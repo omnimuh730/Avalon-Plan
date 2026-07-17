@@ -79,11 +79,14 @@ export function BidDetailPane({
   onClose,
   onWatch,
   onChangeStatus,
+  lockDismiss = false,
 }: {
   result: BidResult | null;
   onClose: () => void;
   onWatch: () => void;
   onChangeStatus: (id: string, status: BidResultStatus) => void;
+  /** Keep the detail sheet open while the recording player is up. */
+  lockDismiss?: boolean;
 }) {
   const { applier } = useApplier();
   const preview = useBidPreview(result?.jobId ?? null, result?.bidder.name);
@@ -101,10 +104,13 @@ export function BidDetailPane({
   return (
     <SlidePanel
       open={!!result}
-      onOpenChange={(open) => !open && onClose()}
+      onOpenChange={(open) => {
+        if (!open && !lockDismiss) onClose();
+      }}
       width="xl"
       showClose={false}
       className="bm-detail-sheet"
+      lockDismiss={lockDismiss}
     >
       {result ? (
         <>

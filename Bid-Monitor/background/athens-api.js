@@ -50,11 +50,13 @@ const AthensApi = (() => {
   }
 
   function mapTaskToJob(task, applierName) {
-    let status = 'not_applied';
+    // Align with Athens Bid Management (bidResultsController.mapTaskToBidResult):
+    // In process ONLY after Bid Monitor Apply sets bidderInProcess.
+    // Do NOT use progress === 'active' (Avalon session URL match).
+    let status = 'pending';
     if (task.status === 'skipped' || task.progress === 'skipped') status = 'skipped';
     else if (task.progress === 'completed' || task.status === 'done') status = 'applied';
-    // In process when bidder started apply, or vendor session already active.
-    else if (task.bidderInProcess || task.progress === 'active') status = 'in_process';
+    else if (task.bidderInProcess) status = 'in_process';
 
     return {
       id: String(task.jobId || task.id),
@@ -71,6 +73,7 @@ const AthensApi = (() => {
       source: task.source || '',
       hasRecording: Boolean(task.recording?.storagePath),
       hasGeneratedResume: false,
+      bidderInProcess: Boolean(task.bidderInProcess),
     };
   }
 
@@ -83,8 +86,13 @@ const AthensApi = (() => {
       timeoutMs: options.timeoutMs ?? QUEUE_TIMEOUT_MS,
     });
     const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    // Open Bid Ready queue only — Submitted / Skipped leave the monitor list.
     const open = tasks.filter(
-      (t) => t.status !== 'skipped' && t.status !== 'done' && t.progress !== 'completed',
+      (t) =>
+        t.status !== 'skipped' &&
+        t.status !== 'done' &&
+        t.progress !== 'completed' &&
+        t.progress !== 'skipped',
     );
     const jobs = open.map((t) => mapTaskToJob(t, name));
 
